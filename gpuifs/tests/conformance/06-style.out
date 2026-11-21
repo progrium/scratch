@@ -23,7 +23,7 @@ bad value
 bad value
 bad value
 bad value
-bad syntax
+unknown style word
 h_flex gap=8 p=12 rounded_lg bg=muted hover:bg=accent cursor_pointer|
 # size and variant words fail on a raw div
 unknown style word

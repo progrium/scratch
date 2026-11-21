@@ -21,18 +21,35 @@ phrases='unknown command|bad syntax|unknown style word|unknown type|type is fixe
 # phrase: read error text on stdin, print only its DESIGN phrase, so a
 # golden file doesn't depend on the detail after the colon or on the
 # prefix echo or cat put in front of it.
+# The 9front kernel reports a walk that fails as "file does not exist",
+# whatever the server said (GAPS.md 21), so that reads as not found.
 fn phrase {
-	sed -n 's/.*('^$phrases^').*/\1/p' | sed 1q
+	sed 's/file does not exist/not found/' | sed -n 's/.*('^$phrases^').*/\1/p' | sed 1q
 }
 
 # w file text...: write the words as one write (echo joins them with
-# blanks), then print "ok" or the error phrase. ctl writes, and the short
+# blanks), then print "ok" or the error phrase. The write runs in a
+# subshell because rc exits a script whose redirection fails. ctl writes, and the short
 # per-write files (type style order tag on ...), report errors here.
 fn w {
 	_f=$1
 	shift
-	if(echo $* >$_f >[2]/tmp/w.err) echo ok
+	if(_write $*) echo ok
 	if not phrase </tmp/w.err
+}
+
+# _write words...: write to $_f in a subshell, leaving the error text in
+# /tmp/w.err. A failed write leaves echo's message on its stderr; a failed
+# open leaves rc's message on rc's own stderr, which a redirection doesn't
+# catch, but it is also the subshell's exit status, so that goes in too.
+fn _write {
+	@{echo $* >$_f} >[2]/tmp/w.err
+	_st=$status
+	if(~ $_st '') status=''
+	if not {
+		echo $_st >>/tmp/w.err
+		status=$_st
+	}
 }
 
 # wd file text...: as w, but print the whole error text after the
@@ -40,7 +57,7 @@ fn w {
 fn wd {
 	_f=$1
 	shift
-	if(echo $* >$_f >[2]/tmp/w.err) echo ok
+	if(_write $*) echo ok
 	if not sed -n 's/^[^:]*: write error: //p; s/^echo: //p' /tmp/w.err | sed 1q
 }
 
@@ -49,7 +66,7 @@ fn wd {
 fn wq {
 	_f=$1
 	shift
-	if(! echo $* >$_f >[2]/tmp/w.err) phrase </tmp/w.err
+	if(! _write $*) phrase </tmp/w.err
 }
 
 # val file...: print a file's bytes followed by a | so a golden file
@@ -73,7 +90,7 @@ fn r {
 # the error phrase if not. cat reports its own open errors, so this works
 # where an rc redirection's error text wouldn't be catchable.
 fn rd {
-	if(cat $1 >/dev/null >[2]/tmp/w.err) echo ok
+	if(cat $1 >[2]/tmp/w.err >/dev/null) echo ok
 	if not phrase </tmp/w.err
 }
 

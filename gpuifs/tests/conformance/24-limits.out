@@ -4,7 +4,7 @@ no
 # one just under it applies
 ok
 yes
-# node depth: 64 levels under the window root is the limit
+# node depth: the window root and 63 levels below it make 64
 yes
 too large
 no

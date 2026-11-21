@@ -1,8 +1,7 @@
-# single quotes group a word; '' is a literal quote
+# single quotes group a word; '' is a literal quote; a quoted word is never a prop=value
 ok
 it's here|
-ok
-also grouped|
+bad syntax
 # a quoted style
 ok
 h_flex gap=8 p=12|
@@ -20,13 +19,13 @@ ok
 quote ' and = and '' stay|
 # several lines in one write apply together
 ok
-a b c d e g h i|
+a c d e g h i|
 # one bad line and none apply
 unknown type
 no
 no
 no
-a b c d e g h i|
+a c d e g h i|
 # a duplicate inside one write is in use, and nothing applies
 in use
 no

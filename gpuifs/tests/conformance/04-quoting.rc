@@ -8,11 +8,10 @@
 mainwin
 r=$k/windows/main/root
 
-echo '# single quotes group a word; '''' is a literal quote'
+echo '# single quotes group a word; '''' is a literal quote; a quoted word is never a prop=value'
 w $r/ctl 'new text a text=''it''''s here'''
 val $r/a/text
 w $r/ctl 'new text b ''text=also grouped'''
-val $r/b/text
 echo '# a quoted style'
 w $r/ctl 'new div c style=''h_flex gap=8 p=12'''
 val $r/c/style

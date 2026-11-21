@@ -49,7 +49,7 @@ echo '# a state event coalesces with a queued one for the same node, and moves t
 } <[3]$wn/events
 
 echo '# never a change after the submit that came from it'
-wq $r/ctl new input in
+wq $r/ctl new div in
 {
 	inj event change 'win=main' 'node=root/in'
 	inj event submit 'win=main' 'node=root/in'

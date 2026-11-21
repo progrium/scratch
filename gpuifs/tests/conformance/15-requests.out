@@ -23,14 +23,14 @@ unknown command
 # no events file open: the default applies at once
 ok
 no
-# a tab close request, refused
-resync
-close win=main node=root/t/b tag=''
-ok
-yes
 # quit is a request too; its default is to quit, so answer keep
 resync
 quit via=menu
 ok
 main
+# a tab close request, refused
+resync
+close win=main node=root/t/b tag=''
+ok
+yes
 exit=0

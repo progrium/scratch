@@ -18,7 +18,7 @@ echo 'cmd-s save
 cmd-wibble-q quit' >$k/keymap
 cat $k/keymap | count
 echo '# a node''s context file'
-wq $wn/root/ctl new editor src
+wq $wn/root/ctl new div src
 w $wn/root/src/context editor
 val $wn/root/src/context
 

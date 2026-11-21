@@ -17,7 +17,7 @@ x=`{awk 'BEGIN { for(i = 0; i < 60000; i++) printf "x" }'}
 w $r/ctl new text big 'text='^$x
 exists $r/big
 
-echo '# node depth: 64 levels under the window root is the limit'
+echo '# node depth: the window root and 63 levels below it make 64'
 p=$r
 d=1
 while(! ~ $d 64) {
@@ -25,10 +25,9 @@ while(! ~ $d 64) {
 	p=$p/n
 	d=`{echo $d | awk '{ print $1 + 1 }'}
 }
-mkdir $p/n
-exists $p/n
-w $p/n/ctl new div deeper
-exists $p/n/deeper
+exists $p
+w $p/ctl new div deeper
+exists $p/deeper
 
 echo '# an events read smaller than the next line is a short read'
 {

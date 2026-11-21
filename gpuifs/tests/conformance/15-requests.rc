@@ -56,6 +56,16 @@ wq $k/ctl window four
 w $k/windows/four/ctl close
 exists $k/windows/four
 
+echo '# quit is a request too; its default is to quit, so answer keep'
+{
+	inj event quit 'via=menu'
+	evraw >/tmp/ev
+	sed 's/ seq=[0-9]+//' /tmp/ev
+	s=`{seqof quit}
+	w $k/ctl keep 'seq='^$s
+	names $k/windows
+} <[3]$k/events
+
 echo '# a tab close request, refused'
 wq $wn/root/ctl new tabs t
 wq $wn/root/t/ctl 'new tab a label=A closable=on
@@ -68,13 +78,3 @@ new tab b label=B closable=on'
 	w $wn/root/t/b/ctl keep 'seq='^$s
 	exists $wn/root/t/b
 } <[3]$wn/events
-
-echo '# quit is a request too; its default is to quit, so answer keep'
-{
-	inj event quit 'via=menu'
-	evraw >/tmp/ev
-	sed 's/ seq=[0-9]+//' /tmp/ev
-	s=`{seqof quit}
-	w $k/ctl keep 'seq='^$s
-	names $k/windows
-} <[3]$k/events

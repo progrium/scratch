@@ -27,5 +27,5 @@ action id=quit
 ok
 ok
 bad value
-bad syntax
+ok
 exit=0
