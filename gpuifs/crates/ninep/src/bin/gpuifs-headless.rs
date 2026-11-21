@@ -1,10 +1,11 @@
 //! `gpuifs-headless -a unix!/tmp/g.sock`: the tree with no renderer, over 9P.
 //!
 //! ```text
-//! gpuifs-headless [-a addr] [-insecure] [-v]
+//! gpuifs-headless [-a addr] [-insecure] [-frames] [-v]
 //!     -a addr     unix!path (mode 0600), tcp!host!port (needs -insecure),
 //!                 fd!N, or - for stdin/stdout (the default)
 //!     -insecure   allow tcp
+//!     -frames     draw a frame every 16 ms (default: only on /debug/inject frame)
 //!     -v          copy the trace file to stderr
 //! ```
 //!
@@ -17,7 +18,7 @@ use ninep::transport::{listen_and_serve, parse_addr, Addr};
 use ninep::{FsBackend, HeadlessBackend};
 
 fn usage() -> ! {
-    eprintln!("usage: gpuifs-headless [-a addr] [-insecure] [-v]");
+    eprintln!("usage: gpuifs-headless [-a addr] [-insecure] [-frames] [-v]");
     std::process::exit(2);
 }
 
@@ -25,6 +26,7 @@ fn main() {
     let mut addr = Addr::Stdio;
     let mut insecure = false;
     let mut verbose = false;
+    let mut opts = ninep::headless::Options::default();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -37,31 +39,49 @@ fn main() {
             }
             "-insecure" | "--insecure" => insecure = true,
             "-v" => verbose = true,
+            "-frames" => opts.auto_frames = true,
             _ => usage(),
         }
     }
-    if let Addr::Tcp(..) = addr {
-        if !insecure {
+    if let Addr::Tcp(..) = addr
+        && !insecure {
             eprintln!("gpuifs-headless: tcp refused without -insecure: gpuifs does no authentication");
             std::process::exit(2);
         }
-    }
 
-    let backend = HeadlessBackend::new(tree::Registry::from_catalog());
-    let dynb: Arc<dyn FsBackend> = backend.clone();
-
+    let backend = HeadlessBackend::with_options(tree::Registry::from_catalog(), opts);
     if verbose {
-        // The trace file streams like an events file in the tree; copy it out.
-        if let Ok(mut sub) = dynb.subscribe(&tree::FsPath::new("trace")) {
-            smol::spawn(async move {
-                while let Ok(b) = sub.read(64 * 1024).await {
-                    let _ = std::io::stderr().write_all(&b);
+        // `trace` is the whole log so far, oldest lines dropped first: copy
+        // what is new since the last look.
+        let b = backend.clone();
+        std::thread::spawn(move || {
+            let path = tree::FsPath::new("trace");
+            let mut last: Vec<u8> = Vec::new();
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                let cur = b.snapshot().read(&path).unwrap_or_default().to_vec();
+                let new = if cur.starts_with(&last) {
+                    &cur[last.len()..]
+                } else {
+                    // Lines fell off the front: resume after the last line we printed.
+                    let tail = last.rsplit(|&c| c == b'\n').nth(1).unwrap_or(&[]);
+                    match (!tail.is_empty()).then(|| cur.windows(tail.len()).rposition(|w| w == tail)).flatten() {
+                        Some(i) => &cur[(i + tail.len() + 1).min(cur.len())..],
+                        None => &cur[..],
+                    }
+                };
+                if !new.is_empty() {
+                    let _ = std::io::stderr().write_all(new);
                 }
-            })
-            .detach();
-        }
+                if b.is_gone() && new.is_empty() {
+                    break;
+                }
+                last = cur;
+            }
+        });
     }
 
+    let dynb: Arc<dyn FsBackend> = backend.clone();
     let sock = match &addr {
         Addr::Unix(p) => Some(p.clone()),
         _ => None,

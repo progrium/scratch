@@ -108,11 +108,10 @@ pub async fn listen_and_serve(addr: &Addr, insecure: bool, b: Arc<dyn FsBackend>
 #[cfg(unix)]
 pub fn bind_unix(p: &std::path::Path) -> io::Result<smol::net::unix::UnixListener> {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
-    if let Ok(md) = std::fs::symlink_metadata(p) {
-        if md.file_type().is_socket() && std::os::unix::net::UnixStream::connect(p).is_err() {
+    if let Ok(md) = std::fs::symlink_metadata(p)
+        && md.file_type().is_socket() && std::os::unix::net::UnixStream::connect(p).is_err() {
             std::fs::remove_file(p)?;
         }
-    }
     let l = std::os::unix::net::UnixListener::bind(p)?;
     std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))?;
     l.set_nonblocking(true)?;

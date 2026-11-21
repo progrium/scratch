@@ -200,17 +200,17 @@ impl MemBackend {
 
 // ---- a test client ------------------------------------------------------------
 
-struct Client {
-    s: smol::Async<std::os::unix::net::UnixStream>,
-    tag: u16,
+pub(crate) struct Client {
+    pub(crate) s: smol::Async<std::os::unix::net::UnixStream>,
+    pub(crate) tag: u16,
 }
 
 impl Client {
-    async fn send(&mut self, tag: u16, m: &Tmsg) {
+    pub(crate) async fn send(&mut self, tag: u16, m: &Tmsg) {
         use futures::AsyncWriteExt;
         self.s.write_all(&encode_t(tag, m)).await.unwrap();
     }
-    async fn recv(&mut self) -> (u16, Rmsg) {
+    pub(crate) async fn recv(&mut self) -> (u16, Rmsg) {
         use futures::AsyncReadExt;
         let mut h = [0u8; 4];
         self.s.read_exact(&mut h).await.unwrap();
@@ -219,7 +219,7 @@ impl Client {
         self.s.read_exact(&mut b).await.unwrap();
         decode_r(&b).expect("decodable reply")
     }
-    async fn rpc(&mut self, m: Tmsg) -> Rmsg {
+    pub(crate) async fn rpc(&mut self, m: Tmsg) -> Rmsg {
         self.tag = self.tag.wrapping_add(1) % 1000;
         let t = self.tag;
         self.send(t, &m).await;
@@ -227,31 +227,32 @@ impl Client {
         assert_eq!(rt, t);
         r
     }
-    async fn ok(&mut self, m: Tmsg) -> Rmsg {
+    pub(crate) async fn ok(&mut self, m: Tmsg) -> Rmsg {
         let r = self.rpc(m.clone()).await;
         if let Rmsg::Error { ename } = &r {
-            panic!("{m:?}: {ename}");
+            let d = format!("{m:?}");
+            panic!("{}: {ename}", &d[..d.len().min(120)]);
         }
         r
     }
-    async fn fail(&mut self, m: Tmsg) -> String {
+    pub(crate) async fn fail(&mut self, m: Tmsg) -> String {
         match self.rpc(m.clone()).await {
             Rmsg::Error { ename } => ename,
             r => panic!("{m:?}: expected an error, got {r:?}"),
         }
     }
     /// Walks from fid 0 to a new fid.
-    async fn walk(&mut self, fid: u32, path: &str) -> Rmsg {
+    pub(crate) async fn walk(&mut self, fid: u32, path: &str) -> Rmsg {
         let names = path.split('/').filter(|s| !s.is_empty()).map(String::from).collect();
         self.rpc(Tmsg::Walk { fid: 0, newfid: fid, names }).await
     }
-    async fn open(&mut self, fid: u32, path: &str, mode: u8) {
+    pub(crate) async fn open(&mut self, fid: u32, path: &str, mode: u8) {
         if let Rmsg::Error { ename } = self.walk(fid, path).await {
             panic!("walk {path}: {ename}");
         }
         self.ok(Tmsg::Open { fid, mode }).await;
     }
-    async fn read_all(&mut self, fid: u32) -> Vec<u8> {
+    pub(crate) async fn read_all(&mut self, fid: u32) -> Vec<u8> {
         let mut out = Vec::new();
         loop {
             match self.ok(Tmsg::Read { fid, offset: out.len() as u64, count: 8192 }).await {
@@ -261,13 +262,13 @@ impl Client {
             }
         }
     }
-    async fn cat(&mut self, path: &str) -> Vec<u8> {
+    pub(crate) async fn cat(&mut self, path: &str) -> Vec<u8> {
         self.open(99, path, OREAD).await;
         let b = self.read_all(99).await;
         self.ok(Tmsg::Clunk { fid: 99 }).await;
         b
     }
-    async fn ls(&mut self, path: &str) -> Vec<Dir> {
+    pub(crate) async fn ls(&mut self, path: &str) -> Vec<Dir> {
         self.open(98, path, OREAD).await;
         let b = self.read_all(98).await;
         self.ok(Tmsg::Clunk { fid: 98 }).await;
@@ -730,5 +731,62 @@ fn fuzz_random_bytes() {
         drop(wr);
         let _ = server.await;
         drain.await;
+    });
+}
+
+#[test]
+fn ctl_holds_partial_line_of_a_piece() {
+    let b = backend();
+    let b2 = b.clone();
+    with_server(b, |mut cl| async move {
+        let mut piece = Vec::new();
+        while piece.len() < 8192 - 20 {
+            piece.extend_from_slice(b"new text a\n");
+        }
+        let full = piece.len();
+        piece.resize(8192, b'x'); // the start of a line cut by the 8 KiB split
+        cl.open(1, "windows/main/root/ctl", OWRITE).await;
+        cl.ok(Tmsg::Write { fid: 1, offset: 0, data: piece.clone() }).await;
+        let ops = b2.ops();
+        assert_eq!(ops.len(), 1);
+        let Op::Write { data, .. } = &ops[0] else { panic!() };
+        assert_eq!(data.len(), full, "complete lines only");
+        // The next write completes the held line, and holds its own partial tail.
+        cl.ok(Tmsg::Write { fid: 1, offset: 8192, data: b"yz\nnew text b".to_vec() }).await;
+        let Op::Write { data, .. } = &b2.ops()[1] else { panic!() };
+        assert_eq!(data.len(), 8192 - full + 3);
+        assert!(data.starts_with(b"xx") && data.ends_with(b"yz\n"));
+        // A held line left at clunk applies at clunk.
+        assert_eq!(b2.ops().len(), 2);
+        cl.ok(Tmsg::Clunk { fid: 1 }).await;
+        assert_eq!(b2.ops()[2], Op::Write { path: FsPath::new("windows/main/root/ctl"), data: Bytes::from_static(b"new text b") });
+        // A short write with no newline applies at once, as `echo -n` expects.
+        cl.open(2, "windows/main/root/ctl", OWRITE).await;
+        cl.ok(Tmsg::Write { fid: 2, offset: 0, data: b"new text c".to_vec() }).await;
+        assert_eq!(b2.ops().len(), 4);
+    });
+}
+
+#[test]
+fn short_files_apply_per_write() {
+    let b = backend();
+    let b2 = b.clone();
+    {
+        let mut m = b2.0.lock().unwrap();
+        m.add("windows/main/root/style", StatKind::Text, b"");
+    }
+    with_server(b, |mut cl| async move {
+        cl.open(1, "windows/main/root/style", OWRITE | OTRUNC).await;
+        let e = cl.fail(Tmsg::Write { fid: 1, offset: 0, data: b"bad word".to_vec() }).await;
+        assert_eq!(e, "bad value: bad", "echo sees the error");
+        cl.ok(Tmsg::Write { fid: 1, offset: 0, data: b"p_4".to_vec() }).await;
+        assert_eq!(b2.file("windows/main/root/style"), b"p_4");
+        let n = b2.ops().len();
+        cl.ok(Tmsg::Clunk { fid: 1 }).await;
+        assert_eq!(b2.ops().len(), n, "nothing more at clunk");
+        // `echo -n >style`: truncating open with no write sets it empty at clunk.
+        cl.open(2, "windows/main/root/style", OWRITE | OTRUNC).await;
+        cl.ok(Tmsg::Clunk { fid: 2 }).await;
+        assert_eq!(b2.file("windows/main/root/style"), b"");
     });
 }

@@ -1,31 +1,44 @@
-//! A `Tree` on its own thread behind `FsBackend`, with a fake frame clock and
-//! `/debug` for driving and observing the host side.
+//! A `Tree` on its own thread behind `FsBackend`, with a fake clock and
+//! frame control, and `/debug` for driving and observing the host side.
 //!
 //! The thread owns the tree. Ops arrive on a channel, are applied in order,
 //! and the new snapshot is published before the op is acknowledged, so a read
-//! after a write sees it. Every 16 ms the thread "draws a frame": it calls
-//! `frame_drawn` for each window dirtied since the last one (which fixes
-//! `type` and closes batch timeouts) and `tick`s the tree.
+//! after a write sees it. Subscriptions come straight from a clone of the
+//! tree's event bus, with no round trip.
 //!
-//! Host commands are what the GPUI host would act on. Headless acts on the few
-//! that change the tree or the app's life (`quit`, a window `close` request and
-//! its answer) and logs every one to `/debug/log`.
+//! **Frames.** By default headless draws no frames on its own, so `type`
+//! stays writable until a script says a frame happened (`frame` below); this
+//! keeps conformance runs deterministic. [`Options::auto_frames`] draws one
+//! every 16 ms, like a real host.
+//!
+//! **Clock.** The tree is ticked every 16 ms with a fake clock: real time plus
+//! whatever `tick SECONDS` has added, so batch and request timeouts run in
+//! real time and a script can skip ahead without sleeping.
+//!
+//! **Host commands** are what the GPUI host would act on. Headless acts on
+//! those that change the tree or the app's life (`quit`, a window `close`
+//! request and its answer, a drop's answer) and logs every one to `/debug/log`.
 //!
 //! ## `/debug` (headless only)
 //!
-//! `/debug/inject` takes one command per line, in `ctl` quoting, applied as if
-//! the user did it in the UI:
+//! `/debug/inject` takes lines in `ctl` syntax, applied in order as if the
+//! user did it in the UI (tests/conformance/README.md § `/debug/inject`).
+//! Nothing written here appears in `trace`.
 //!
 //! ```text
-//! event NAME TARGET [k=v ...] [default=VERB]   emit an event; TARGET is `-` (app),
-//!                                             windows/WIN, or windows/WIN/root/...
-//!                                             Requests (by the node type's spec, or
-//!                                             close/quit/drop/complete) open with
-//!                                             the 5 s default; default= picks its verb
-//! mirror FILE VALUE                           component state -> file, via=user
-//! bounds NODE X Y W H                         as reported after layout
-//! frame [WIN]                                 draw a frame now (all dirty windows)
-//! tick                                        run batch and request timeouts now
+//! event NAME [win=W] [node=PATH] [attr=value ...] [default=VERB]
+//!         Tree::emit, or open_request when the node's TypeSpec says NAME is a
+//!         request (or, with no node, NAME is close or quit). node= is
+//!         window-relative. default= picks a request's default answer
+//!         (otherwise drop->refuse, NAME->NAME).
+//! mirror [win=W] [node=PATH] file=NAME value=TEXT
+//!         Tree::mirror(..., Via::User). No event. With no node=, a window
+//!         file; with no win= either, a root file.
+//! bounds win=W [node=PATH] value='x y w h'
+//! frame [win=W]          Tree::frame_drawn for one window, or every window
+//! tick SECONDS           advance the fake clock, then Tree::tick
+//! drag n=N [type=TYPE] data=TEXT
+//!         make /drags/N/data hold TEXT, as a platform drag would
 //! ```
 //!
 //! `/debug/log` reads back one line per host command and injected event:
@@ -40,11 +53,11 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use proto::{Command, Error, ErrorKind};
-use tree::{Answer, EventKind, EventMsg, FsPath, HostCmd, Op, SessionId, Snapshot, Stat, StatKind, Tree, Via};
+use tree::{Answer, EventBus, EventKind, EventMsg, FsPath, HostCmd, Op, SessionId, Snapshot, Stat, StatKind, Tree, Via};
 
 use crate::FsBackend;
 
-/// The fake frame interval.
+/// The frame and tick interval.
 pub const FRAME: Duration = Duration::from_millis(16);
 /// How long a request waits for an answer.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -55,13 +68,15 @@ const DEBUG: &str = "debug";
 const INJECT: &str = "debug/inject";
 const LOG: &str = "debug/log";
 
-/// The session headless uses for its own follow-up ops (destroying a window
-/// after its `close` request is answered).
-const HOST_SESSION: SessionId = SessionId(0);
+#[derive(Debug, Clone, Default)]
+pub struct Options {
+    /// Draw a frame every 16 ms for every window, as a real host does.
+    /// Off by default, so `type` stays writable until `frame` is injected.
+    pub auto_frames: bool,
+}
 
 enum Msg {
     Apply { s: SessionId, op: Op, reply: futures::channel::oneshot::Sender<Result<(), Error>> },
-    Subscribe { path: FsPath, reply: mpsc::Sender<Result<tree::Subscription, Error>> },
 }
 
 struct Shared {
@@ -80,8 +95,9 @@ impl Shared {
         l.push_back(line);
     }
     fn set_gone(&self) {
+        let mut w = self.quit_waiters.lock().unwrap();
         if !self.gone.swap(true, Ordering::SeqCst) {
-            for w in self.quit_waiters.lock().unwrap().drain(..) {
+            for w in w.drain(..) {
                 let _ = w.send(());
             }
         }
@@ -90,47 +106,50 @@ impl Shared {
 
 pub struct HeadlessBackend {
     tx: mpsc::Sender<Msg>,
+    bus: EventBus,
     shared: Arc<Shared>,
     next_session: AtomicU32,
 }
 
 impl HeadlessBackend {
     pub fn new(reg: tree::Registry) -> Arc<Self> {
+        Self::with_options(reg, Options::default())
+    }
+
+    pub fn with_options(reg: tree::Registry, opts: Options) -> Arc<Self> {
         let (tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
-        let shared_slot: Arc<Mutex<Option<Arc<Shared>>>> = Arc::new(Mutex::new(None));
-        let slot = shared_slot.clone();
         std::thread::Builder::new()
             .name("gpuifs-tree".into())
             .spawn(move || {
-                let tree = Tree::new(reg.clone());
+                let tree = Tree::new(reg);
                 let shared = Arc::new(Shared {
                     snap: Mutex::new(tree.snapshot()),
                     gone: AtomicBool::new(false),
                     log: Mutex::new(VecDeque::new()),
                     quit_waiters: Mutex::new(Vec::new()),
                 });
-                *slot.lock().unwrap() = Some(shared.clone());
-                let _ = ready_tx.send(());
-                TreeThread { tree: Some(tree), reg, shared, dirty: BTreeSet::new(), requests: HashMap::new() }.run(rx);
+                let _ = ready_tx.send((shared.clone(), tree.bus().clone()));
+                TreeThread { tree, shared, opts, requests: HashMap::new(), skew: Duration::ZERO, dirty: BTreeSet::new() }
+                    .run(rx);
             })
             .expect("spawn tree thread");
-        ready_rx.recv().expect("tree thread started");
-        let shared = shared_slot.lock().unwrap().take().unwrap();
-        Arc::new(HeadlessBackend { tx, shared, next_session: AtomicU32::new(1) })
+        let (shared, bus) = ready_rx.recv().expect("tree thread started");
+        Arc::new(HeadlessBackend { tx, bus, shared, next_session: AtomicU32::new(1) })
     }
 
     /// Resolves when the app quits (`quit` on the root `ctl`, or an answered
     /// or defaulted `quit` request).
     pub async fn wait_gone(&self) {
-        if self.shared.gone.load(Ordering::SeqCst) {
-            return;
-        }
-        let (tx, rx) = futures::channel::oneshot::channel();
-        self.shared.quit_waiters.lock().unwrap().push(tx);
-        if self.shared.gone.load(Ordering::SeqCst) {
-            return;
-        }
+        let rx = {
+            let mut w = self.shared.quit_waiters.lock().unwrap();
+            if self.shared.gone.load(Ordering::SeqCst) {
+                return;
+            }
+            let (tx, rx) = futures::channel::oneshot::channel();
+            w.push(tx);
+            rx
+        };
         let _ = rx.await;
     }
 
@@ -150,6 +169,14 @@ fn debug_stat(p: &FsPath) -> Option<Stat> {
     Some(Stat { name: name.into(), kind, len: 0, version: 0 })
 }
 
+const INJECT_USAGE: &str = "event NAME [win=W] [node=PATH] [attr=value ...] [default=VERB]
+mirror [win=W] [node=PATH] file=NAME value=TEXT
+bounds win=W [node=PATH] value='x y w h'
+frame [win=W]
+tick SECONDS
+drag n=N [type=TYPE] data=TEXT
+";
+
 #[async_trait::async_trait]
 impl FsBackend for HeadlessBackend {
     fn snapshot(&self) -> Arc<Snapshot> {
@@ -159,17 +186,16 @@ impl FsBackend for HeadlessBackend {
     async fn apply(&self, s: SessionId, op: Op) -> Result<(), Error> {
         let (reply, rx) = futures::channel::oneshot::channel();
         if self.tx.send(Msg::Apply { s, op, reply }).is_err() {
-            return Err(Error::new(ErrorKind::AppGone, ""));
+            return Err(gone_err());
         }
-        rx.await.unwrap_or_else(|_| Err(Error::new(ErrorKind::AppGone, "")))
+        rx.await.unwrap_or_else(|_| Err(gone_err()))
     }
 
     fn subscribe(&self, events_file: &FsPath) -> Result<tree::Subscription, Error> {
-        let (reply, rx) = mpsc::channel();
-        self.tx
-            .send(Msg::Subscribe { path: events_file.clone(), reply })
-            .map_err(|_| Error::new(ErrorKind::AppGone, ""))?;
-        rx.recv().unwrap_or_else(|_| Err(Error::new(ErrorKind::AppGone, "")))
+        if self.is_gone() {
+            return Err(gone_err());
+        }
+        self.bus.subscribe(events_file)
     }
 
     fn new_session(&self) -> SessionId {
@@ -178,7 +204,7 @@ impl FsBackend for HeadlessBackend {
 
     fn extra_stat(&self, p: &FsPath) -> Option<Stat> {
         let mut st = debug_stat(p)?;
-        if p.as_str() == LOG {
+        if st.kind != StatKind::Dir {
             st.len = self.extra_read(p).map(|b| b.len() as u64).unwrap_or(0);
         }
         Some(st)
@@ -194,9 +220,7 @@ impl FsBackend for HeadlessBackend {
 
     fn extra_read(&self, p: &FsPath) -> Option<Bytes> {
         match p.as_str() {
-            INJECT => Some(Bytes::from_static(
-                b"event NAME TARGET [k=v ...] [default=VERB]\nmirror FILE VALUE\nbounds NODE X Y W H\nframe [WIN]\ntick\n",
-            )),
+            INJECT => Some(Bytes::from_static(INJECT_USAGE.as_bytes())),
             LOG => {
                 let l = self.shared.log.lock().unwrap();
                 let mut s = String::new();
@@ -215,18 +239,21 @@ impl FsBackend for HeadlessBackend {
     }
 }
 
+/// A request whose answer headless acts on.
 struct PendingRequest {
     win: Option<String>,
     name: String,
+    drag: Option<u64>,
 }
 
 struct TreeThread {
-    /// `None` once the app has quit: dropping the tree ends every subscription.
-    tree: Option<Tree>,
-    reg: tree::Registry,
+    tree: Tree,
     shared: Arc<Shared>,
-    dirty: BTreeSet<String>,
+    opts: Options,
     requests: HashMap<u64, PendingRequest>,
+    /// Added to real time by `tick SECONDS`.
+    skew: Duration,
+    dirty: BTreeSet<String>,
 }
 
 fn gone_err() -> Error {
@@ -284,103 +311,105 @@ fn fmt_host(h: &HostCmd) -> String {
     }
 }
 
-/// Splits `windows/WIN[/rest]` into the window and the window-relative node.
-fn split_target(t: &str) -> Result<(Option<String>, Option<String>), Error> {
-    if t == "-" || t.is_empty() {
-        return Ok((None, None));
-    }
-    let t = t.trim_matches('/');
-    let mut it = t.splitn(3, '/');
-    match (it.next(), it.next(), it.next()) {
-        (Some("windows"), Some(w), rest) if !w.is_empty() => Ok((Some(w.to_string()), rest.map(str::to_string))),
-        _ => Err(Error::new(ErrorKind::NotFound, format!("{t}: want - or windows/WIN[/node]"))),
+fn default_answer_verb(name: &str) -> String {
+    match name {
+        "drop" => "refuse".into(),
+        n => n.into(),
     }
 }
 
-fn default_answer_verb(name: &str) -> &'static str {
-    match name {
-        "close" => "close",
-        "quit" => "quit",
-        "drop" => "refuse",
-        _ => "keep",
+fn prop<'a>(c: &'a Command, k: &str) -> Option<&'a str> {
+    c.props.iter().find(|(pk, _)| pk == k).map(|(_, v)| v.as_str())
+}
+
+fn need<'a>(c: &'a Command, k: &str) -> Result<&'a str, Error> {
+    prop(c, k).ok_or_else(|| Error::new(ErrorKind::BadSyntax, format!("{}: needs {k}=", c.verb)))
+}
+
+/// The full path for `win=` and `node=`: a node, a window dir, or `""`.
+fn target(c: &Command) -> Result<String, Error> {
+    match (prop(c, "win"), prop(c, "node")) {
+        (_, Some(n)) if n.starts_with("windows/") => Ok(n.trim_matches('/').to_string()),
+        (Some(w), Some(n)) => Ok(format!("windows/{w}/{}", n.trim_matches('/'))),
+        (Some(w), None) => Ok(format!("windows/{w}")),
+        (None, Some(n)) => Err(Error::new(ErrorKind::BadSyntax, format!("node={n} needs win="))),
+        (None, None) => Ok(String::new()),
     }
+}
+
+/// `windows/W/...` with something after the window: a node.
+fn is_node_path(p: &str) -> bool {
+    p.starts_with("windows/") && p.matches('/').count() >= 2
 }
 
 impl TreeThread {
     fn run(mut self, rx: mpsc::Receiver<Msg>) {
-        let mut last_frame = Instant::now();
+        let mut last = Instant::now();
         loop {
-            let wait = FRAME.saturating_sub(last_frame.elapsed());
+            let wait = FRAME.saturating_sub(last.elapsed());
             match rx.recv_timeout(wait) {
                 Ok(Msg::Apply { s, op, reply }) => {
                     let r = self.apply(s, op);
                     self.publish();
                     let _ = reply.send(r);
                 }
-                Ok(Msg::Subscribe { path, reply }) => {
-                    let r = match self.tree.as_ref() {
-                        Some(t) => t.bus().subscribe(&path),
-                        None => Err(gone_err()),
-                    };
-                    let _ = reply.send(r);
-                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
-            if last_frame.elapsed() >= FRAME {
-                self.frame(None);
+            if last.elapsed() >= FRAME {
+                if self.opts.auto_frames {
+                    for w in std::mem::take(&mut self.dirty) {
+                        self.tree.frame_drawn(&w);
+                    }
+                }
                 self.tick();
                 self.publish();
-                last_frame = Instant::now();
+                last = Instant::now();
             }
         }
+    }
+
+    fn gone(&self) -> bool {
+        self.shared.gone.load(Ordering::SeqCst)
     }
 
     fn publish(&self) {
-        if let Some(t) = self.tree.as_ref() {
-            *self.shared.snap.lock().unwrap() = t.snapshot();
-        }
+        *self.shared.snap.lock().unwrap() = self.tree.snapshot();
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now() + self.skew
     }
 
     fn apply(&mut self, s: SessionId, op: Op) -> Result<(), Error> {
-        if self.tree.is_none() {
+        if self.gone() {
             return Err(gone_err());
         }
-        if let Op::Write { path, data } | Op::Append { path, data } = &op {
-            if path.as_str() == INJECT {
+        match &op {
+            Op::Write { path, data } | Op::Append { path, data } if path.as_str() == INJECT => {
                 return self.inject(data);
             }
-            if path.as_str().starts_with("debug/") || path.as_str() == DEBUG {
-                return Err(Error::new(ErrorKind::BadValue, format!("{path} is read-only")));
+            Op::Write { path, .. } | Op::Append { path, .. } | Op::Mkdir { path } | Op::Remove { path }
+                if path.as_str() == DEBUG || path.as_str().starts_with("debug/") =>
+            {
+                return Err(Error::new(ErrorKind::BadValue, format!("{path} is fixed")));
             }
+            _ => {}
         }
-        if matches!(&op, Op::Mkdir { path } | Op::Remove { path } if path.as_str().starts_with("debug")) {
-            return Err(Error::new(ErrorKind::BadValue, "debug is fixed"));
-        }
-        let changes = self.tree.as_mut().unwrap().apply(s, op)?;
+        let changes = self.tree.apply(s, op)?;
         self.dirty.extend(changes.dirty_windows.iter().cloned());
         self.host(changes.host);
+        // Request defaults with no reader are handed out by tick; act now.
+        let cmds = self.tree.tick(self.now());
+        self.host(cmds);
         Ok(())
     }
 
-    fn frame(&mut self, win: Option<&str>) {
-        let Some(t) = self.tree.as_mut() else { return };
-        match win {
-            Some(w) => {
-                self.dirty.remove(w);
-                t.frame_drawn(w);
-            }
-            None => {
-                for w in std::mem::take(&mut self.dirty) {
-                    t.frame_drawn(&w);
-                }
-            }
-        }
-    }
-
     fn tick(&mut self) {
-        let Some(t) = self.tree.as_mut() else { return };
-        let cmds = t.tick(Instant::now());
+        if self.gone() {
+            return;
+        }
+        let cmds = self.tree.tick(self.now());
         self.host(cmds);
     }
 
@@ -389,51 +418,37 @@ impl TreeThread {
     fn host(&mut self, cmds: Vec<HostCmd>) {
         let mut queue: VecDeque<HostCmd> = cmds.into();
         while let Some(h) = queue.pop_front() {
+            if self.gone() {
+                return;
+            }
             self.shared.log(fmt_host(&h));
-            let Some(t) = self.tree.as_mut() else { return };
             match h {
-                HostCmd::Quit => {
-                    self.quit();
-                    return;
-                }
+                HostCmd::Quit => self.quit(),
                 HostCmd::Window(w) => {
                     self.dirty.insert(w.name);
                 }
-                HostCmd::WindowCtl { win, cmd } if cmd.verb == "close" && cmd.props.iter().all(|(k, _)| k != "seq") => {
-                    let ev = EventMsg {
-                        kind: EventKind::Request,
-                        name: "close".into(),
-                        win: Some(win.clone()),
-                        node: None,
-                        attrs: Vec::new(),
-                        via: Via::Ctl,
-                    };
-                    let default = Answer(Command { verb: "close".into(), ..Default::default() });
-                    let seq = t.open_request(ev, default, REQUEST_TIMEOUT);
-                    self.requests.insert(seq, PendingRequest { win: Some(win), name: "close".into() });
+                HostCmd::Redraw { win } => {
+                    self.dirty.insert(win);
+                }
+                HostCmd::WindowCtl { win, cmd } if cmd.verb == "close" => {
+                    // Asking to close, as the close button does: a request.
+                    let ev = EventMsg::new(EventKind::Request, "close").win(&win).attr("via", "ctl");
+                    let seq = self.tree.open_request(ev, Answer::verb("close"), REQUEST_TIMEOUT);
+                    self.requests.insert(seq, PendingRequest { win: Some(win), name: "close".into(), drag: None });
+                    queue.extend(self.tree.tick(self.now()));
                 }
                 HostCmd::Answer { seq, answer } => {
                     let Some(req) = self.requests.remove(&seq) else { continue };
-                    match (req.name.as_str(), answer.0.verb.as_str()) {
-                        ("close", "close") => {
-                            if let Some(w) = req.win {
-                                let op = Op::Write {
-                                    path: FsPath::new(format!("windows/{w}/ctl")),
-                                    data: Bytes::from_static(b"destroy"),
-                                };
-                                match t.apply(HOST_SESSION, op) {
-                                    Ok(c) => {
-                                        self.dirty.extend(c.dirty_windows);
-                                        queue.extend(c.host);
-                                    }
-                                    Err(e) => self.shared.log(format!("error destroy {w}: {e}")),
-                                }
-                            }
+                    if let Some(d) = req.drag {
+                        self.tree.drag_done(d);
+                    }
+                    match (req.name.as_str(), answer.0.verb.as_str(), req.win) {
+                        ("close", "close", Some(w)) => {
+                            let c = self.tree.window_closed(&w);
+                            self.dirty.remove(&w);
+                            queue.extend(c.host);
                         }
-                        ("quit", "quit") => {
-                            self.quit();
-                            return;
-                        }
+                        ("quit", "quit", None) => self.quit(),
                         _ => {}
                     }
                 }
@@ -443,122 +458,144 @@ impl TreeThread {
     }
 
     fn quit(&mut self) {
-        // Publish the last snapshot, then drop the tree: its event bus goes
-        // with it, so every blocked `events` read sees end of file.
-        self.publish();
-        self.tree = None;
+        self.tree.app_gone();
         self.requests.clear();
+        self.publish();
         self.shared.set_gone();
     }
 
-    fn node_type(&self, path: &str) -> Option<String> {
-        let snap = self.shared.snap.lock().unwrap().clone();
-        let b = snap.read(&FsPath::new(format!("{path}/type")))?;
-        Some(String::from_utf8_lossy(&b).trim().to_string())
-    }
-
-    fn event_kind(&self, target: &str, name: &str) -> EventKind {
-        if target.starts_with("windows/") {
-            if let Some(ty) = self.node_type(target) {
-                if let Some(spec) = self.reg.get(&ty) {
-                    if let Some(e) = spec.events.iter().find(|e| e.name == name) {
-                        return e.kind;
-                    }
-                }
-            }
-        }
-        match name {
-            "close" | "quit" | "drop" | "complete" => EventKind::Request,
-            "change" | "select" | "cursor" | "resize" | "layout" | "move" | "scroll" | "hover" | "state"
-            | "drag" => EventKind::State,
-            _ => EventKind::Action,
-        }
+    fn spec_kind(&self, path: &str, name: &str) -> Option<EventKind> {
+        let spec = self.tree.node(path)?.spec()?;
+        spec.events.iter().find(|e| e.name == name).map(|e| e.kind)
     }
 
     fn inject(&mut self, data: &[u8]) -> Result<(), Error> {
         let cmds = proto::parse_ctl(data)?;
         // Check every line before applying any, as a ctl write does.
         for c in &cmds {
-            match c.verb.as_str() {
-                "event" if c.args.len() == 2 => {
-                    split_target(&c.args[1])?;
-                }
-                "mirror" if c.args.len() == 2 => {}
-                "bounds" if c.args.len() == 5 => {
-                    for a in &c.args[1..] {
-                        a.parse::<f32>().map_err(|_| Error::new(ErrorKind::BadValue, a.clone()))?;
+            target(c)?;
+            let ok = match c.verb.as_str() {
+                "event" => c.args.len() == 1,
+                "mirror" => c.args.is_empty() && prop(c, "file").is_some() && prop(c, "value").is_some(),
+                "bounds" => {
+                    let v = need(c, "value")?;
+                    let ok = v.split_whitespace().filter(|x| x.parse::<f32>().is_ok()).count() == 4
+                        && v.split_whitespace().count() == 4;
+                    if !ok {
+                        return Err(Error::new(ErrorKind::BadValue, format!("value={v}")));
                     }
+                    c.args.is_empty() && prop(c, "win").is_some()
                 }
-                "frame" if c.args.len() <= 1 => {}
-                "tick" if c.args.is_empty() => {}
-                "event" | "mirror" | "bounds" | "frame" | "tick" => {
-                    return Err(Error::new(ErrorKind::BadSyntax, format!("usage: {}", c.verb)));
+                "frame" => c.args.is_empty(),
+                "tick" => match &c.args[..] {
+                    [s] => match s.parse::<f64>() {
+                        Ok(v) if v >= 0.0 && v.is_finite() => true,
+                        _ => return Err(Error::new(ErrorKind::BadValue, s.clone())),
+                    },
+                    _ => false,
+                },
+                "drag" => {
+                    let n = need(c, "n")?;
+                    n.parse::<u64>().map_err(|_| Error::new(ErrorKind::BadValue, format!("n={n}")))?;
+                    need(c, "data")?;
+                    c.args.is_empty()
                 }
                 v => return Err(Error::new(ErrorKind::UnknownCommand, v.to_string())),
+            };
+            if !ok {
+                let usage = INJECT_USAGE.lines().find(|l| l.starts_with(c.verb.as_str())).unwrap_or("");
+                return Err(Error::new(ErrorKind::BadSyntax, usage.to_string()));
             }
         }
         for c in cmds {
-            self.inject_one(c)?;
-            if self.tree.is_none() {
-                break;
+            if self.gone() {
+                return Err(gone_err());
             }
+            self.inject_one(c);
         }
         Ok(())
     }
 
-    fn inject_one(&mut self, c: Command) -> Result<(), Error> {
+    fn inject_one(&mut self, c: Command) {
         match c.verb.as_str() {
             "event" => {
                 let name = c.args[0].clone();
-                let target = c.args[1].clone();
-                let (win, node) = split_target(&target)?;
-                let kind = self.event_kind(&target, &name);
+                let path = target(&c).unwrap();
+                let node = is_node_path(&path);
+                let mut ev = EventMsg::new(EventKind::Action, &name);
+                if let Some(w) = prop(&c, "win") {
+                    ev = ev.win(w);
+                }
+                if node {
+                    ev = ev.node(&path);
+                }
                 let mut default = None;
-                let attrs: Vec<(String, String)> = c
-                    .props
-                    .into_iter()
-                    .filter(|(k, v)| {
-                        if k == "default" {
-                            default = Some(v.clone());
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    .collect();
-                let ev = EventMsg { kind, name: name.clone(), win: win.clone(), node, attrs, via: Via::User };
-                let t = self.tree.as_mut().unwrap();
+                for (k, v) in &c.props {
+                    match k.as_str() {
+                        "win" | "node" => {}
+                        "default" => default = Some(v.clone()),
+                        _ => ev.attrs.push((k.clone(), v.clone())),
+                    }
+                }
+                let kind = if node {
+                    self.spec_kind(&path, &name).unwrap_or(EventKind::Action)
+                } else if matches!(name.as_str(), "close" | "quit") {
+                    EventKind::Request
+                } else if matches!(name.as_str(), "state" | "resize" | "move") {
+                    EventKind::State
+                } else {
+                    EventKind::Action
+                };
                 let seq = if kind == EventKind::Request {
-                    let verb = default.unwrap_or_else(|| default_answer_verb(&name).to_string());
-                    let seq = t.open_request(ev, Answer(Command { verb, ..Default::default() }), REQUEST_TIMEOUT);
-                    self.requests.insert(seq, PendingRequest { win, name: name.clone() });
+                    let drag = ev.attrs.iter().find(|(k, _)| k == "drag").and_then(|(_, v)| v.parse().ok());
+                    let verb = default.unwrap_or_else(|| default_answer_verb(&name));
+                    let win = prop(&c, "win").map(str::to_string);
+                    let seq = self.tree.open_request(ev, Answer::verb(&verb), REQUEST_TIMEOUT);
+                    if !node || drag.is_some() {
+                        self.requests.insert(seq, PendingRequest { win, name: name.clone(), drag });
+                    }
                     seq
                 } else {
-                    t.emit(ev)
+                    ev.kind = kind;
+                    self.tree.emit(ev)
                 };
                 self.shared.log(format!("event {name} seq={seq}"));
+                let cmds = self.tree.tick(self.now());
+                self.host(cmds);
             }
             "mirror" => {
-                let file = FsPath::new(c.args[0].clone());
-                let s = file.as_str();
-                let Some(i) = s.rfind('/') else {
-                    return Err(Error::new(ErrorKind::NotFound, s.to_string()));
-                };
-                let (node, f) = (&s[..i], &s[i + 1..]);
-                let value = Bytes::from(c.args[1].clone().into_bytes());
-                self.tree.as_mut().unwrap().mirror(node, f, value, Via::User);
+                let path = target(&c).unwrap();
+                let value = Bytes::from(prop(&c, "value").unwrap().to_string());
+                self.tree.mirror(&path, prop(&c, "file").unwrap(), value, Via::User);
             }
             "bounds" => {
-                let v: Vec<f32> = c.args[1..].iter().map(|a| a.parse().unwrap_or(0.0)).collect();
-                self.tree.as_mut().unwrap().report_bounds(&c.args[0], [v[0], v[1], v[2], v[3]]);
+                let path = target(&c).unwrap();
+                let v: Vec<f32> = prop(&c, "value").unwrap().split_whitespace().map(|x| x.parse().unwrap()).collect();
+                self.tree.report_bounds(&path, [v[0], v[1], v[2], v[3]]);
             }
-            "frame" => {
-                let w = c.args.first().cloned();
-                self.frame(w.as_deref());
+            "frame" => match prop(&c, "win") {
+                Some(w) => {
+                    self.dirty.remove(w);
+                    self.tree.frame_drawn(w);
+                }
+                None => {
+                    self.dirty.clear();
+                    for w in self.tree.windows() {
+                        self.tree.frame_drawn(&w);
+                    }
+                }
+            },
+            "tick" => {
+                let s: f64 = c.args[0].parse().unwrap();
+                self.skew += Duration::from_secs_f64(s);
+                self.tick();
             }
-            "tick" => self.tick(),
+            "drag" => {
+                let n = prop(&c, "n").unwrap();
+                let data = Bytes::from(prop(&c, "data").unwrap().to_string());
+                self.tree.mirror(&format!("drags/{n}"), "data", data, Via::User);
+            }
             _ => unreachable!("checked above"),
         }
-        Ok(())
     }
 }

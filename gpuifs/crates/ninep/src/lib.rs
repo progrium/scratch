@@ -16,12 +16,14 @@ use bytes::Bytes;
 use futures::io::{AsyncRead, AsyncWrite};
 
 pub mod fcall;
-mod headless;
+pub mod headless;
 mod server;
 pub mod transport;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_headless;
 
 pub use headless::HeadlessBackend;
 pub use server::{CTL_LIMIT, DATA_LIMIT, MAX_MSIZE, PIXELS_LIMIT, TEXT_LIMIT};

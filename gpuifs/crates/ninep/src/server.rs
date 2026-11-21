@@ -2,9 +2,17 @@
 //! semantics PLAN.md § W3 fixes:
 //!
 //! - `ctl` files apply each write on arrival; the reply waits for the ack.
+//!   A write that doesn't end in a newline and fills a whole 8 KiB piece (as
+//!   `cat cmds >ctl` and the kernel's iounit split make) keeps its last
+//!   partial line until the next write or the clunk, so long command files
+//!   aren't cut mid-line.
 //! - Text and data files buffer writes from open to clunk and apply the whole
 //!   value at clunk. An error at clunk fails the clunk. A file named `append`
 //!   applies each write as `Op::Append`.
+//! - Short files apply per write, so `echo` sees their errors: `style`,
+//!   `order`, `tag`, `on`, `type`, ... (see `PER_WRITE`), anything under
+//!   `theme/` or `menus/`, and any prop whose `catalog` kind is a word, bool,
+//!   number or enum. Each write is the whole value.
 //! - `events` files: each open is a subscription; reads block until whole
 //!   lines are ready; `Tflush` cancels a blocked read.
 //! - `Tcreate` with `DMDIR` is `mkdir`; `Tremove` on a directory removes the
@@ -41,6 +49,16 @@ pub const TEXT_LIMIT: usize = 16 * 1024 * 1024;
 pub const DATA_LIMIT: usize = 64 * 1024 * 1024;
 /// An image or `pixels` write.
 pub const PIXELS_LIMIT: usize = 16 * 1024 * 1024;
+
+/// A `ctl` write at least this long with no final newline is taken to be a
+/// piece of a longer write (cat's buffer, the kernel's iounit split).
+const CTL_PIECE: usize = 8192;
+
+/// Files that apply per write whatever their node type.
+pub const PER_WRITE: &[&str] = &[
+    "style", "order", "tag", "on", "type", "flags", "drop", "drag-type", "context", "keymap", "focus",
+    "page", "expanded", "origin", "selection", "controlled", "sorted", "state", "mode",
+];
 
 // ---------------------------------------------------------------------------
 // What the server needs from a backend. `FsBackend` is adapted to this; tests
@@ -128,7 +146,9 @@ type SubCell = Arc<futures::lock::Mutex<Box<dyn Sub>>>;
 
 enum Opened {
     Dir { entries: Vec<Vec<u8>>, next_off: u64, next_idx: usize },
-    File { cache: Option<Bytes>, wbuf: Vec<u8>, dirty: bool },
+    /// `wbuf` is the value so far (text/data), or a held partial line (`ctl`).
+    /// `per_write` files apply each write; `dirty` is a truncating open not yet written.
+    File { cache: Option<Bytes>, wbuf: Vec<u8>, dirty: bool, per_write: bool },
     Events { sub: SubCell },
 }
 
@@ -252,6 +272,28 @@ impl Conn {
         self.msize.load(Ordering::Relaxed).saturating_sub(IOHDRSZ)
     }
 
+    /// Whether a text or data file applies each write (see the module doc).
+    fn per_write(&self, p: &FsPath) -> bool {
+        let name = base(p);
+        if is_append(p) || PER_WRITE.contains(&name) {
+            return true;
+        }
+        let s = p.as_str();
+        if s.starts_with("theme/") || s.starts_with("menus/") || s == "keymap" {
+            return true;
+        }
+        let node = parent(p);
+        let Some(ty) = self.b.view().read(&join(&node, "type")) else { return false };
+        let ty = String::from_utf8_lossy(&ty);
+        let ty = ty.trim();
+        let Some(spec) = catalog::all().find(|t| t.name == ty) else { return false };
+        let Some(prop) = spec.props.iter().find(|pr| pr.name == name) else { return false };
+        matches!(
+            prop.kind,
+            catalog::PropKind::Word | catalog::PropKind::Bool | catalog::PropKind::Number | catalog::PropKind::Enum(_)
+        )
+    }
+
     async fn handle(&self, m: Tmsg) -> Rmsg {
         match m {
             // Version and Flush are handled in the loop.
@@ -371,11 +413,12 @@ impl Conn {
                 if writes {
                     return err("permission denied");
                 }
-                Opened::File { cache: None, wbuf: Vec::new(), dirty: false }
+                Opened::File { cache: None, wbuf: Vec::new(), dirty: false, per_write: false }
             }
             StatKind::Ctl | StatKind::Text | StatKind::Data => {
                 let trunc = mode & OTRUNC != 0 && writes && kind != StatKind::Ctl && !is_append(&path);
-                Opened::File { cache: None, wbuf: Vec::new(), dirty: trunc }
+                let per_write = kind != StatKind::Ctl && self.per_write(&path);
+                Opened::File { cache: None, wbuf: Vec::new(), dirty: trunc, per_write }
             }
         };
         let mut fids = self.fids.lock().unwrap();
@@ -432,7 +475,8 @@ impl Conn {
                 _ => {}
             }
             let dirty = st.kind != StatKind::Ctl && !is_append(&path);
-            (make_qid(&path, &st), st.kind, Opened::File { cache: None, wbuf: Vec::new(), dirty })
+            let per_write = st.kind != StatKind::Ctl && self.per_write(&path);
+            (make_qid(&path, &st), st.kind, Opened::File { cache: None, wbuf: Vec::new(), dirty, per_write })
         };
         let _ = rw;
         let mut fids = self.fids.lock().unwrap();
@@ -528,7 +572,8 @@ impl Conn {
             return gone();
         }
         let n = data.len() as u32;
-        let (path, kind) = {
+        let piece = data.len() >= CTL_PIECE || data.len() as u32 == self.iounit();
+        let (path, op) = {
             let mut fids = self.fids.lock().unwrap();
             let Some(f) = fids.get_mut(&fid) else { return err("unknown fid") };
             let Some(mode) = f.mode else { return err("fid not open") };
@@ -537,48 +582,65 @@ impl Conn {
             }
             let path = f.path.clone();
             let kind = f.kind;
-            match (kind, f.opened.as_mut()) {
-                (StatKind::Ctl, _) => {
-                    if data.len() > CTL_LIMIT {
+            let Some(Opened::File { wbuf, dirty, cache, per_write }) = f.opened.as_mut() else {
+                return err("permission denied");
+            };
+            *cache = None;
+            match kind {
+                StatKind::Ctl => {
+                    let held = !wbuf.is_empty();
+                    let mut buf = std::mem::take(wbuf);
+                    buf.extend_from_slice(&data);
+                    if !buf.ends_with(b"\n") && (held || piece) {
+                        // Keep the partial last line for the next write or the clunk.
+                        let cut = buf.iter().rposition(|&c| c == b'\n').map(|i| i + 1).unwrap_or(0);
+                        let tail = buf.split_off(cut);
+                        if tail.len() > CTL_LIMIT {
+                            return perr(ErrorKind::TooLarge, format!("ctl line over {} bytes", CTL_LIMIT));
+                        }
+                        *wbuf = tail;
+                        if buf.is_empty() {
+                            return Rmsg::Write { count: n };
+                        }
+                    }
+                    if buf.len() > CTL_LIMIT {
                         return perr(ErrorKind::TooLarge, format!("ctl write over {} bytes", CTL_LIMIT));
                     }
+                    (path.clone(), Op::Write { path, data: Bytes::from(buf) })
                 }
-                (_, Some(Opened::File { .. })) if is_append(&path) => {
-                    if data.len() > write_limit(&path, kind) {
-                        return perr(ErrorKind::TooLarge, "");
-                    }
-                }
-                (StatKind::Text | StatKind::Data, Some(Opened::File { wbuf, dirty, cache })) => {
+                StatKind::Text | StatKind::Data => {
                     let limit = write_limit(&path, kind);
-                    let end = offset.saturating_add(data.len() as u64);
-                    if end > limit as u64 {
-                        return perr(ErrorKind::TooLarge, format!("{} over {} bytes", base(&path), limit));
+                    if is_append(&path) {
+                        if data.len() > limit {
+                            return perr(ErrorKind::TooLarge, format!("append over {limit} bytes"));
+                        }
+                        (path.clone(), Op::Append { path, data: Bytes::from(data) })
+                    } else if *per_write {
+                        // Each write is the whole value.
+                        if data.len() > limit {
+                            return perr(ErrorKind::TooLarge, format!("{} over {} bytes", base(&path), limit));
+                        }
+                        *dirty = false;
+                        (path.clone(), Op::Write { path, data: Bytes::from(data) })
+                    } else {
+                        let end = offset.saturating_add(data.len() as u64);
+                        if end > limit as u64 {
+                            return perr(ErrorKind::TooLarge, format!("{} over {} bytes", base(&path), limit));
+                        }
+                        let (off, end) = (offset as usize, end as usize);
+                        if wbuf.len() < end {
+                            wbuf.resize(end, 0);
+                        }
+                        wbuf[off..end].copy_from_slice(&data);
+                        *dirty = true;
+                        return Rmsg::Write { count: n };
                     }
-                    let (off, end) = (offset as usize, end as usize);
-                    if wbuf.len() < end {
-                        wbuf.resize(end, 0);
-                    }
-                    wbuf[off..end].copy_from_slice(&data);
-                    *dirty = true;
-                    *cache = None;
-                    return Rmsg::Write { count: n };
                 }
                 _ => return err("permission denied"),
             }
-            (path, kind)
         };
-        let op = if kind == StatKind::Ctl {
-            Op::Write { path: path.clone(), data: Bytes::from(data) }
-        } else {
-            Op::Append { path: path.clone(), data: Bytes::from(data) }
-        };
-        let r = self.b.apply(self.sid, op).await;
-        if let Some(Fid { opened: Some(Opened::File { cache, .. }), .. }) =
-            self.fids.lock().unwrap().get_mut(&fid)
-        {
-            *cache = None;
-        }
-        match r {
+        let _ = path;
+        match self.b.apply(self.sid, op).await {
             Ok(()) => Rmsg::Write { count: n },
             Err(e) => err(e),
         }
@@ -588,7 +650,13 @@ impl Conn {
         let Some(f) = self.fids.lock().unwrap().remove(&fid) else { return err("unknown fid") };
         let rclose = f.mode.map(|m| m & ORCLOSE != 0).unwrap_or(false);
         let mut result = Rmsg::Clunk;
-        if let Some(Opened::File { wbuf, dirty: true, .. }) = f.opened {
+        let pending = match f.opened {
+            // A held partial ctl line, or a buffered (or truncated, unwritten) value.
+            Some(Opened::File { wbuf, .. }) if f.kind == StatKind::Ctl && !wbuf.is_empty() => Some(wbuf),
+            Some(Opened::File { wbuf, dirty: true, .. }) if f.kind != StatKind::Ctl => Some(wbuf),
+            _ => None,
+        };
+        if let Some(wbuf) = pending {
             if self.b.is_gone() {
                 return gone();
             }
@@ -597,11 +665,10 @@ impl Conn {
                 result = err(e);
             }
         }
-        if rclose && f.kind == StatKind::Dir {
-            if let Err(e) = self.b.apply(self.sid, Op::Remove { path: f.path }).await {
+        if rclose && f.kind == StatKind::Dir
+            && let Err(e) = self.b.apply(self.sid, Op::Remove { path: f.path }).await {
                 result = err(e);
             }
-        }
         result
     }
 
@@ -656,14 +723,12 @@ impl Conn {
             return err("permission denied: rename");
         }
         // Truncation through wstat (length 0) on an open text file.
-        if d.length == 0 && f.kind != StatKind::Dir {
-            if let Some(Opened::File { wbuf, dirty, .. }) = f.opened.as_mut() {
-                if f.kind != StatKind::Ctl {
+        if d.length == 0 && f.kind != StatKind::Dir
+            && let Some(Opened::File { wbuf, dirty, .. }) = f.opened.as_mut()
+                && f.kind != StatKind::Ctl {
                     wbuf.clear();
                     *dirty = true;
                 }
-            }
-        }
         // Mode, times, owner: accepted and ignored.
         Rmsg::Wstat
     }
