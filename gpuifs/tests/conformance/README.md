@@ -10,7 +10,9 @@ mistakes, the implementation's, or a gap being decided, and settle each one
 on purpose.
 
 ```sh
-cargo build -p gpuifs                     # from gpuifs/
+# from gpuifs/, with Zig 0.16 on PATH and a 9front amd64 root (crates/h9sys/README.md)
+cargo build -p gpuifs --no-default-features
+export H9ROOT=$PWD/third_party/hyper9/.local/9front/rootamd64
 tests/conformance/run                     # every script
 tests/conformance/run -m M1               # only what M1 should pass
 tests/conformance/run 14-events 15-requests

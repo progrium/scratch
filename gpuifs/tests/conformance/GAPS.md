@@ -107,7 +107,10 @@ four change what clients can do, so they matter most.
 20. Writes to read-only files (`id`, `bounds`, `trace`). These fail at
     open, with a permission error from 9P, not one of the phrases. The
     suite doesn't test them.
-21. Errors on open go through the kernel. A walk that fails may reach the
+21. *(Confirmed in h9: the 9front kernel turns a failed walk into
+    `file does not exist: '...'`, so lib.rc reads that as `not found`, and
+    rc's own open error can't be redirected; see lib.rc `_write`.)*
+    Errors on open go through the kernel. A walk that fails may reach the
     client as `'/mnt/gpui/x' file does not exist`, not `not found`, when the
     9front kernel rewrites the error. Worth checking in h9 (W3, W4).
 
