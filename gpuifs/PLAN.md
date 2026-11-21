@@ -444,6 +444,11 @@ pub trait FsBackend: Send + Sync + 'static {
     async fn apply(&self, s: tree::SessionId, op: tree::Op) -> Result<(), proto::Error>; // waits for ack
     fn subscribe(&self, events_file: &tree::FsPath) -> Result<tree::Subscription, proto::Error>;
     fn new_session(&self) -> tree::SessionId;
+    // Additive (W3), with defaults: files outside the tree (headless /debug) and quit state.
+    fn extra_stat(&self, p: &tree::FsPath) -> Option<tree::Stat> { None }
+    fn extra_readdir(&self, p: &tree::FsPath) -> Vec<tree::Stat> { vec![] }
+    fn extra_read(&self, p: &tree::FsPath) -> Option<Bytes> { None }
+    fn is_gone(&self) -> bool { false }                 // then every access but an events read fails `app gone`
 }
 pub async fn serve<T: AsyncRead + AsyncWrite + Unpin>(io: T, b: Arc<dyn FsBackend>) -> io::Result<()>;
 pub struct HeadlessBackend;  impl HeadlessBackend { pub fn new(reg: tree::Registry) -> Arc<Self>; }
