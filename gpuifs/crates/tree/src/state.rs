@@ -78,7 +78,14 @@ impl Node {
             None => {
                 let first = self.next_first;
                 self.next_first += 1;
-                self.files.insert(name.to_string(), NodeFile { data, version, first });
+                self.files.insert(
+                    name.to_string(),
+                    NodeFile {
+                        data,
+                        version,
+                        first,
+                    },
+                );
             }
         }
     }
@@ -117,23 +124,50 @@ pub(crate) struct State {
 }
 
 /// Files every node has, beyond its type's props.
-pub(crate) const COMMON_WRITABLE: &[&str] =
-    &["style", "tag", "on", "context", "tooltip", "drop", "drag-type"];
+pub(crate) const COMMON_WRITABLE: &[&str] = &[
+    "style",
+    "tag",
+    "on",
+    "context",
+    "tooltip",
+    "drop",
+    "drag-type",
+];
 /// Files every node has that are computed or structural.
-pub(crate) const COMMON_SPECIAL: &[&str] = &["type", "order", "ctl", "events", "bounds", "id", "tree"];
+pub(crate) const COMMON_SPECIAL: &[&str] =
+    &["type", "order", "ctl", "events", "bounds", "id", "tree"];
 
 /// Event names an `on` file may list, beyond the type's own events.
 pub(crate) const ON_WORDS: &[&str] = &[
-    "click", "hover", "mouse_down", "mouse_up", "scroll", "key", "focus", "blur", "move", "drag",
+    "click",
+    "hover",
+    "mouse_down",
+    "mouse_up",
+    "scroll",
+    "key",
+    "focus",
+    "blur",
+    "move",
+    "drag",
     "drop",
 ];
 
 /// The files directly under a window directory.
 pub(crate) const WINDOW_FILES: &[&str] = &["ctl", "events", "title", "bounds", "state", "focus"];
 
-pub(crate) const ROOT_FILES: &[&str] =
-    &["version", "ctl", "events", "trace", "keymap", "clipboard", "clipboard-files"];
+pub(crate) const ROOT_FILES: &[&str] = &[
+    "version",
+    "ctl",
+    "events",
+    "trace",
+    "keymap",
+    "clipboard",
+    "clipboard-files",
+];
 pub(crate) const ROOT_DIRS: &[&str] = &["theme", "menus", "drags", "assets", "windows"];
+
+/// Theme tokens that are lengths, not `ThemeColor`s, with their defaults.
+pub(crate) const LENGTH_TOKENS: &[(&str, &str)] = &[("radius", "6"), ("radius_lg", "8")];
 
 pub(crate) const SIZE_WORDS: &[&str] = &["xs", "sm", "md", "lg"];
 
@@ -173,7 +207,11 @@ impl Registry {
         if ty == "overlays" {
             return Some(&OVERLAYS_SPEC);
         }
-        self.get(ty).or(if ty == "div" { Some(&DIV_FALLBACK) } else { None })
+        self.get(ty).or(if ty == "div" {
+            Some(&DIV_FALLBACK)
+        } else {
+            None
+        })
     }
 
     /// Whether any known type uses `word` as a variant.
@@ -188,9 +226,7 @@ pub(crate) fn prop_spec(spec: &'static TypeSpec, file: &str) -> Option<&'static 
 
 /// Whether `file` is the `append` pseudo-file of a type with `rows`.
 pub(crate) fn is_append_file(spec: &'static TypeSpec, file: &str) -> bool {
-    file == "append"
-        && prop_spec(spec, "append").is_none()
-        && prop_spec(spec, "rows").is_some()
+    file == "append" && prop_spec(spec, "append").is_none() && prop_spec(spec, "rows").is_some()
 }
 
 /// Child names that would hide a node file.
@@ -206,7 +242,9 @@ pub(crate) fn valid_name(name: &str) -> bool {
         && name != "."
         && name != ".."
         && !name.contains('/')
-        && !name.chars().any(|c| c.is_whitespace() || c == '\'' || c.is_control())
+        && !name
+            .chars()
+            .any(|c| c.is_whitespace() || c == '\'' || c.is_control())
 }
 
 /// `windows/<w>/...` -> `w`.
@@ -232,7 +270,9 @@ pub(crate) fn base_of(path: &str) -> &str {
 
 /// Node depth below the window directory (`root` is 1).
 pub(crate) fn depth_of(path: &str) -> usize {
-    win_relative(path).map(|r| r.split('/').count()).unwrap_or(0)
+    win_relative(path)
+        .map(|r| r.split('/').count())
+        .unwrap_or(0)
 }
 
 impl State {
@@ -296,12 +336,19 @@ impl State {
 
     pub fn is_secret(&self, reg: &Registry, path: &str) -> bool {
         self.node_file(reg, path, "flags")
-            .map(|f| String::from_utf8_lossy(f).split_whitespace().any(|w| w == "secret"))
+            .map(|f| {
+                String::from_utf8_lossy(f)
+                    .split_whitespace()
+                    .any(|w| w == "secret")
+            })
             .unwrap_or(false)
     }
 
     pub fn root_file(&self, name: &str) -> &[u8] {
-        self.root_files.get(name).map(|v| &v.data[..]).unwrap_or(b"")
+        self.root_files
+            .get(name)
+            .map(|v| &v.data[..])
+            .unwrap_or(b"")
     }
 
     pub fn win_file(&self, win: &str, name: &str) -> Option<&[u8]> {

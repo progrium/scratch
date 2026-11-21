@@ -125,7 +125,11 @@ impl<'a> View<'a> {
                         return Some((StatKind::Dir, win.version));
                     }
                     if WINDOW_FILES.contains(&rest) {
-                        let v = win.files.get(rest).map(|f| f.version).unwrap_or(win.version);
+                        let v = win
+                            .files
+                            .get(rest)
+                            .map(|f| f.version)
+                            .unwrap_or(win.version);
                         return Some((
                             match rest {
                                 "ctl" => StatKind::Ctl,
@@ -169,12 +173,25 @@ impl<'a> View<'a> {
     pub fn stat(&self, path: &str) -> Option<Stat> {
         let path = path.trim_matches('/');
         let (kind, version) = self.kind_of(path)?;
-        let name = if path.is_empty() { "/".to_string() } else { base_of(path).to_string() };
+        let name = if path.is_empty() {
+            "/".to_string()
+        } else {
+            base_of(path).to_string()
+        };
         let skip = matches!(kind, StatKind::Dir | StatKind::Events)
             || path == "trace"
             || path.ends_with("/tree");
-        let len = if skip { 0 } else { self.read(path).map(|b| b.len() as u64).unwrap_or(0) };
-        Some(Stat { name, kind, len, version })
+        let len = if skip {
+            0
+        } else {
+            self.read(path).map(|b| b.len() as u64).unwrap_or(0)
+        };
+        Some(Stat {
+            name,
+            kind,
+            len,
+            version,
+        })
     }
 
     pub fn readdir(&self, path: &str) -> Option<Vec<Stat>> {
@@ -183,9 +200,19 @@ impl<'a> View<'a> {
         if kind != StatKind::Dir {
             return None;
         }
-        let join = |n: &str| if path.is_empty() { n.to_string() } else { format!("{path}/{n}") };
+        let join = |n: &str| {
+            if path.is_empty() {
+                n.to_string()
+            } else {
+                format!("{path}/{n}")
+            }
+        };
         let names: Vec<String> = match path {
-            "" => ROOT_FILES.iter().chain(ROOT_DIRS).map(|s| s.to_string()).collect(),
+            "" => ROOT_FILES
+                .iter()
+                .chain(ROOT_DIRS)
+                .map(|s| s.to_string())
+                .collect(),
             "theme" => vec!["tokens".into(), "mode".into(), "name".into()],
             "menus" => self.st.menus.iter().map(|(n, _)| n.clone()).collect(),
             "assets" => self.st.assets.keys().cloned().collect(),
@@ -223,13 +250,23 @@ impl<'a> View<'a> {
             "version" => return stat(VERSION),
             "ctl" => return stat(ROOT_CTL),
             "events" => return Some(Bytes::new()),
-            "trace" => return Some(self.shared.map(|s| s.trace.lock().unwrap().contents()).unwrap_or_default()),
+            "trace" => {
+                return Some(
+                    self.shared
+                        .map(|s| s.trace.lock().unwrap().contents())
+                        .unwrap_or_default(),
+                );
+            }
             "keymap" | "clipboard" | "clipboard-files" | "theme/name" => {
                 return Some(Bytes::copy_from_slice(self.st.root_file(path)));
             }
             "theme/mode" => {
                 let m = self.st.root_file(path);
-                return Some(if m.is_empty() { Bytes::from_static(b"light") } else { Bytes::copy_from_slice(m) });
+                return Some(if m.is_empty() {
+                    Bytes::from_static(b"light")
+                } else {
+                    Bytes::copy_from_slice(m)
+                });
             }
             "theme/tokens" => return Some(self.tokens()),
             _ => {}
@@ -239,7 +276,12 @@ impl<'a> View<'a> {
             return None;
         }
         if let Some(m) = path.strip_prefix("menus/") {
-            return self.st.menus.iter().find(|(n, _)| n == m).map(|(_, v)| v.data.clone());
+            return self
+                .st
+                .menus
+                .iter()
+                .find(|(n, _)| n == m)
+                .map(|(_, v)| v.data.clone());
         }
         if let Some(a) = path.strip_prefix("assets/") {
             return self.st.assets.get(a).map(|v| v.data.clone());
@@ -265,7 +307,7 @@ impl<'a> View<'a> {
             "ctl" => Bytes::from(node_ctl(spec)),
             "events" => Bytes::new(),
             "bounds" => self.bounds(dir),
-            "id" => Bytes::copy_from_slice(dir.as_bytes()),
+            "id" => Bytes::copy_from_slice(win_relative(dir).unwrap_or(dir).as_bytes()),
             "tree" => Bytes::from(crate::doc::print_subtree(self.st, self.reg, dir)),
             "append" if is_append_file(spec, "append") => Bytes::new(),
             f => match n.files.get(f) {
@@ -284,9 +326,14 @@ impl<'a> View<'a> {
     }
 
     fn tokens(&self) -> Bytes {
-        let mode = if self.st.root_file("theme/mode") == b"dark" { style::Mode::Dark } else { style::Mode::Light };
+        let mode = if self.st.root_file("theme/mode") == b"dark" {
+            style::Mode::Dark
+        } else {
+            style::Mode::Light
+        };
         let mut all: std::collections::BTreeMap<String, String> = style::default_theme(mode)
             .iter()
+            .chain(LENGTH_TOKENS)
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
         for (k, v) in &self.st.tokens {

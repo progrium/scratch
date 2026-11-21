@@ -11,8 +11,10 @@ use catalog::{LineFormat, PropKind, Slots, Tier, TypeSpec};
 use proto::{Command, Error, ErrorKind};
 
 use crate::state::*;
-use crate::trace::{show_command, show_value};
-use crate::{Answer, Batch, Changes, HostCmd, Op, Registry, SessionId, Tree, WindowSpec};
+use crate::trace::{ctl_line, write_line};
+use crate::{
+    Answer, Batch, Changes, EventMsg, HostCmd, Op, Registry, SessionId, Tree, Via, WindowSpec,
+};
 
 pub(crate) fn err(kind: ErrorKind, detail: impl Into<String>) -> Error {
     Error::new(kind, detail)
@@ -36,6 +38,12 @@ pub(crate) struct Tx<'t> {
     trace: Vec<String>,
     batch_ops: Vec<BatchOp>,
     answered: HashSet<u64>,
+    /// Events to send once the op is in: `(event, Some(default))` is a request.
+    events: Vec<(EventMsg, Option<Answer>)>,
+    /// Above zero while applying the props of a `new` or a `tree` document:
+    /// those writes are traced as the one line that made them, and send no
+    /// echoes.
+    quiet: u32,
 }
 
 pub(crate) fn apply(tree: &mut Tree, s: SessionId, op: Op) -> Result<Changes, Error> {
@@ -55,6 +63,8 @@ pub(crate) fn apply(tree: &mut Tree, s: SessionId, op: Op) -> Result<Changes, Er
         trace: Vec::new(),
         batch_ops: Vec::new(),
         answered: HashSet::new(),
+        events: Vec::new(),
+        quiet: 0,
     };
     tx.st.generation = tx.st.generation.wrapping_add(1);
     match &op {
@@ -64,7 +74,15 @@ pub(crate) fn apply(tree: &mut Tree, s: SessionId, op: Op) -> Result<Changes, Er
         Op::Remove { path } => tx.remove(path.as_str())?,
         Op::SessionClosed => unreachable!(),
     }
-    let Tx { st, host, trace, batch_ops, answered, .. } = tx;
+    let Tx {
+        st,
+        host,
+        trace,
+        batch_ops,
+        answered,
+        events,
+        ..
+    } = tx;
     tree.state = Arc::new(st);
     for seq in answered {
         tree.requests.remove(&seq);
@@ -79,7 +97,11 @@ pub(crate) fn apply(tree: &mut Tree, s: SessionId, op: Op) -> Result<Changes, Er
                 started: Instant::now(),
             }),
             BatchOp::End(scope) => {
-                if let Some(i) = tree.batches.iter().position(|b| b.session == s && b.scope == scope) {
+                if let Some(i) = tree
+                    .batches
+                    .iter()
+                    .position(|b| b.session == s && b.scope == scope)
+                {
                     tree.batches.remove(i);
                 }
                 let wins = match scope {
@@ -100,7 +122,18 @@ pub(crate) fn apply(tree: &mut Tree, s: SessionId, op: Op) -> Result<Changes, Er
             t.push(l);
         }
     }
-    Ok(tree.finish(&old, host))
+    let ch = tree.finish(&old, host);
+    for (ev, default) in events {
+        match default {
+            Some(d) => {
+                tree.open_request(ev, d, crate::REQUEST_TIMEOUT);
+            }
+            None => {
+                tree.emit(ev);
+            }
+        }
+    }
+    Ok(ch)
 }
 
 /// The session's 9P connection went away: abort its batches.
@@ -135,7 +168,11 @@ fn restore(st: &mut State, frozen: &State, scope: Option<&str>) {
         Some(w) => {
             let prefix = format!("windows/{w}/");
             st.nodes.retain(|k, _| !k.starts_with(&prefix));
-            for (k, n) in frozen.nodes.range(prefix.clone()..).take_while(|(k, _)| k.starts_with(&prefix)) {
+            for (k, n) in frozen
+                .nodes
+                .range(prefix.clone()..)
+                .take_while(|(k, _)| k.starts_with(&prefix))
+            {
                 st.nodes.insert(k.clone(), n.clone());
             }
             match frozen.windows.get(w) {
@@ -201,10 +238,10 @@ pub(crate) fn diff(old: &State, new: &State) -> Changes {
             (Some((ka, na)), Some((kb, nb))) => match ka.cmp(kb) {
                 std::cmp::Ordering::Less => {
                     ch.removed.push((*ka).clone());
-                    if let Some(w) = window_of(ka) {
-                        if new.windows.contains_key(w) {
-                            dirty.insert(w.to_string());
-                        }
+                    if let Some(w) = window_of(ka)
+                        && new.windows.contains_key(w)
+                    {
+                        dirty.insert(w.to_string());
                     }
                     a.next();
                 }
@@ -236,17 +273,18 @@ pub(crate) fn diff(old: &State, new: &State) -> Changes {
                             ch.props.push(((*kb).clone(), "order".into()));
                             any = true;
                         }
-                        let keys: BTreeSet<&String> = na.files.keys().chain(nb.files.keys()).collect();
+                        let keys: BTreeSet<&String> =
+                            na.files.keys().chain(nb.files.keys()).collect();
                         for f in keys {
                             if na.files.get(f) != nb.files.get(f) {
                                 ch.props.push(((*kb).clone(), f.clone()));
                                 any = true;
                             }
                         }
-                        if any || na.children != nb.children {
-                            if let Some(w) = window_of(kb) {
-                                dirty.insert(w.to_string());
-                            }
+                        if (any || na.children != nb.children)
+                            && let Some(w) = window_of(kb)
+                        {
+                            dirty.insert(w.to_string());
                         }
                     }
                     a.next();
@@ -255,7 +293,10 @@ pub(crate) fn diff(old: &State, new: &State) -> Changes {
             },
         }
     }
-    ch.dirty_windows = dirty.into_iter().filter(|w| new.windows.contains_key(w)).collect();
+    ch.dirty_windows = dirty
+        .into_iter()
+        .filter(|w| new.windows.contains_key(w))
+        .collect();
     ch
 }
 
@@ -285,7 +326,10 @@ fn number_list(v: &str) -> bool {
 /// `w,h` or `x,y`.
 fn pair(v: &str) -> bool {
     let parts: Vec<&str> = v.split(',').collect();
-    parts.len() == 2 && parts.iter().all(|x| x.trim().parse::<f64>().is_ok_and(f64::is_finite))
+    parts.len() == 2
+        && parts
+            .iter()
+            .all(|x| x.trim().parse::<f64>().is_ok_and(f64::is_finite))
 }
 
 pub(crate) fn check_lines(fmt: LineFormat, data: &[u8]) -> Result<(), Error> {
@@ -359,7 +403,11 @@ fn check_prop(kind: PropKind, name: &str, data: &[u8]) -> Result<Bytes, Error> {
     })
 }
 
-fn style_arg_ok(kind: style::ArgKind, a: &proto::StyleArg, tokens_ok: &dyn Fn(&str) -> bool) -> bool {
+fn style_arg_ok(
+    kind: style::ArgKind,
+    a: &proto::StyleArg,
+    tokens_ok: &dyn Fn(&str) -> bool,
+) -> bool {
     use proto::StyleArg as A;
     use style::ArgKind as K;
     match kind {
@@ -376,29 +424,54 @@ fn style_arg_ok(kind: style::ArgKind, a: &proto::StyleArg, tokens_ok: &dyn Fn(&s
     }
 }
 
-fn style_args_ok(kind: style::ArgKind, args: &[proto::StyleArg], tokens_ok: &dyn Fn(&str) -> bool) -> bool {
+fn style_args_ok(
+    kind: style::ArgKind,
+    args: &[proto::StyleArg],
+    tokens_ok: &dyn Fn(&str) -> bool,
+) -> bool {
     use style::ArgKind as K;
     match kind {
         K::None => args.is_empty(),
         K::Many(ks) => {
-            args.len() == ks.len() && ks.iter().zip(args).all(|(k, a)| style_arg_ok(*k, a, tokens_ok))
+            args.len() == ks.len()
+                && ks
+                    .iter()
+                    .zip(args)
+                    .all(|(k, a)| style_arg_ok(*k, a, tokens_ok))
         }
         k => args.len() == 1 && style_arg_ok(k, &args[0], tokens_ok),
     }
 }
 
 impl Tx<'_> {
-    pub(crate) fn trace_len(&self) -> usize {
-        self.trace.len()
+    fn log(&mut self, line: String) {
+        if self.quiet == 0 {
+            self.trace.push(line);
+        }
     }
 
-    pub(crate) fn trace_truncate(&mut self, n: usize) {
-        self.trace.truncate(n);
+    pub(crate) fn quietly<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.quiet += 1;
+        let r = f(self);
+        self.quiet -= 1;
+        r
+    }
+
+    /// A state event echoing a client write (`via=ctl`).
+    fn echo(&mut self, ev: EventMsg) {
+        if self.quiet == 0 {
+            self.events.push((ev.via(Via::Ctl), None));
+        }
     }
 
     fn spec(&self, path: &str) -> Result<&'static TypeSpec, Error> {
-        let n = self.st.node(path).ok_or_else(|| err(ErrorKind::NotFound, path.to_string()))?;
-        self.reg.spec_of(&n.ty).ok_or_else(|| err(ErrorKind::UnknownType, n.ty.clone()))
+        let n = self
+            .st
+            .node(path)
+            .ok_or_else(|| err(ErrorKind::NotFound, path.to_string()))?;
+        self.reg
+            .spec_of(&n.ty)
+            .ok_or_else(|| err(ErrorKind::UnknownType, n.ty.clone()))
     }
 
     fn generation(&self) -> u32 {
@@ -408,13 +481,14 @@ impl Tx<'_> {
     // ---- dispatch -------------------------------------------------------
 
     fn write(&mut self, path: &str, data: Bytes, append: bool) -> Result<(), Error> {
-        let data = if append && !path.ends_with("/append") && path != "ctl" && !path.ends_with("/ctl") {
-            let mut cur = self.current(path).unwrap_or_default().to_vec();
-            cur.extend_from_slice(&data);
-            Bytes::from(cur)
-        } else {
-            data
-        };
+        let data =
+            if append && !path.ends_with("/append") && path != "ctl" && !path.ends_with("/ctl") {
+                let mut cur = self.current(path).unwrap_or_default().to_vec();
+                cur.extend_from_slice(&data);
+                Bytes::from(cur)
+            } else {
+                data
+            };
         match path {
             "ctl" => return self.ctl_root(&data),
             "version" | "trace" | "events" => return Err(read_only(path)),
@@ -423,18 +497,18 @@ impl Tx<'_> {
                     return Err(err(ErrorKind::TooLarge, path));
                 }
                 check_lines(LineFormat::Keymap, &data)?;
+                self.log(write_line(path, &data, false));
                 self.set_root("keymap", data);
                 self.host.push(HostCmd::Keymap);
-                self.trace.push(format!("write keymap len={}", self.st.root_file("keymap").len()));
                 return Ok(());
             }
             "clipboard" | "clipboard-files" => {
                 if data.len() > MAX_TEXT {
                     return Err(err(ErrorKind::TooLarge, path));
                 }
+                self.log(write_line(path, &data, false));
                 self.set_root(path, data);
                 self.host.push(HostCmd::Clipboard);
-                self.trace.push(format!("write {path} len={}", self.st.root_file(path).len()));
                 return Ok(());
             }
             "theme/tokens" => return self.write_tokens(&data),
@@ -445,12 +519,16 @@ impl Tx<'_> {
                 }
                 self.set_root("theme/mode", Bytes::copy_from_slice(v.as_bytes()));
                 self.host.push(HostCmd::Theme);
-                self.trace.push(format!("write theme/mode value={v}"));
+                self.log(write_line(path, v.as_bytes(), false));
                 return Ok(());
             }
             "theme/name" => {
                 let v = Bytes::copy_from_slice(chomp(&data));
-                self.trace.push(format!("write theme/name value={}", show_value(&v)));
+                let name = String::from_utf8_lossy(&v).into_owned();
+                if !name.is_empty() && style::find_theme(&name).is_none() {
+                    return Err(err(ErrorKind::NotFound, format!("theme: {name}")));
+                }
+                self.log(write_line(path, &data, false));
                 self.set_root("theme/name", v);
                 self.host.push(HostCmd::Theme);
                 return Ok(());
@@ -467,9 +545,14 @@ impl Tx<'_> {
             if data.len() > MAX_BYTES {
                 return Err(err(ErrorKind::TooLarge, path));
             }
-            let len = data.len();
-            self.st.assets.insert(name.to_string(), FileVal { data, version: self.generation() });
-            self.trace.push(format!("write {path} len={len}"));
+            self.log(write_line(path, &data, false));
+            self.st.assets.insert(
+                name.to_string(),
+                FileVal {
+                    data,
+                    version: self.generation(),
+                },
+            );
             return Ok(());
         }
         if let Some(rest) = path.strip_prefix("drags/") {
@@ -481,21 +564,26 @@ impl Tx<'_> {
             if data.len() > MAX_DATA {
                 return Err(err(ErrorKind::TooLarge, path));
             }
-            let len = data.len();
-            self.st.drags.insert(n, FileVal { data, version: self.generation() });
-            self.trace.push(format!("write {path} len={len}"));
+            self.log(write_line(path, &data, false));
+            self.st.drags.insert(
+                n,
+                FileVal {
+                    data,
+                    version: self.generation(),
+                },
+            );
             return Ok(());
         }
         // windows/<w>/<file>
-        if let Some(rest) = path.strip_prefix("windows/") {
-            if let Some((w, file)) = rest.split_once('/') {
-                if !file.contains('/') && WINDOW_FILES.contains(&file) {
-                    if !self.st.windows.contains_key(w) {
-                        return Err(err(ErrorKind::NotFound, format!("windows/{w}")));
-                    }
-                    return self.write_window_file(w, file, &data);
-                }
+        if let Some(rest) = path.strip_prefix("windows/")
+            && let Some((w, file)) = rest.split_once('/')
+            && !file.contains('/')
+            && WINDOW_FILES.contains(&file)
+        {
+            if !self.st.windows.contains_key(w) {
+                return Err(err(ErrorKind::NotFound, format!("windows/{w}")));
             }
+            return self.write_window_file(w, file, &data);
         }
         let (node, file) = match path.rfind('/') {
             Some(i) => (&path[..i], &path[i + 1..]),
@@ -518,7 +606,9 @@ impl Tx<'_> {
 
     fn set_root(&mut self, name: &str, data: Bytes) {
         let version = self.generation();
-        self.st.root_files.insert(name.to_string(), FileVal { data, version });
+        self.st
+            .root_files
+            .insert(name.to_string(), FileVal { data, version });
     }
 
     fn write_tokens(&mut self, data: &[u8]) -> Result<(), Error> {
@@ -535,10 +625,20 @@ impl Tx<'_> {
             if value.is_empty() {
                 return Err(err(ErrorKind::BadSyntax, format!("tokens: {line}")));
             }
+            if let Some((_, _)) = LENGTH_TOKENS.iter().find(|(t, _)| *t == name) {
+                if !number_list(value) || value.contains(',') {
+                    return Err(err(ErrorKind::BadValue, format!("{name}: a number")));
+                }
+            } else if style::THEME_TOKENS.is_empty() || style::is_theme_token(name) {
+                proto::Rgba::parse(value)
+                    .map_err(|_| err(ErrorKind::BadValue, format!("{name}: a color")))?;
+            } else {
+                return Err(err(ErrorKind::NotFound, format!("token: {name}")));
+            }
             set.push((name.to_string(), value.to_string()));
         }
+        self.log(write_line("theme/tokens", data, false));
         for (k, v) in set {
-            self.trace.push(format!("write theme/tokens {k}={}", proto::quote(&v)));
             self.st.tokens.insert(k, v);
         }
         self.st.tokens_version = self.generation();
@@ -554,24 +654,31 @@ impl Tx<'_> {
             return Err(err(ErrorKind::TooLarge, format!("menus/{name}")));
         }
         check_lines(LineFormat::Menu, &data)?;
-        let len = data.len();
-        let fv = FileVal { data, version: self.generation() };
+        self.log(write_line(&format!("menus/{name}"), &data, false));
+        let fv = FileVal {
+            data,
+            version: self.generation(),
+        };
         match self.st.menus.iter_mut().find(|(n, _)| n == name) {
             Some(m) => m.1 = fv,
             None => self.st.menus.push((name.to_string(), fv)),
         }
         self.host.push(HostCmd::Menus);
-        self.trace.push(format!("write menus/{name} len={len}"));
         Ok(())
     }
 
     fn mkdir(&mut self, path: &str) -> Result<(), Error> {
-        self.trace.push(format!("mkdir {path}"));
+        self.log(format!("mkdir path={path}"));
         if let Some(w) = path.strip_prefix("windows/").filter(|w| !w.contains('/')) {
-            let cmd = Command { verb: "window".into(), args: vec![w.to_string()], props: vec![] };
+            let cmd = Command {
+                verb: "window".into(),
+                args: vec![w.to_string()],
+                props: vec![],
+            };
             return self.new_window(&cmd);
         }
-        let parent = parent_of(path).ok_or_else(|| err(ErrorKind::BadValue, format!("mkdir: {path}")))?;
+        let parent =
+            parent_of(path).ok_or_else(|| err(ErrorKind::BadValue, format!("mkdir: {path}")))?;
         if !self.st.nodes.contains_key(parent) {
             if self.resolves(path) {
                 return Err(err(ErrorKind::InUse, path));
@@ -584,11 +691,12 @@ impl Tx<'_> {
 
     /// Whether `path` names something that already exists.
     fn resolves(&self, path: &str) -> bool {
-        crate::snapshot::View::new(&self.st, self.reg, None).kind_of(path).is_some()
+        crate::snapshot::View::new(&self.st, self.reg, None)
+            .kind_of(path)
+            .is_some()
     }
 
     fn remove(&mut self, path: &str) -> Result<(), Error> {
-        self.trace.push(format!("remove {path}"));
         if let Some(name) = path.strip_prefix("menus/") {
             let before = self.st.menus.len();
             self.st.menus.retain(|(n, _)| n != name);
@@ -596,11 +704,15 @@ impl Tx<'_> {
                 return Err(err(ErrorKind::NotFound, path));
             }
             self.host.push(HostCmd::Menus);
+            self.log(format!("remove path={path}"));
             return Ok(());
         }
         if let Some(name) = path.strip_prefix("assets/") {
             return match self.st.assets.remove(name) {
-                Some(_) => Ok(()),
+                Some(_) => {
+                    self.log(format!("remove path={path}"));
+                    Ok(())
+                }
                 None => Err(err(ErrorKind::NotFound, path)),
             };
         }
@@ -609,17 +721,25 @@ impl Tx<'_> {
                 return Err(err(ErrorKind::NotFound, path));
             }
             remove_window(&mut self.st, w);
-            self.host.push(HostCmd::WindowCtl { win: w.to_string(), cmd: Command { verb: "destroy".into(), ..Default::default() } });
+            self.log(format!("remove path={path}"));
+            self.host.push(HostCmd::WindowCtl {
+                win: w.to_string(),
+                cmd: Command {
+                    verb: "destroy".into(),
+                    ..Default::default()
+                },
+            });
             return Ok(());
         }
         if self.st.nodes.contains_key(path) {
-            if let Some(rel) = win_relative(path) {
-                if rel == "root" || rel == "overlays" {
-                    // `rm -r` of a whole window reaches these; they go with the window.
-                    return Ok(());
-                }
+            if let Some(rel) = win_relative(path)
+                && (rel == "root" || rel == "overlays")
+            {
+                // `rm -r` of a whole window reaches these; they go with the window.
+                return Ok(());
             }
             self.st.remove_subtree(path);
+            self.log(format!("remove path={path}"));
             return Ok(());
         }
         // A node's own file (`rm -r` removes them before the directory) or
@@ -641,7 +761,7 @@ impl Tx<'_> {
 
     fn ctl_root(&mut self, data: &[u8]) -> Result<(), Error> {
         for c in self.parse_ctl(data)? {
-            self.trace.push(format!("ctl / {}", show_command(&c, false)));
+            self.log(ctl_line("ctl", &c, false));
             if c.props.iter().any(|(k, _)| k == "seq") {
                 self.answer("", &c)?;
                 continue;
@@ -650,31 +770,56 @@ impl Tx<'_> {
                 "window" => self.new_window(&c)?,
                 "set" => {
                     let [id] = &c.args[..] else {
-                        return Err(err(ErrorKind::BadSyntax, "set id [enabled=on|off] [check=on|off]"));
+                        return Err(err(
+                            ErrorKind::BadSyntax,
+                            "set id [enabled=on|off] [check=on|off]",
+                        ));
                     };
                     let mut enabled = None;
                     let mut check = None;
                     for (k, v) in &c.props {
-                        let b = is_on(v).ok_or_else(|| err(ErrorKind::BadValue, format!("{k}={v}")))?;
+                        let b =
+                            is_on(v).ok_or_else(|| err(ErrorKind::BadValue, format!("{k}={v}")))?;
                         match k.as_str() {
                             "enabled" => enabled = Some(b),
                             "check" => check = Some(b),
                             _ => return Err(err(ErrorKind::BadValue, format!("set: {k}"))),
                         }
                     }
-                    self.host.push(HostCmd::SetAction { id: id.clone(), enabled, check });
+                    self.host.push(HostCmd::SetAction {
+                        id: id.clone(),
+                        enabled,
+                        check,
+                    });
                 }
-                "theme" => match (c.args.first().map(String::as_str), c.args.get(1), c.args.len()) {
-                    (Some("load"), Some(p), 2) => self.host.push(HostCmd::ThemeLoad { path: p.clone() }),
+                "theme" => match (
+                    c.args.first().map(String::as_str),
+                    c.args.get(1),
+                    c.args.len(),
+                ) {
+                    (Some("load"), Some(p), 2) => {
+                        if !std::path::Path::new(p).is_file() {
+                            return Err(err(ErrorKind::NotFound, p.clone()));
+                        }
+                        self.host.push(HostCmd::ThemeLoad { path: p.clone() })
+                    }
                     (Some("mode"), Some(m), 2) if m == "light" || m == "dark" => {
                         self.set_root("theme/mode", Bytes::copy_from_slice(m.as_bytes()));
                         self.host.push(HostCmd::Theme);
                     }
-                    (Some("name"), Some(n), 2) => {
+                    (Some("name"), Some(n), 2) if style::find_theme(n).is_some() => {
                         self.set_root("theme/name", Bytes::copy_from_slice(n.as_bytes()));
                         self.host.push(HostCmd::Theme);
                     }
-                    _ => return Err(err(ErrorKind::BadSyntax, "theme load path | mode light|dark | name name")),
+                    (Some("name"), Some(n), 2) => {
+                        return Err(err(ErrorKind::NotFound, format!("theme: {n}")));
+                    }
+                    _ => {
+                        return Err(err(
+                            ErrorKind::BadSyntax,
+                            "theme load path | mode light|dark | name name",
+                        ));
+                    }
                 },
                 "quit" => {
                     no_args(&c)?;
@@ -690,7 +835,10 @@ impl Tx<'_> {
 
     fn new_window(&mut self, c: &Command) -> Result<(), Error> {
         let [name] = &c.args[..] else {
-            return Err(err(ErrorKind::BadSyntax, "window name [title=text] [size=w,h] ..."));
+            return Err(err(
+                ErrorKind::BadSyntax,
+                "window name [title=text] [size=w,h] ...",
+            ));
         };
         if !valid_name(name) {
             return Err(err(ErrorKind::BadValue, format!("window name: {name}")));
@@ -706,16 +854,27 @@ impl Tx<'_> {
                 "kind" => ["normal", "dialog", "popup"].contains(&v.as_str()),
                 "titlebar" => ["system", "custom", "none"].contains(&v.as_str()),
                 "resizable" => is_on(v).is_some(),
-                _ => return Err(err(ErrorKind::BadValue, format!("window: {k}"))),
+                _ => return Err(err(ErrorKind::NotFound, format!("window option: {k}"))),
             };
             if !ok {
                 return Err(err(ErrorKind::BadValue, format!("{k}={v}")));
             }
         }
         let g = self.generation();
-        let mut win = Win { name: name.clone(), props: c.props.clone(), version: g, ..Default::default() };
+        let mut win = Win {
+            name: name.clone(),
+            props: c.props.clone(),
+            version: g,
+            ..Default::default()
+        };
         if let Some((_, t)) = c.props.iter().find(|(k, _)| k == "title") {
-            win.files.insert("title".into(), FileVal { data: Bytes::copy_from_slice(t.as_bytes()), version: g });
+            win.files.insert(
+                "title".into(),
+                FileVal {
+                    data: Bytes::copy_from_slice(t.as_bytes()),
+                    version: g,
+                },
+            );
         }
         self.st.windows.insert(name.clone(), Arc::new(win));
         let root = format!("windows/{name}/root");
@@ -723,14 +882,23 @@ impl Tx<'_> {
         self.st.nodes.insert(root, Arc::new(root_node));
         let mut ov = self.st.new_node("overlays", "overlays");
         ov.fixed = true;
-        self.st.nodes.insert(format!("windows/{name}/overlays"), Arc::new(ov));
-        self.host.push(HostCmd::Window(WindowSpec { name: name.clone(), props: c.props.clone() }));
+        self.st
+            .nodes
+            .insert(format!("windows/{name}/overlays"), Arc::new(ov));
+        self.host.push(HostCmd::Window(WindowSpec {
+            name: name.clone(),
+            props: c.props.clone(),
+        }));
         Ok(())
     }
 
     fn begin(&mut self, scope: Option<String>, c: &Command) -> Result<(), Error> {
         no_args(c)?;
-        let open = self.tree.batches.iter().any(|b| b.session == self.session && b.scope == scope)
+        let open = self
+            .tree
+            .batches
+            .iter()
+            .any(|b| b.session == self.session && b.scope == scope)
             || self.batch_open_in_tx(&scope);
         if open {
             return Err(err(ErrorKind::InUse, "batch already open"));
@@ -754,7 +922,11 @@ impl Tx<'_> {
 
     fn end_batch(&mut self, scope: Option<String>, c: &Command) -> Result<(), Error> {
         no_args(c)?;
-        let in_tree = self.tree.batches.iter().find(|b| b.session == self.session && b.scope == scope);
+        let in_tree = self
+            .tree
+            .batches
+            .iter()
+            .find(|b| b.session == self.session && b.scope == scope);
         let began_here = self.batch_open_in_tx(&scope);
         if in_tree.is_none() && !began_here {
             return Err(err(ErrorKind::NoBatch, ""));
@@ -768,7 +940,11 @@ impl Tx<'_> {
         }
         if began_here {
             // begin and commit in one write: they cancel out.
-            if let Some(i) = self.batch_ops.iter().rposition(|b| matches!(b, BatchOp::Begin(s) if *s == scope)) {
+            if let Some(i) = self
+                .batch_ops
+                .iter()
+                .rposition(|b| matches!(b, BatchOp::Begin(s) if *s == scope))
+            {
                 self.batch_ops.remove(i);
             }
         } else {
@@ -783,24 +959,42 @@ impl Tx<'_> {
             "events" | "bounds" => Err(read_only(&format!("windows/{w}/{file}"))),
             "title" => {
                 let t = String::from_utf8_lossy(chomp(data)).into_owned();
-                self.trace.push(format!("write windows/{w}/title value={}", show_value(t.as_bytes())));
-                let c = Command { verb: "title".into(), args: vec![t], props: vec![] };
+                self.log(write_line(&format!("windows/{w}/title"), data, false));
+                let c = Command {
+                    verb: "title".into(),
+                    args: vec![t],
+                    props: vec![],
+                };
                 self.window_verb(w, &c)
             }
             "state" => {
                 let s = utf8(data)?.trim().to_string();
-                self.trace.push(format!("write windows/{w}/state value={s}"));
-                let c = Command { verb: "state".into(), args: vec![s], props: vec![] };
+                self.log(write_line(&format!("windows/{w}/state"), data, false));
+                let c = Command {
+                    verb: "state".into(),
+                    args: vec![s],
+                    props: vec![],
+                };
                 self.window_verb(w, &c)
             }
             "focus" => {
                 let p = utf8(data)?.trim().to_string();
-                self.trace.push(format!("write windows/{w}/focus value={}", proto::quote(&p)));
                 if !p.is_empty() && !self.st.nodes.contains_key(&format!("windows/{w}/{p}")) {
                     return Err(err(ErrorKind::NotFound, p));
                 }
+                self.log(write_line(&format!("windows/{w}/focus"), data, false));
                 self.set_win_file(w, "focus", p.as_bytes());
-                self.host.push(HostCmd::Focus { win: w.to_string(), node: p });
+                if !p.is_empty() {
+                    self.echo(
+                        EventMsg::new(catalog::EventKind::State, "focus")
+                            .win(w)
+                            .node(&p),
+                    );
+                }
+                self.host.push(HostCmd::Focus {
+                    win: w.to_string(),
+                    node: p,
+                });
                 Ok(())
             }
             _ => Err(err(ErrorKind::NotFound, format!("windows/{w}/{file}"))),
@@ -811,14 +1005,20 @@ impl Tx<'_> {
         let g = self.generation();
         if let Some(win) = self.st.windows.get_mut(w) {
             let win = Arc::make_mut(win);
-            win.files.insert(file.to_string(), FileVal { data: Bytes::copy_from_slice(v), version: g });
+            win.files.insert(
+                file.to_string(),
+                FileVal {
+                    data: Bytes::copy_from_slice(v),
+                    version: g,
+                },
+            );
             win.version = g;
         }
     }
 
     fn ctl_window(&mut self, w: &str, data: &[u8]) -> Result<(), Error> {
         for c in self.parse_ctl(data)? {
-            self.trace.push(format!("ctl windows/{w} {}", show_command(&c, false)));
+            self.log(ctl_line(&format!("windows/{w}/ctl"), &c, false));
             if c.props.iter().any(|(k, _)| k == "seq") {
                 self.answer(&format!("windows/{w}"), &c)?;
                 continue;
@@ -836,48 +1036,72 @@ impl Tx<'_> {
         let syntax = |u: &str| err(ErrorKind::BadSyntax, u.to_string());
         match c.verb.as_str() {
             "title" => {
-                let [t] = &c.args[..] else { return Err(syntax("title text")) };
+                let [t] = &c.args[..] else {
+                    return Err(syntax("title text"));
+                };
                 let t = t.clone();
                 self.set_win_file(w, "title", t.as_bytes());
             }
             "size" | "move" => {
-                let [v] = &c.args[..] else { return Err(syntax(&format!("{} x,y", c.verb))) };
+                let [v] = &c.args[..] else {
+                    return Err(syntax(&format!("{} x,y", c.verb)));
+                };
                 if !pair(v) {
                     return Err(err(ErrorKind::BadValue, v.clone()));
                 }
             }
             "center" | "activate" | "close" | "destroy" => no_args(c)?,
             "state" => {
-                let [s] = &c.args[..] else { return Err(syntax("state normal|minimized|maximized|fullscreen")) };
+                let [s] = &c.args[..] else {
+                    return Err(syntax("state normal|minimized|maximized|fullscreen"));
+                };
                 if !["normal", "minimized", "maximized", "fullscreen"].contains(&s.as_str()) {
                     return Err(err(ErrorKind::BadValue, s.clone()));
                 }
                 let s = s.clone();
                 self.set_win_file(w, "state", s.as_bytes());
+                self.echo(
+                    EventMsg::new(catalog::EventKind::State, "state")
+                        .win(w)
+                        .attr("value", &s),
+                );
             }
             "notify" => {
                 if c.args.len() != 1 {
                     return Err(syntax("notify text [type=info|success|warning|error]"));
                 }
-                if let Some((_, t)) = c.props.iter().find(|(k, _)| k == "type") {
-                    if !["info", "success", "warning", "error"].contains(&t.as_str()) {
-                        return Err(err(ErrorKind::BadValue, format!("type={t}")));
-                    }
+                if let Some((_, t)) = c.props.iter().find(|(k, _)| k == "type")
+                    && !["info", "success", "warning", "error"].contains(&t.as_str())
+                {
+                    return Err(err(ErrorKind::BadValue, format!("type={t}")));
                 }
             }
             v => return Err(err(ErrorKind::UnknownCommand, v.to_string())),
         }
+        if c.verb == "close" {
+            // Asking to close is a request to the client, as the close button is.
+            let ev = EventMsg::new(catalog::EventKind::Request, "close")
+                .win(w)
+                .via(Via::Ctl);
+            self.events.push((ev, Some(Answer::verb("close"))));
+            return Ok(());
+        }
         if c.verb == "destroy" {
             remove_window(&mut self.st, w);
         }
-        self.host.push(HostCmd::WindowCtl { win: w.to_string(), cmd: c.clone() });
+        self.host.push(HostCmd::WindowCtl {
+            win: w.to_string(),
+            cmd: c.clone(),
+        });
         Ok(())
     }
 
     /// `verb seq=N` on `target`'s ctl answers request N.
     fn answer(&mut self, target: &str, c: &Command) -> Result<(), Error> {
         let seq_s = &c.props.iter().find(|(k, _)| k == "seq").unwrap().1;
-        let seq: u64 = seq_s.parse().map_err(|_| err(ErrorKind::BadValue, format!("seq={seq_s}")))?;
+        let seq: u64 = seq_s
+            .parse()
+            .map_err(|_| err(ErrorKind::BadValue, format!("seq={seq_s}")))?;
         let req = self
             .tree
             .requests
@@ -887,8 +1111,14 @@ impl Tx<'_> {
         if let Some(d) = req.drag {
             self.st.drags.remove(&d);
         }
+        if let Some(w) = req.closes_window.clone().filter(|_| c.verb == "close") {
+            remove_window(&mut self.st, &w);
+        }
         self.answered.insert(seq);
-        self.host.push(HostCmd::Answer { seq, answer: Answer(c.clone()) });
+        self.host.push(HostCmd::Answer {
+            seq,
+            answer: Answer(c.clone()),
+        });
         Ok(())
     }
 
@@ -896,9 +1126,11 @@ impl Tx<'_> {
         let cmds = self.parse_ctl(data)?;
         for c in cmds {
             let secret = c.verb == "new"
-                && c.props.iter().any(|(k, v)| k == "flags" && v.split_whitespace().any(|w| w == "secret"));
+                && c.props
+                    .iter()
+                    .any(|(k, v)| k == "flags" && v.split_whitespace().any(|w| w == "secret"));
             let secret = secret || self.st.is_secret(self.reg, node);
-            self.trace.push(format!("ctl {node} {}", show_command(&c, secret)));
+            self.log(ctl_line(&format!("{node}/ctl"), &c, secret));
             self.node_cmd(node, &c)?;
         }
         Ok(())
@@ -918,7 +1150,9 @@ impl Tx<'_> {
                 self.create_child(node, &ty, &name, &c.props, false)
             }
             "delete" => {
-                let [name] = &c.args[..] else { return Err(err(ErrorKind::BadSyntax, "delete name")) };
+                let [name] = &c.args[..] else {
+                    return Err(err(ErrorKind::BadSyntax, "delete name"));
+                };
                 let p = format!("{node}/{name}");
                 if !self.st.nodes.contains_key(&p) {
                     return Err(err(ErrorKind::NotFound, p));
@@ -927,7 +1161,10 @@ impl Tx<'_> {
                 Ok(())
             }
             _ if spec.verbs.iter().any(|v| v.name == c.verb) => {
-                self.host.push(HostCmd::ComponentVerb { node: node.to_string(), cmd: c.clone() });
+                self.host.push(HostCmd::ComponentVerb {
+                    node: node.to_string(),
+                    cmd: c.clone(),
+                });
                 Ok(())
             }
             "open" | "close" if spec.tier == Tier::Overlay => {
@@ -937,7 +1174,11 @@ impl Tx<'_> {
                     .and_then(|r| r.strip_prefix("overlays/"))
                     .unwrap_or_else(|| base_of(node))
                     .to_string();
-                self.host.push(HostCmd::Overlay { win, name, open: c.verb == "open" });
+                self.host.push(HostCmd::Overlay {
+                    win,
+                    name,
+                    open: c.verb == "open",
+                });
                 Ok(())
             }
             v => Err(err(ErrorKind::UnknownCommand, v.to_string())),
@@ -947,33 +1188,54 @@ impl Tx<'_> {
     // ---- nodes ----------------------------------------------------------
 
     /// Whether a child of type `child` named `name` may go under `parent`.
-    fn check_slot(&self, parent: &str, name: &str, child: &'static TypeSpec, at_mkdir: bool) -> Result<(), Error> {
+    fn check_slot(
+        &self,
+        parent: &str,
+        name: &str,
+        child: &'static TypeSpec,
+        at_mkdir: bool,
+    ) -> Result<(), Error> {
         let pspec = self.spec(parent)?;
         let in_overlays = pspec.name == "overlays";
         if in_overlays && child.tier != Tier::Overlay && !at_mkdir {
-            return Err(err(ErrorKind::BadValue, format!("{}: not an overlay", child.name)));
+            return Err(err(
+                ErrorKind::UnknownType,
+                format!("{}: not an overlay", child.name),
+            ));
         }
         if in_overlays && at_mkdir {
             return Err(err(ErrorKind::BadValue, "overlays: use new <type> <name>"));
         }
         if !in_overlays && child.tier == Tier::Overlay {
-            return Err(err(ErrorKind::BadValue, format!("{}: belongs in overlays/", child.name)));
+            return Err(err(
+                ErrorKind::UnknownType,
+                format!("{}: belongs in overlays/", child.name),
+            ));
         }
         match pspec.slots {
             Slots::Any => Ok(()),
-            Slots::None => Err(err(ErrorKind::BadValue, format!("{}: takes no children", pspec.name))),
+            Slots::None => Err(err(
+                ErrorKind::UnknownType,
+                format!("{}: takes no children", pspec.name),
+            )),
             Slots::Named(names) => {
                 if names.contains(&name) {
                     Ok(())
                 } else {
-                    Err(err(ErrorKind::BadValue, format!("{}: slots are {}", pspec.name, names.join(" "))))
+                    Err(err(
+                        ErrorKind::BadValue,
+                        format!("{}: slots are {}", pspec.name, names.join(" ")),
+                    ))
                 }
             }
             Slots::ChildTypes(types) => {
                 if types.contains(&child.name) || (at_mkdir && child.name == "div") {
                     Ok(())
                 } else {
-                    Err(err(ErrorKind::BadValue, format!("{}: children are {}", pspec.name, types.join(" "))))
+                    Err(err(
+                        ErrorKind::UnknownType,
+                        format!("{}: children are {}", pspec.name, types.join(" ")),
+                    ))
                 }
             }
         }
@@ -983,7 +1245,9 @@ impl Tx<'_> {
         if ty == "overlays" {
             return Err(err(ErrorKind::UnknownType, ty));
         }
-        self.reg.spec_of(ty).ok_or_else(|| err(ErrorKind::UnknownType, ty))
+        self.reg
+            .spec_of(ty)
+            .ok_or_else(|| err(ErrorKind::UnknownType, ty))
     }
 
     pub(crate) fn create_child(
@@ -999,7 +1263,10 @@ impl Tx<'_> {
             return Err(err(ErrorKind::BadValue, format!("name: {name}")));
         }
         if is_reserved(pspec, name) {
-            return Err(err(ErrorKind::BadValue, format!("name: {name} is a file of {}", pspec.name)));
+            return Err(err(
+                ErrorKind::BadValue,
+                format!("name: {name} is a file of {}", pspec.name),
+            ));
         }
         let path = format!("{parent}/{name}");
         if self.st.nodes.contains_key(&path) {
@@ -1017,17 +1284,25 @@ impl Tx<'_> {
         p.children.push(name.to_string());
         p.order.push(name.to_string());
         p.version = g;
-        for (k, v) in props {
-            if k == "type" {
-                return Err(err(ErrorKind::BadSyntax, "type is the first argument of new"));
+        self.quietly(|tx| {
+            for (k, v) in props {
+                if k == "type" {
+                    return Err(err(
+                        ErrorKind::BadSyntax,
+                        "type is the first argument of new",
+                    ));
+                }
+                tx.set_file(&path, k, Bytes::copy_from_slice(v.as_bytes()), false)?;
             }
-            self.set_file(&path, k, Bytes::copy_from_slice(v.as_bytes()), false)?;
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn set_type(&mut self, path: &str, ty: &str) -> Result<(), Error> {
-        let n = self.st.node(path).ok_or_else(|| err(ErrorKind::NotFound, path))?;
+        let n = self
+            .st
+            .node(path)
+            .ok_or_else(|| err(ErrorKind::NotFound, path))?;
         if n.ty == ty {
             return Ok(());
         }
@@ -1039,14 +1314,20 @@ impl Tx<'_> {
             self.check_slot(parent, base_of(path), spec, false)?;
         }
         if is_reserved_by_children(&self.st, path, spec) {
-            return Err(err(ErrorKind::BadValue, format!("{ty}: a child's name is one of its files")));
+            return Err(err(
+                ErrorKind::BadValue,
+                format!("{ty}: a child's name is one of its files"),
+            ));
         }
         let g = self.generation();
         let n = self.st.node_mut(path).unwrap();
         n.ty = spec.name.to_string();
         n.version = g;
-        n.files.retain(|f, _| COMMON_WRITABLE.contains(&f.as_str()) || spec.props.iter().any(|p| p.name == f));
-        n.mirrored.retain(|f| spec.props.iter().any(|p| p.name == f));
+        n.files.retain(|f, _| {
+            COMMON_WRITABLE.contains(&f.as_str()) || spec.props.iter().any(|p| p.name == f)
+        });
+        n.mirrored
+            .retain(|f| spec.props.iter().any(|p| p.name == f));
         let children: Vec<String> = n.children.clone();
         for c in children {
             let cp = format!("{path}/{c}");
@@ -1058,29 +1339,29 @@ impl Tx<'_> {
     }
 
     /// Writes one node file, after checking it.
-    pub(crate) fn set_file(&mut self, node: &str, file: &str, data: Bytes, append: bool) -> Result<(), Error> {
+    pub(crate) fn set_file(
+        &mut self,
+        node: &str,
+        file: &str,
+        data: Bytes,
+        append: bool,
+    ) -> Result<(), Error> {
         let spec = self.spec(node)?;
-        let trace_val = |tx: &Self, v: &[u8]| -> String {
-            if file == "value" && tx.st.is_secret(tx.reg, node) {
-                "value=<secret>".to_string()
-            } else {
-                format!("value={}", show_value(v))
-            }
-        };
         match file {
             "ctl" => return self.ctl_node(node, &data),
             "tree" => {
                 if data.len() > MAX_DATA {
                     return Err(err(ErrorKind::TooLarge, "tree"));
                 }
-                self.trace.push(format!("write {node}/tree len={}", data.len()));
-                return self.write_doc(node, &data);
+                self.log(write_line(&format!("{node}/tree"), &data, false));
+                return self.quietly(|tx| tx.write_doc(node, &data));
             }
             "id" | "bounds" | "events" => return Err(read_only(&format!("{node}/{file}"))),
             "type" => {
                 let ty = utf8(&data)?.trim().to_string();
-                self.trace.push(format!("write {node}/type value={}", proto::quote(&ty)));
-                return self.set_type(node, &ty);
+                self.set_type(node, &ty)?;
+                self.log(write_line(&format!("{node}/type"), &data, false));
+                return Ok(());
             }
             "order" => {
                 let s = utf8(&data)?;
@@ -1095,7 +1376,7 @@ impl Tx<'_> {
                         return Err(err(ErrorKind::BadValue, format!("order: {c} twice")));
                     }
                 }
-                self.trace.push(format!("write {node}/order value={}", show_value(s.as_bytes())));
+                self.log(write_line(&format!("{node}/order"), &data, false));
                 let g = self.generation();
                 let n = self.st.node_mut(node).unwrap();
                 n.order = names;
@@ -1126,7 +1407,11 @@ impl Tx<'_> {
             if let PropKind::Data(fmt) = rows.kind {
                 check_lines(fmt, &data)?;
             }
-            let mut cur = self.st.node_file(self.reg, node, "rows").unwrap_or_default().to_vec();
+            let mut cur = self
+                .st
+                .node_file(self.reg, node, "rows")
+                .unwrap_or_default()
+                .to_vec();
             if !cur.is_empty() && !cur.ends_with(b"\n") {
                 cur.push(b'\n');
             }
@@ -1134,9 +1419,12 @@ impl Tx<'_> {
             if cur.len() > MAX_DATA {
                 return Err(err(ErrorKind::TooLarge, "rows"));
             }
-            self.trace.push(format!("append {node}/rows len={}", data.len()));
+            self.log(write_line(&format!("{node}/append"), &data, false));
             let g = self.generation();
-            self.st.node_mut(node).unwrap().put_file("rows", Bytes::from(cur), g);
+            self.st
+                .node_mut(node)
+                .unwrap()
+                .put_file("rows", Bytes::from(cur), g);
             return Ok(());
         } else if let Some(p) = prop_spec(spec, file) {
             check_prop(p.kind, file, &data)?
@@ -1145,16 +1433,29 @@ impl Tx<'_> {
         };
         let _ = append;
         let kind = prop_spec(spec, file).map(|p| p.kind);
-        let line = if kind.is_some_and(kind_is_data) {
-            format!("write {node}/{file} len={}", value.len())
-        } else {
-            format!("write {node}/{file} {}", trace_val(self, &value))
-        };
-        self.trace.push(line);
+        let secret = file == "value" && self.st.is_secret(self.reg, node);
+        self.log(write_line(&format!("{node}/{file}"), &data, secret));
         let g = self.generation();
         let n = self.st.node_mut(node).unwrap();
-        n.put_file(file, value, g);
+        n.put_file(file, value.clone(), g);
         n.mirrored.remove(file);
+        // A write to a file a state event reports is echoed with via=ctl.
+        if file == "value"
+            && spec
+                .events
+                .iter()
+                .any(|e| e.name == "change" && e.kind == catalog::EventKind::State)
+        {
+            let mut ev = EventMsg::new(catalog::EventKind::State, "change").node(node);
+            let short = !matches!(
+                kind,
+                Some(PropKind::Text | PropKind::Bytes | PropKind::Data(_))
+            );
+            if short && !secret {
+                ev = ev.attr("value", &String::from_utf8_lossy(&value));
+            }
+            self.echo(ev);
+        }
         Ok(())
     }
 
@@ -1195,13 +1496,17 @@ impl Tx<'_> {
 }
 
 fn is_reserved_by_children(st: &State, path: &str, spec: &'static TypeSpec) -> bool {
-    st.node(path).is_some_and(|n| n.children.iter().any(|c| is_reserved(spec, c)))
+    st.node(path)
+        .is_some_and(|n| n.children.iter().any(|c| is_reserved(spec, c)))
 }
 
 fn no_args(c: &Command) -> Result<(), Error> {
     if c.args.is_empty() {
         Ok(())
     } else {
-        Err(err(ErrorKind::BadSyntax, format!("{} takes no arguments", c.verb)))
+        Err(err(
+            ErrorKind::BadSyntax,
+            format!("{} takes no arguments", c.verb),
+        ))
     }
 }

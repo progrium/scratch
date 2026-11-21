@@ -37,7 +37,33 @@ impl TraceBuf {
     }
 }
 
+/// `write path=P value=V`: `len=N` when the value has a newline or is over
+/// 64 bytes, `value=<secret>` for a secret.
+pub(crate) fn write_line(path: &str, data: &[u8], secret: bool) -> String {
+    if secret {
+        return format!("write path={path} value=<secret>");
+    }
+    let v = data.strip_suffix(b"\n").unwrap_or(data);
+    if v.contains(&b'\n') || v.len() > VALUE_CUT {
+        format!("write path={path} len={}", data.len())
+    } else {
+        format!(
+            "write path={path} value={}",
+            proto::quote(&String::from_utf8_lossy(v))
+        )
+    }
+}
+
+/// `ctl path=P cmd=C` for one command line of a `ctl` write.
+pub(crate) fn ctl_line(path: &str, c: &proto::Command, secret: bool) -> String {
+    format!(
+        "ctl path={path} cmd={}",
+        proto::quote(&show_command(c, secret))
+    )
+}
+
 /// A text value for a trace line, quoted and cut.
+#[allow(dead_code)]
 pub(crate) fn show_value(data: &[u8]) -> String {
     let s = String::from_utf8_lossy(data);
     let s = s.strip_suffix('\n').unwrap_or(&s);

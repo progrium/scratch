@@ -9,9 +9,9 @@ use catalog::PropKind;
 use proto::doc::DocNode;
 use proto::{Error, ErrorKind};
 
-use crate::apply::{err, Tx};
-use crate::state::*;
 use crate::Registry;
+use crate::apply::{Tx, err};
+use crate::state::*;
 
 /// The document for the subtree at `path`.
 pub(crate) fn print_subtree(st: &State, reg: &Registry, path: &str) -> String {
@@ -35,11 +35,16 @@ fn to_doc(st: &State, reg: &Registry, path: &str) -> Option<DocNode> {
             }
             continue;
         }
-        let Some(p) = spec.props.iter().find(|p| p.name == name) else { continue };
+        let Some(p) = spec.props.iter().find(|p| p.name == name) else {
+            continue;
+        };
         if p.kind == PropKind::ReadOnly {
             continue;
         }
-        let is_default = p.default.map(|d| d.as_bytes() == &f.data[..]).unwrap_or(f.data.is_empty());
+        let is_default = p
+            .default
+            .map(|d| d.as_bytes() == &f.data[..])
+            .unwrap_or(f.data.is_empty());
         if !is_default {
             props.push((name.clone(), text(&f.data)));
         }
@@ -47,26 +52,37 @@ fn to_doc(st: &State, reg: &Registry, path: &str) -> Option<DocNode> {
     if n.order != n.children {
         props.push(("order".to_string(), n.order.join(" ")));
     }
-    let children = n.children.iter().filter_map(|c| to_doc(st, reg, &format!("{path}/{c}"))).collect();
-    Some(DocNode { ty: n.ty.clone(), name: n.name.clone(), props, children })
+    let children = n
+        .children
+        .iter()
+        .filter_map(|c| to_doc(st, reg, &format!("{path}/{c}")))
+        .collect();
+    Some(DocNode {
+        ty: n.ty.clone(),
+        name: n.name.clone(),
+        props,
+        children,
+    })
 }
 
 impl Tx<'_> {
     pub(crate) fn write_doc(&mut self, path: &str, data: &[u8]) -> Result<(), Error> {
         let s = std::str::from_utf8(data).map_err(|_| err(ErrorKind::BadValue, "not utf-8"))?;
         let d = proto::doc::parse(s)?;
-        let n = self.st.node(path).ok_or_else(|| err(ErrorKind::NotFound, path))?;
+        let n = self
+            .st
+            .node(path)
+            .ok_or_else(|| err(ErrorKind::NotFound, path))?;
         if d.name != n.name {
             return Err(err(
                 ErrorKind::BadValue,
-                format!("tree: the document's root is {}, the node is {}", d.name, n.name),
+                format!(
+                    "tree: the document's root is {}, the node is {}",
+                    d.name, n.name
+                ),
             ));
         }
-        // The `tree` write itself is the trace line; its props aren't.
-        let mark = self.trace_len();
-        let r = self.apply_doc(path, &d);
-        self.trace_truncate(mark);
-        r
+        self.apply_doc(path, &d)
     }
 
     fn apply_doc(&mut self, path: &str, d: &DocNode) -> Result<(), Error> {
@@ -91,7 +107,8 @@ impl Tx<'_> {
             let n = self.st.node_mut(path).unwrap();
             let before = n.files.len();
             let mirrored = n.mirrored.clone();
-            n.files.retain(|f, _| named.contains(f.as_str()) || mirrored.contains(f));
+            n.files
+                .retain(|f, _| named.contains(f.as_str()) || mirrored.contains(f));
             if n.files.len() != before {
                 n.version = g;
             }
@@ -100,7 +117,10 @@ impl Tx<'_> {
         let existing: Vec<String> = self.st.node(path).unwrap().children.clone();
         for c in existing {
             let cp = format!("{path}/{c}");
-            let keep = d.children.iter().any(|dc| dc.name == c && self.st.node(&cp).is_some_and(|n| n.ty == dc.ty));
+            let keep = d
+                .children
+                .iter()
+                .any(|dc| dc.name == c && self.st.node(&cp).is_some_and(|n| n.ty == dc.ty));
             if !keep {
                 self.st.remove_subtree(&cp);
             }
@@ -126,7 +146,12 @@ impl Tx<'_> {
         for (k, v) in &d.props {
             match k.as_str() {
                 "order" => order = Some(v),
-                "type" => return Err(err(ErrorKind::BadSyntax, "type is the first word of a line")),
+                "type" => {
+                    return Err(err(
+                        ErrorKind::BadSyntax,
+                        "type is the first word of a line",
+                    ));
+                }
                 _ => self.set_file(path, k, Bytes::copy_from_slice(v.as_bytes()), false)?,
             }
         }

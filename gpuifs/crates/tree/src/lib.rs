@@ -41,7 +41,7 @@ mod trace;
 #[cfg(test)]
 mod tests;
 
-pub use bus::{EventBus, Subscription, ACTION_CAP};
+pub use bus::{ACTION_CAP, EventBus, Subscription};
 pub use snapshot::Snapshot;
 
 use state::{Node, State};
@@ -78,11 +78,21 @@ impl std::fmt::Display for FsPath {
 pub enum Op {
     /// `ctl`: one write. Text and data files: the whole value, at clunk.
     /// A write to a missing `menus/<name>` or `assets/<name>` creates it.
-    Write { path: FsPath, data: Bytes },
+    Write {
+        path: FsPath,
+        data: Bytes,
+    },
     /// Adds to the end of a file. On a table's `append` file, adds rows.
-    Append { path: FsPath, data: Bytes },
-    Mkdir { path: FsPath },
-    Remove { path: FsPath },
+    Append {
+        path: FsPath,
+        data: Bytes,
+    },
+    Mkdir {
+        path: FsPath,
+    },
+    Remove {
+        path: FsPath,
+    },
     /// Aborts that session's open batches.
     SessionClosed,
 }
@@ -130,7 +140,10 @@ pub struct Answer(pub proto::Command);
 impl Answer {
     /// An answer that is just a verb: `Answer::verb("close")`.
     pub fn verb(v: &str) -> Self {
-        Answer(proto::Command { verb: v.to_string(), ..Default::default() })
+        Answer(proto::Command {
+            verb: v.to_string(),
+            ..Default::default()
+        })
     }
 }
 
@@ -158,23 +171,47 @@ pub struct Changes {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostCmd {
     Window(WindowSpec),
-    WindowCtl { win: String, cmd: proto::Command },
+    WindowCtl {
+        win: String,
+        cmd: proto::Command,
+    },
     Quit,
     Menus,
     Keymap,
     Theme,
-    SetAction { id: String, enabled: Option<bool>, check: Option<bool> },
-    Overlay { win: String, name: String, open: bool },
+    SetAction {
+        id: String,
+        enabled: Option<bool>,
+        check: Option<bool>,
+    },
+    Overlay {
+        win: String,
+        name: String,
+        open: bool,
+    },
     /// `node` is window-relative (`root/src`).
-    Focus { win: String, node: String },
+    Focus {
+        win: String,
+        node: String,
+    },
     Clipboard,
     /// `node` is the full path.
-    ComponentVerb { node: String, cmd: proto::Command },
-    Answer { seq: u64, answer: Answer },
+    ComponentVerb {
+        node: String,
+        cmd: proto::Command,
+    },
+    Answer {
+        seq: u64,
+        answer: Answer,
+    },
     /// A batch committed or timed out: the window's committed tree changed.
-    Redraw { win: String },
+    Redraw {
+        win: String,
+    },
     /// `theme load path` on the root `ctl`.
-    ThemeLoad { path: String },
+    ThemeLoad {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,7 +228,14 @@ pub struct EventMsg {
 
 impl EventMsg {
     pub fn new(kind: EventKind, name: &str) -> Self {
-        EventMsg { kind, name: name.to_string(), win: None, node: None, attrs: Vec::new(), via: Via::User }
+        EventMsg {
+            kind,
+            name: name.to_string(),
+            win: None,
+            node: None,
+            attrs: Vec::new(),
+            via: Via::User,
+        }
     }
     pub fn win(mut self, w: &str) -> Self {
         self.win = Some(w.to_string());
@@ -223,7 +267,12 @@ pub struct NodeRef<'a> {
 impl<'a> NodeRef<'a> {
     fn new(st: &'a State, reg: &'a Registry, path: &str) -> Option<Self> {
         let (k, n) = st.nodes.get_key_value(path)?;
-        Some(NodeRef { st, reg, path: k.as_str(), node: n })
+        Some(NodeRef {
+            st,
+            reg,
+            path: k.as_str(),
+            node: n,
+        })
     }
     /// The full path, which is also the node's `ElementId`.
     pub fn path(&self) -> &'a str {
@@ -292,6 +341,8 @@ struct Request {
     default: Answer,
     deadline: Instant,
     drag: Option<u64>,
+    /// A window `close` request: answering `close` removes the window.
+    closes_window: Option<String>,
 }
 
 /// State readers on other threads see live, outside the snapshot.
@@ -338,7 +389,11 @@ impl Tree {
     }
 
     pub fn snapshot(&self) -> Arc<Snapshot> {
-        Arc::new(Snapshot::new(self.state.clone(), self.reg.clone(), self.shared.clone()))
+        Arc::new(Snapshot::new(
+            self.state.clone(),
+            self.reg.clone(),
+            self.shared.clone(),
+        ))
     }
 
     fn committed_state(&self, win: &str) -> &State {
@@ -351,7 +406,11 @@ impl Tree {
 
     /// What to render for a window: its `root` node, frozen while a batch is open.
     pub fn committed(&self, win: &str) -> Option<NodeRef<'_>> {
-        NodeRef::new(self.committed_state(win), &self.reg, &format!("windows/{win}/root"))
+        NodeRef::new(
+            self.committed_state(win),
+            &self.reg,
+            &format!("windows/{win}/root"),
+        )
     }
 
     /// Any committed node by full path (an overlay, a slot's subtree).
@@ -380,7 +439,10 @@ impl Tree {
     /// The options the window was made with.
     pub fn window_spec(&self, win: &str) -> Option<WindowSpec> {
         let w = self.state.windows.get(win)?;
-        Some(WindowSpec { name: w.name.clone(), props: w.props.clone() })
+        Some(WindowSpec {
+            name: w.name.clone(),
+            props: w.props.clone(),
+        })
     }
 
     /// A window file (`title`, `state`, `focus`) as stored.
@@ -398,7 +460,11 @@ impl Tree {
 
     /// Menus in menu-bar order, as `(name, item lines)`.
     pub fn menus(&self) -> Vec<(String, Bytes)> {
-        self.state.menus.iter().map(|(n, v)| (n.clone(), v.data.clone())).collect()
+        self.state
+            .menus
+            .iter()
+            .map(|(n, v)| (n.clone(), v.data.clone()))
+            .collect()
     }
 
     /// Theme tokens the client set, on top of the mode's defaults.
@@ -449,25 +515,35 @@ impl Tree {
         }
         let st = Arc::make_mut(&mut self.state);
         st.generation = st.generation.wrapping_add(1);
-        let fv = state::FileVal { data: value, version: st.generation };
+        let fv = state::FileVal {
+            data: value,
+            version: st.generation,
+        };
         if path.is_empty() {
             st.root_files.insert(file.to_string(), fv);
-        } else if let Some(n) = path.strip_prefix("drags/").and_then(|n| n.parse::<u64>().ok()) {
+        } else if let Some(n) = path
+            .strip_prefix("drags/")
+            .and_then(|n| n.parse::<u64>().ok())
+        {
             st.drags.insert(n, fv);
         } else if st.nodes.contains_key(path) {
             let n = st.node_mut(path).unwrap();
             n.put_file(file, fv.data, fv.version);
             n.mirrored.insert(file.to_string());
-        } else if let Some(w) = path.strip_prefix("windows/").filter(|w| !w.contains('/')) {
-            if let Some(win) = st.windows.get_mut(w) {
-                Arc::make_mut(win).files.insert(file.to_string(), fv);
-            }
+        } else if let Some(w) = path.strip_prefix("windows/").filter(|w| !w.contains('/'))
+            && let Some(win) = st.windows.get_mut(w)
+        {
+            Arc::make_mut(win).files.insert(file.to_string(), fv);
         }
     }
 
     /// `x y w h` from the last layout, for a node path or a window dir.
     pub fn report_bounds(&mut self, path: &str, b: [f32; 4]) {
-        self.shared.bounds.lock().unwrap().insert(path.to_string(), b);
+        self.shared
+            .bounds
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), b);
     }
 
     /// A drag's payload, written by the client or the host.
@@ -515,15 +591,22 @@ impl Tree {
             attrs.push(("tag".to_string(), tag));
         }
         attrs.extend(ev.attrs.iter().cloned());
-        if ev.kind == EventKind::State && !ev.attrs.iter().any(|(k, _)| k == "via") {
+        let wants_via = ev.kind == EventKind::State
+            || (ev.kind == EventKind::Request && (ev.name == "close" || ev.name == "quit"));
+        if wants_via && !ev.attrs.iter().any(|(k, _)| k == "via") {
             let v = match ev.via {
                 Via::Ctl => "ctl",
                 Via::User => "user",
             };
             attrs.push(("via".to_string(), v.to_string()));
         }
-        let line = proto::Event { name: ev.name.clone(), attrs }.to_line(seq);
-        self.bus.deliver(win.as_deref(), &key, &ev.name, ev.kind, line);
+        let line = proto::Event {
+            name: ev.name.clone(),
+            attrs,
+        }
+        .to_line(seq);
+        self.bus
+            .deliver(win.as_deref(), &key, &ev.name, ev.kind, line);
         seq
     }
 
@@ -553,24 +636,48 @@ impl Tree {
         ev.kind = EventKind::Request;
         let (win, key, _) = self.locate(&ev);
         let drag = if ev.name == "drop" {
-            ev.attrs.iter().find(|(k, _)| k == "drag").and_then(|(_, v)| v.parse().ok())
+            ev.attrs
+                .iter()
+                .find(|(k, _)| k == "drag")
+                .and_then(|(_, v)| v.parse().ok())
         } else {
             None
+        };
+        let closes_window = match (&win, &ev.node) {
+            (Some(w), None) if ev.name == "close" => Some(w.clone()),
+            _ => None,
         };
         let reader = self.bus.has_reader(win.as_deref(), &key);
         let seq = self.emit(ev);
         if reader {
             self.requests.insert(
                 seq,
-                Request { target: key, default, deadline: Instant::now() + timeout, drag },
+                Request {
+                    target: key,
+                    default,
+                    deadline: Instant::now() + timeout,
+                    drag,
+                    closes_window,
+                },
             );
         } else {
-            if let Some(d) = drag {
-                self.drag_done(d);
-            }
-            self.pending.push(HostCmd::Answer { seq, answer: default });
+            self.resolve_default(drag, closes_window.as_deref(), &default);
+            self.pending.push(HostCmd::Answer {
+                seq,
+                answer: default,
+            });
         }
         seq
+    }
+
+    /// A request's default answer applies: clear its drag, close its window.
+    fn resolve_default(&mut self, drag: Option<u64>, closes_window: Option<&str>, answer: &Answer) {
+        if let Some(d) = drag {
+            self.drag_done(d);
+        }
+        if let Some(w) = closes_window.filter(|_| answer.0.verb == "close") {
+            self.window_closed(w);
+        }
     }
 
     /// Requests still waiting for an answer.
@@ -581,14 +688,19 @@ impl Tree {
     /// Batch and request timeouts, plus defaults applied since the last tick.
     pub fn tick(&mut self, now: Instant) -> Vec<HostCmd> {
         let mut out = std::mem::take(&mut self.pending);
-        let expired: Vec<u64> =
-            self.requests.iter().filter(|(_, r)| r.deadline <= now).map(|(s, _)| *s).collect();
+        let expired: Vec<u64> = self
+            .requests
+            .iter()
+            .filter(|(_, r)| r.deadline <= now)
+            .map(|(s, _)| *s)
+            .collect();
         for seq in expired {
             let r = self.requests.remove(&seq).unwrap();
-            if let Some(d) = r.drag {
-                self.drag_done(d);
-            }
-            out.push(HostCmd::Answer { seq, answer: r.default });
+            self.resolve_default(r.drag, r.closes_window.as_deref(), &r.default);
+            out.push(HostCmd::Answer {
+                seq,
+                answer: r.default,
+            });
         }
         let mut i = 0;
         while i < self.batches.len() {
@@ -598,8 +710,16 @@ impl Tree {
                     Some(w) => vec![w.clone()],
                     None => self.windows(),
                 };
-                let who = b.scope.as_deref().map(|w| format!(" win={w}")).unwrap_or_default();
-                self.shared.trace.lock().unwrap().push(format!("batch timeout{who}"));
+                let who = b
+                    .scope
+                    .as_deref()
+                    .map(|w| format!(" win={w}"))
+                    .unwrap_or_default();
+                self.shared
+                    .trace
+                    .lock()
+                    .unwrap()
+                    .push(format!("batch timeout{who}"));
                 for w in wins {
                     if !self.is_frozen(&w) {
                         out.push(HostCmd::Redraw { win: w });
@@ -617,7 +737,9 @@ impl Tree {
     }
 
     fn is_frozen(&self, win: &str) -> bool {
-        self.batches.iter().any(|b| b.scope.as_deref().is_none_or(|w| w == win))
+        self.batches
+            .iter()
+            .any(|b| b.scope.as_deref().is_none_or(|w| w == win))
     }
 
     /// Diffs `old` against the current state, updates the bus's live
@@ -631,8 +753,12 @@ impl Tree {
             self.bus.remove_live(p);
             self.shared.bounds.lock().unwrap().remove(p);
         }
-        let frozen: Vec<String> =
-            ch.dirty_windows.iter().filter(|w| self.is_frozen(w)).cloned().collect();
+        let frozen: Vec<String> = ch
+            .dirty_windows
+            .iter()
+            .filter(|w| self.is_frozen(w))
+            .cloned()
+            .collect();
         ch.dirty_windows.retain(|w| !frozen.contains(w));
         ch.host = host;
         ch

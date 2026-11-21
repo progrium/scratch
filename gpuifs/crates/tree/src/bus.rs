@@ -23,7 +23,12 @@ pub const ACTION_CAP: usize = 4096;
 
 #[derive(Debug)]
 enum Entry {
-    Line { text: Arc<str>, name: Arc<str>, key: Arc<str>, kind: EventKind },
+    Line {
+        text: Arc<str>,
+        name: Arc<str>,
+        key: Arc<str>,
+        kind: EventKind,
+    },
     Lost(u64),
     Gone,
 }
@@ -74,7 +79,12 @@ impl SubShared {
             return;
         }
         match &e {
-            Entry::Line { name, key, kind: EventKind::State, .. } => {
+            Entry::Line {
+                name,
+                key,
+                kind: EventKind::State,
+                ..
+            } => {
                 if let Some(i) = q.entries.iter().position(|x| {
                     matches!(x, Entry::Line { name: n, key: k, kind: EventKind::State, .. }
                         if n == name && k == key)
@@ -135,7 +145,9 @@ impl Default for EventBus {
     fn default() -> Self {
         let mut inner = Inner::default();
         inner.live.insert(String::new());
-        EventBus { inner: Arc::new(Mutex::new(inner)) }
+        EventBus {
+            inner: Arc::new(Mutex::new(inner)),
+        }
     }
 }
 
@@ -202,7 +214,14 @@ impl EventBus {
 
     /// Queues one already-formatted line (with its seq) for every reader of
     /// the app, `win`, and `key`.
-    pub(crate) fn deliver(&self, win: Option<&str>, key: &str, name: &str, kind: EventKind, line: String) {
+    pub(crate) fn deliver(
+        &self,
+        win: Option<&str>,
+        key: &str,
+        name: &str,
+        kind: EventKind,
+        line: String,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         if inner.gone {
             return;
@@ -213,8 +232,16 @@ impl EventBus {
         let name: Arc<str> = name.into();
         let key_a: Arc<str> = key.into();
         for s in &inner.subs {
-            if s.target.is_empty() || Some(&s.target) == wdir.as_ref() || (!key.is_empty() && s.target == key) {
-                s.push(Entry::Line { text: text.clone(), name: name.clone(), key: key_a.clone(), kind });
+            if s.target.is_empty()
+                || Some(&s.target) == wdir.as_ref()
+                || (!key.is_empty() && s.target == key)
+            {
+                s.push(Entry::Line {
+                    text: text.clone(),
+                    name: name.clone(),
+                    key: key_a.clone(),
+                    kind,
+                });
             }
         }
     }
@@ -251,7 +278,9 @@ pub struct Subscription {
 
 impl Drop for Subscription {
     fn drop(&mut self) {
-        self.shared.closed.store(true, std::sync::atomic::Ordering::Release);
+        self.shared
+            .closed
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -259,7 +288,11 @@ impl Subscription {
     /// Whole lines only, at most `max` bytes. Blocks until a line is ready.
     /// Dropping the future (a 9P `Tflush`) loses nothing.
     pub async fn read(&mut self, max: usize) -> Result<Bytes, SubEnd> {
-        ReadFut { shared: &self.shared, max }.await
+        ReadFut {
+            shared: &self.shared,
+            max,
+        }
+        .await
     }
 
     /// The same as `read`, without waiting: `None` when nothing is queued.
@@ -271,7 +304,11 @@ impl Subscription {
 
 fn take(q: &mut Queue, max: usize) -> Option<Result<Bytes, SubEnd>> {
     let Some(first) = q.entries.front() else {
-        return if q.ended { Some(Err(SubEnd::Eof)) } else { None };
+        return if q.ended {
+            Some(Err(SubEnd::Eof))
+        } else {
+            None
+        };
     };
     if first.len() > max {
         return Some(Err(SubEnd::ShortRead));
