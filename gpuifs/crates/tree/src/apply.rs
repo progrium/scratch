@@ -1427,7 +1427,12 @@ impl Tx<'_> {
                 .put_file("rows", Bytes::from(cur), g);
             return Ok(());
         } else if let Some(p) = prop_spec(spec, file) {
-            check_prop(p.kind, file, &data)?
+            let v = check_prop(p.kind, file, &data)?;
+            if file == "value" {
+                let items = self.st.node_file(self.reg, node, "items").unwrap_or_default();
+                check_item_ids(spec, items, &v)?;
+            }
+            v
         } else {
             return Err(err(ErrorKind::NotFound, format!("{node}/{file}")));
         };
@@ -1493,6 +1498,44 @@ impl Tx<'_> {
         }
         Ok(())
     }
+}
+
+/// On a type whose `items` file holds item or radio-item lines (`select`,
+/// `combobox`, `radio-group`), each word of `value` must be an item id, once
+/// `items` has any. An empty value clears the selection.
+fn check_item_ids(spec: &'static TypeSpec, items: &[u8], value: &[u8]) -> Result<(), Error> {
+    use proto::lines::*;
+    let Some(fmt) = prop_spec(spec, "items").and_then(|p| match p.kind {
+        PropKind::Data(f @ (LineFormat::Items | LineFormat::RadioItems)) => Some(f),
+        _ => None,
+    }) else {
+        return Ok(());
+    };
+    let items = String::from_utf8_lossy(items);
+    let ids: Vec<String> = match fmt {
+        LineFormat::Items => parse_lines::<Item>(&items)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|i| match i {
+                Item::Entry(e) => Some(e.id),
+                _ => None,
+            })
+            .collect(),
+        _ => parse_lines::<RadioItem>(&items)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| r.id)
+            .collect(),
+    };
+    if ids.is_empty() {
+        return Ok(());
+    }
+    for w in String::from_utf8_lossy(value).split_whitespace() {
+        if !ids.iter().any(|id| id == w) {
+            return Err(err(ErrorKind::NotFound, format!("item {w}")));
+        }
+    }
+    Ok(())
 }
 
 fn is_reserved_by_children(st: &State, path: &str, spec: &'static TypeSpec) -> bool {
