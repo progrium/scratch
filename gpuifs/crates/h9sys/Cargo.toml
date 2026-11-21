@@ -1,0 +1,9 @@
+[package]
+name = "h9sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+# W4 adds build.rs (zig build of shim.zig against $HYPER9_DIR or third_party/hyper9).
+
+[dependencies]

@@ -1,0 +1,13 @@
+[package]
+name = "tree"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+proto.workspace = true
+style.workspace = true
+catalog.workspace = true
+bytes.workspace = true
+futures.workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+proto.workspace = true
+style.workspace = true
+catalog.workspace = true
+tree.workspace = true
+bytes.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+ninep.workspace = true
