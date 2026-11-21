@@ -8,6 +8,15 @@ proposals. Echoes go out for client writes to `value` on types with a
 document. A child in a named-slot position with a wrong name is
 `bad value`, not `unknown type`.
 
+**Decided by W3 (b9b16c7):** `/debug/inject` is as README.md proposes, plus
+an optional `default=VERB` on request events; the tree also ticks in real
+time every 16 ms. `/debug/log` reads back one line per host command. Item 1:
+short files and Word/Bool/Number/Enum props apply per write; text and data
+buffer to clunk. Item 2: a `ctl` write that fills an 8 KiB piece and doesn't
+end in a newline keeps its partial last line until the next write or clunk,
+so `cat cmds >ctl` works. Item 21: a failed walk answers `not found: NAME`;
+what the 9front kernel passes on is still to check in h9.
+
 W8's report (PLAN.md § W8, third bullet). Each item says where DESIGN.md or
 PLAN.md is silent or inconsistent, what the suite's goldens assume for now
 (details in [README.md](README.md) § Proposed), and who decides. The first
