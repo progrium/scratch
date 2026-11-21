@@ -1,5 +1,13 @@
 # Gaps and contradictions found while writing the suite
 
+**Decided by W2 (fc024b5):** items 3 (a `trace` read returns the whole log,
+the last 1 MiB, not a stream), 5 to 8, 14, 16, 17 and 18 follow this suite's
+proposals. Echoes go out for client writes to `value` on types with a
+`change` event (with `value=` unless it's text, bytes or secret), a window's
+`state` and `focus`; none for verbs or for props set by `new` or a `tree`
+document. A child in a named-slot position with a wrong name is
+`bad value`, not `unknown type`.
+
 W8's report (PLAN.md § W8, third bullet). Each item says where DESIGN.md or
 PLAN.md is silent or inconsistent, what the suite's goldens assume for now
 (details in [README.md](README.md) § Proposed), and who decides. The first
