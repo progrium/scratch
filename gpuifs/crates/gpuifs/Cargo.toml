@@ -5,10 +5,20 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# The GPUI host. Without it, gpuifs runs only --headless:
+#   cargo build -p gpuifs --no-default-features
+default = ["gui"]
+gui = ["dep:host"]
+
 [dependencies]
 proto.workspace = true
 catalog.workspace = true
 tree.workspace = true
 ninep.workspace = true
 h9sys.workspace = true
-host.workspace = true
+host = { workspace = true, optional = true }
+bytes.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+smol.workspace = true

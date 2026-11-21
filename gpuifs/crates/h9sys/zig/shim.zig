@@ -41,6 +41,7 @@ const H9Machine = struct {
     running: std.atomic.Value(bool) = .init(false),
     /// Set once a run ended stuck: the machine's memory is never freed.
     stuck: bool = false,
+    relay: Relay = .{},
 
     fn io(m: *H9Machine) std.Io {
         return m.threaded.io();
@@ -187,7 +188,14 @@ fn configure(m: *H9Machine, cfg: *const H9Config, why: *[]const u8) !void {
     // An empty destination mounts nothing (h9sys's own tests).
     const dst = span(cfg.ninep_dst);
     if (cfg.ninep_fd >= 0 and dst.len > 0) {
-        try mounts.append(arena, .{ .kind = .fd, .fd = cfg.ninep_fd, .dst = try arena.dupe(u8, dst) });
+        // h9's `.fd` mount takes a descriptor in its own kernel's table,
+        // which an embedder can't make, so the host fd is relayed through
+        // a unix socket in a private directory, which h9 dials as a URL.
+        const path = m.relay.start(arena, m.opts.tmp_dir, cfg.ninep_fd) catch |e| {
+            why.* = try std.fmt.allocPrint(arena, "9P relay: {t}", .{e});
+            return error.Usage;
+        };
+        try mounts.append(arena, .{ .kind = .url, .src = try std.fmt.allocPrint(arena, "unix://{s}", .{path}), .dst = try arena.dupe(u8, dst) });
     }
     m.opts.mounts = mounts.items;
 
@@ -362,7 +370,102 @@ export fn h9_stop(m: *H9Machine) void {
 export fn h9_free(m: *H9Machine) void {
     // After a stuck run the machine's process may still read the config.
     if (m.stuck) return;
+    m.relay.stop();
     m.arena_state.deinit();
     m.threaded.deinit();
     gpa.destroy(m);
 }
+
+/// Copies bytes between the embedder's 9P fd and each connection h9 makes
+/// to a unix socket in a private directory (mode 0700), one connection at
+/// a time: h9 connects once per run.
+const Relay = struct {
+    thread: ?std.Thread = null,
+    listen_fd: c_int = -1,
+    fd: c_int = -1,
+    wake: [2]c_int = .{ -1, -1 },
+    dir: [std.c.PATH_MAX]u8 = undefined,
+    dir_len: usize = 0,
+    path: [:0]const u8 = "",
+
+    const c = std.c;
+
+    fn start(r: *Relay, arena: std.mem.Allocator, tmp: []const u8, fd: c_int) ![]const u8 {
+        var n: u32 = 0;
+        const dir = while (true) : (n += 1) {
+            // Unique enough with the pid; mkdir's EEXIST catches the rest.
+            const rnd = @as(u64, @intFromPtr(r)) +% n;
+            const d = try std.fmt.allocPrintSentinel(arena, "{s}/h9sys-{d}-{x}", .{ std.mem.trimEnd(u8, tmp, "/"), c.getpid(), rnd }, 0);
+            if (c.mkdir(d, 0o700) == 0) break d;
+            if (n > 8) return error.MkdirFailed;
+        };
+        @memcpy(r.dir[0..dir.len], dir);
+        r.dir[dir.len] = 0;
+        r.dir_len = dir.len;
+        r.path = try std.fmt.allocPrintSentinel(arena, "{s}/9p", .{dir}, 0);
+        var addr: c.sockaddr.un = .{ .family = c.AF.UNIX, .path = undefined };
+        if (r.path.len >= addr.path.len) return error.NameTooLong;
+        @memset(&addr.path, 0);
+        @memcpy(addr.path[0..r.path.len], r.path);
+        r.listen_fd = c.socket(c.AF.UNIX, c.SOCK.STREAM, 0);
+        if (r.listen_fd < 0) return error.SocketFailed;
+        if (c.bind(r.listen_fd, @ptrCast(&addr), @sizeOf(c.sockaddr.un)) != 0) return error.BindFailed;
+        if (c.listen(r.listen_fd, 4) != 0) return error.ListenFailed;
+        if (c.pipe(&r.wake) != 0) return error.PipeFailed;
+        r.fd = fd;
+        r.thread = try std.Thread.spawn(.{}, loop, .{r});
+        return r.path;
+    }
+
+    fn stop(r: *Relay) void {
+        const t = r.thread orelse return;
+        _ = c.write(r.wake[1], "x", 1);
+        t.join();
+        r.thread = null;
+        _ = c.close(r.listen_fd);
+        _ = c.close(r.wake[0]);
+        _ = c.close(r.wake[1]);
+        _ = c.unlink(r.path);
+        _ = c.rmdir(@ptrCast(r.dir[0..r.dir_len :0]));
+    }
+
+    fn loop(r: *Relay) void {
+        var buf: [64 << 10]u8 = undefined;
+        while (true) {
+            var lp = [_]c.pollfd{
+                .{ .fd = r.listen_fd, .events = c.POLL.IN, .revents = 0 },
+                .{ .fd = r.wake[0], .events = c.POLL.IN, .revents = 0 },
+            };
+            if (c.poll(&lp, lp.len, -1) < 0) continue;
+            if (lp[1].revents != 0) return;
+            if (lp[0].revents == 0) continue;
+            const conn = c.accept(r.listen_fd, null, null);
+            if (conn < 0) continue;
+            defer _ = c.close(conn);
+            while (true) {
+                var p = [_]c.pollfd{
+                    .{ .fd = conn, .events = c.POLL.IN, .revents = 0 },
+                    .{ .fd = r.fd, .events = c.POLL.IN, .revents = 0 },
+                    .{ .fd = r.wake[0], .events = c.POLL.IN, .revents = 0 },
+                };
+                if (c.poll(&p, p.len, -1) < 0) continue;
+                if (p[2].revents != 0) return;
+                if (p[0].revents != 0 and !copy(conn, r.fd, &buf)) break;
+                // The embedder's end closing ends the relay for good.
+                if (p[1].revents != 0 and !copy(r.fd, conn, &buf)) return;
+            }
+        }
+    }
+
+    fn copy(from: c_int, to: c_int, buf: []u8) bool {
+        const n = c.read(from, buf.ptr, buf.len);
+        if (n <= 0) return false;
+        var off: usize = 0;
+        while (off < n) {
+            const w = c.write(to, buf.ptr + off, @as(usize, @intCast(n)) - off);
+            if (w <= 0) return false;
+            off += @intCast(w);
+        }
+        return true;
+    }
+};
