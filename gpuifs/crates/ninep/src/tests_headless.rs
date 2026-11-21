@@ -160,7 +160,8 @@ fn events_inject_and_quit() {
             }
         }
         hb.wait_gone().await;
-        assert_eq!(cl.walk(3, "version").await, Rmsg::Error { ename: "app gone".into() });
+        cl.walk(3, "version").await;
+        assert_eq!(cl.fail(Tmsg::Open { fid: 3, mode: OREAD }).await, "app gone");
         assert!(hb.log().iter().any(|l| l == "quit"), "{:?}", hb.log());
     });
 }
@@ -243,5 +244,32 @@ fn debug_inject_errors() {
         assert!(text(&mut cl, "debug/inject").await.contains("tick SECONDS"));
         put(&mut cl, "debug/inject", "drag n=3 type=text data=hello").await.unwrap();
         assert_eq!(text(&mut cl, "drags/3/data").await, "hello");
+    });
+}
+
+#[test]
+fn read_after_quit_is_eof_and_walks_still_work() {
+    with_headless(Options::default(), |mut cl, _| async move {
+        put(&mut cl, "ctl", "window main").await.unwrap();
+        cl.open(1, "events", OREAD).await;
+        put(&mut cl, "ctl", "quit").await.unwrap();
+        // Whatever was queued (resync, gone), then EOF.
+        let mut n = 0;
+        loop {
+            let Rmsg::Read { data } = cl.ok(Tmsg::Read { fid: 1, offset: 0, count: 8192 }).await else { panic!() };
+            if data.is_empty() {
+                break;
+            }
+            n += 1;
+            assert!(n < 5, "no EOF");
+        }
+        // Walks succeed, so the kernel doesn't fall back to create; open and create fail.
+        assert!(matches!(cl.walk(2, "ctl").await, Rmsg::Walk { .. }));
+        assert_eq!(cl.fail(Tmsg::Open { fid: 2, mode: OWRITE | OTRUNC }).await, "app gone");
+        cl.walk(3, "windows").await;
+        let e = cl.fail(Tmsg::Create { fid: 3, name: "x".into(), perm: 0o664, mode: OWRITE }).await;
+        assert_eq!(e, "app gone");
+        assert_eq!(cl.fail(Tmsg::Stat { fid: 3 }).await, "app gone");
+        assert!(matches!(cl.walk(4, "nope").await, Rmsg::Error { .. }));
     });
 }

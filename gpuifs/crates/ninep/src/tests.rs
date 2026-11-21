@@ -553,7 +553,8 @@ fn events_block_flush_and_eof() {
         cl.open(2, "ctl", OWRITE).await;
         cl.ok(Tmsg::Write { fid: 2, offset: 0, data: b"quit".to_vec() }).await;
         assert_eq!(cl.recv().await, (504, Rmsg::Read { data: vec![] }));
-        assert_eq!(cl.walk(3, "version").await, Rmsg::Error { ename: "app gone".into() });
+        assert!(matches!(cl.walk(3, "version").await, Rmsg::Walk { .. }), "walks still work");
+        assert_eq!(cl.fail(Tmsg::Open { fid: 3, mode: OREAD }).await, "app gone");
         assert_eq!(cl.fail(Tmsg::Write { fid: 2, offset: 0, data: b"x".to_vec() }).await, "app gone");
     });
 }

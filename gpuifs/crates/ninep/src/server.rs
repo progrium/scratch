@@ -333,10 +333,10 @@ impl Conn {
         Rmsg::Attach { qid }
     }
 
+    /// Walks still work after the app quits (against the last snapshot), so
+    /// a kernel's open fails with `app gone` at the open instead of falling
+    /// back to create on a mount that forbids it.
     fn walk(&self, fid: u32, newfid: u32, names: Vec<String>) -> Rmsg {
-        if self.b.is_gone() {
-            return gone();
-        }
         let mut fids = self.fids.lock().unwrap();
         let Some(f) = fids.get(&fid) else { return err("unknown fid") };
         if f.opened.is_some() {
