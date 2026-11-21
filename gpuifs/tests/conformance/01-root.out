@@ -1,0 +1,33 @@
+# root
+assets
+clipboard
+clipboard-files
+ctl
+debug
+drags
+events
+keymap
+menus
+theme
+trace
+version
+windows
+# version
+gpuifs 0.1
+# no windows yet
+# a window
+ok
+main
+bounds
+ctl
+events
+focus
+overlays
+root
+state
+title
+# its root node
+div|
+ctl
+Root test|
+exit=0

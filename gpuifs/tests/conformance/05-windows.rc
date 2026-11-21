@@ -1,0 +1,60 @@
+#!/bin/rc
+# 05-windows: DESIGN § Windows. The window verb and its options, a window's
+# ctl verbs and files, and the state event every change sends.
+# milestone: M1
+# needs: W1 W2 W3 W4
+. ./lib.rc
+
+echo '# window with every option'
+w $k/ctl window main 'title=Main window' 'size=800,600' 'min=400,300' 'pos=center' 'kind=normal' 'titlebar=system' 'resizable=on'
+val $k/windows/main/title
+echo '# the name is taken'
+w $k/ctl window main
+echo '# bad option values'
+w $k/ctl window w2 'size=wide'
+w $k/ctl window w3 'kind=sideways'
+exists $k/windows/w2 $k/windows/w3
+echo '# an unknown option'
+w $k/ctl window w4 'colour=red'
+exists $k/windows/w4
+echo '# a dialog and a popup'
+w $k/ctl window ask 'kind=dialog' 'title=Ask'
+w $k/ctl window tip 'kind=popup' 'titlebar=none' 'resizable=off'
+names $k/windows
+
+m=$k/windows/main
+echo '# title, by verb and by file'
+w $m/ctl title 'Renamed'
+val $m/title
+w $m/title 'By file'
+val $m/title
+echo '# size, move, center, activate are accepted'
+w $m/ctl size 1024,768
+w $m/ctl move 10,20
+w $m/ctl center
+w $m/ctl activate
+w $m/ctl size big
+echo '# state, by verb, read back; state events coalesce, so a slow reader sees the newest'
+{
+	w $m/ctl state maximized
+	val $m/state
+	w $m/ctl state fullscreen
+	w $m/ctl state normal
+	w $m/ctl state sideways
+	val $m/state
+	evs 'win=main'
+} <[3]$m/events
+echo '# a user-made change carries via=user'
+{
+	inj event state 'win=main' 'value=minimized'
+	evs 'win=main'
+} <[3]$m/events
+echo '# notify is accepted'
+w $m/ctl 'notify ''Saved draft'' type=success'
+w $m/ctl 'notify ''Upload failed'' type=error sticky=on action=retry:''Try again'''
+w $m/ctl 'notify hi type=loud'
+echo '# an unknown window verb'
+w $m/ctl wobble
+echo '# destroy closes now, without a request'
+w $k/windows/tip/ctl destroy
+names $k/windows

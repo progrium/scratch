@@ -1,0 +1,67 @@
+#!/bin/sh
+# run-examples: run each example's tree-building phase headless (W8, after M1).
+#
+#	tests/conformance/run-examples [-u] [-g gpuifs] [name...]
+#
+# For each example listed below, runs tree-phase.rc on it and compares the
+# output with examples/NAME.out. With -u, writes examples/NAME.out instead:
+# review that diff by hand, since a golden recorded from a buggy tree is
+# worse than none. An example with no golden yet passes if its stderr
+# section is empty, and its output is printed for review.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+top=$(cd "$here/../.." && pwd)
+update=0
+gpuifs=${GPUIFS:-$top/target/debug/gpuifs}
+while getopts ug: o; do
+	case $o in
+	u) update=1 ;;
+	g) gpuifs=$OPTARG ;;
+	*) sed -n '3p' "$0" >&2; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+
+# name | directory | command (milestone in the example's header)
+list() {
+	cat <<'END'
+hello|examples/rc|hello.rc
+counter|examples/rc|counter.rc
+confirm|examples/rc|confirm.rc Delete?
+todo|examples/rc|todo.rc
+calc|examples/rc|calc.rc
+signin|examples/rc|signin.rc
+settings|examples/rc|settings.rc
+gallery|examples/rc|gallery.rc
+files|examples/rc|files.rc
+stocks|examples/rc|stocks.rc
+dock|examples/rc|dock.rc
+chat|examples/rc|chat.rc
+notes|examples/rc|notes.rc
+paint|examples/rc|paint.rc
+csvview|examples/awk|awk -f csvview.awk planets.csv
+END
+}
+
+cd "$top"
+mkdir -p "$here/out/examples"
+pass=0 fail=0
+list | while IFS='|' read -r name dir cmd; do
+	[ $# -gt 0 ] && ! echo " $* " | grep -q " $name " && continue
+	out="$here/out/examples/$name.out"
+	# shellcheck disable=SC2086
+	"$gpuifs" --headless rc tests/conformance/tree-phase.rc "$dir" $cmd >"$out" 2>"$out.trace"
+	golden="$here/examples/$name.out"
+	if [ $update -eq 1 ]; then
+		cp "$out" "$golden"; echo "updated $name"; continue
+	fi
+	if [ -f "$golden" ]; then
+		if diff -u "$golden" "$out" >"$out.diff"; then echo "pass $name"
+		else echo "FAIL $name"; sed 's/^/	/' "$out.diff"; fi
+	elif sed -n '/^-- stderr$/,$p' "$out" | sed 1d | grep -q .; then
+		echo "FAIL $name (no golden; the example's writes were refused:)"
+		sed -n '/^-- stderr$/,$p' "$out" | sed 's/^/	/'
+	else
+		echo "new  $name (no golden yet; output in $out)"
+	fi
+done

@@ -1,0 +1,48 @@
+# each open is a subscription that starts with resync seq=N
+resync seq=N
+# grains: app, window, node
+-- node root/a
+resync
+click win=main node=root/a tag=open:42
+-- window main
+resync
+click win=main node=root/a tag=open:42
+click win=main node=root/b tag=''
+-- app
+resync
+click win=main node=root/a tag=open:42
+click win=main node=root/b tag=''
+click win=other node=root tag=''
+# tag routing: the tag file at the time of the event
+resync
+click win=main node=root/a tag=open:42
+click win=main node=root/a tag=open:43
+# a state event coalesces with a queued one for the same node, and moves to the back
+resync
+click win=main node=root/b tag=''
+hover win=main node=root/a tag=open:43 value=off via=user
+hover win=main node=root/b tag='' value=on via=user
+# never a change after the submit that came from it
+resync
+change win=main node=root/in tag='' via=user
+submit win=main node=root/in tag=''
+# action events are never coalesced
+resync
+click win=main node=root/b tag=''
+click win=main node=root/b tag=''
+click win=main node=root/b tag=''
+# seq increases across the app
+increasing
+3
+# values with blanks are quoted, once
+resync
+action win=main id=save label='Save all' note='it''s'
+# removing a node ends its stream with gone, then end of file
+resync
+gone
+eof
+# destroying a window ends its stream the same way
+resync
+gone
+eof
+exit=0

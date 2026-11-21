@@ -1,0 +1,47 @@
+# DESIGN's sign-in document reads back as written
+div root  style='v_flex size_full p=24 gap=16'
+  text title  style='text_xl font_semibold'  text='Sign in'
+  form f  layout=v
+    field user  label=Email
+      input in  placeholder=you@example.com
+    field pass  label=Password
+      input in  flags=secret
+    field go
+      button submit  label='Sign in'  style='primary w_full'  tag=login
+  link help  label='Forgot password?'  href=https://example.com/reset
+# the directory view is the same tree
+Sign in|
+you@example.com|
+login|
+title f help|
+user pass go|
+# a save and restore round-trips
+same
+# a rewrite keeps children whose name and type match
+Ada|
+f title|
+no
+no
+# a child whose type changed is replaced, so its state goes
+textarea|
+|
+# a text=<<END block
+# Notes
+
+- one
+- two
+div root
+  markdown notes  text=<<END
+# Notes
+
+- one
+- two
+END
+# a document with a bad line changes nothing
+yes
+no
+# indentation that skips a level
+no
+# the root line must match the node it is written to
+div|
+exit=0

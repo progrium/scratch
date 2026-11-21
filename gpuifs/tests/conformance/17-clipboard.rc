@@ -1,0 +1,15 @@
+#!/bin/rc
+# 17-clipboard: DESIGN § Clipboard. clipboard and clipboard-files read the
+# platform clipboard (headless: one in memory) and writes replace it.
+# milestone: M1
+# needs: W2 W3 W4
+. ./lib.rc
+
+echo 'copied text' >$k/clipboard
+val $k/clipboard
+echo 'line one
+line two' >$k/clipboard
+cat $k/clipboard
+echo '/usr/glenda/a.txt
+/usr/glenda/b.txt' >$k/clipboard-files
+cat $k/clipboard-files

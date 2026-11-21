@@ -1,0 +1,73 @@
+# every element type
+ok
+ok
+ok
+ok
+ok
+ok
+ok
+ok
+ok
+div|
+text|
+styled-text|
+img|
+svg|
+icon|
+scroll|
+spacer|
+canvas|
+# an unknown type
+unknown type
+unknown type
+# their own files
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+# a prop another type has is not there
+not found
+# text drops one trailing newline
+Hello|
+# flags
+ok
+selectable truncate|
+bad value
+# runs are start len style lines
+ok
+ok
+0 2 text_color=primary font_bold
+|
+# img src forms
+ok
+https://example.com/a.png|
+# icon names are the kit's
+ok
+ok
+chevron-down|
+# scroll origin reads and writes x y
+ok
+0 120|
+bad value
+# on: the events a raw element sends
+ok
+ok
+click|
+bad value
+# the clickable card from DESIGN
+ok
+ok
+ok
+ok
+div list
+  div card1  style='v_flex gap=4 p=12 rounded_md border_1 border_color=border hover:bg=accent cursor_pointer'  tag=open:42  on=click
+    text title  style='text_sm font_semibold'  text='Quarterly report'
+# a click on it
+resync
+click win=main node=root/list/card1 tag=open:42
+exit=0

@@ -1,0 +1,50 @@
+#!/bin/rc
+# 04-quoting: DESIGN § Quoting. One rule, Plan 9's tokenize/quote, in every
+# ctl write and prop=value; text files are never parsed; a ctl write's lines
+# apply together or not at all.
+# milestone: M1
+# needs: W1 W2 W3 W4 W5a
+. ./lib.rc
+mainwin
+r=$k/windows/main/root
+
+echo '# single quotes group a word; '''' is a literal quote'
+w $r/ctl 'new text a text=''it''''s here'''
+val $r/a/text
+w $r/ctl 'new text b ''text=also grouped'''
+val $r/b/text
+echo '# a quoted style'
+w $r/ctl 'new div c style=''h_flex gap=8 p=12'''
+val $r/c/style
+echo '# = inside a value is kept'
+w $r/ctl 'new div d style=w=220'
+val $r/d/style
+echo '# blanks: spaces and tabs split words, runs count once'
+w $r/ctl 'new	text   e    text=x'
+val $r/e/text
+echo '# an unterminated quote'
+w $r/ctl 'new text f text=''oops'
+exists $r/f
+echo '# text files are raw bytes, never parsed'
+w $r/a/text 'quote '' and = and '''' stay'
+val $r/a/text
+echo '# several lines in one write apply together'
+w $r/ctl 'new text g text=1
+new text h text=2
+new text i text=3'
+val $r/order
+echo '# one bad line and none apply'
+w $r/ctl 'new text j text=1
+new nosuchtype k
+new text l text=3'
+exists $r/j $r/k $r/l
+val $r/order
+echo '# a duplicate inside one write is in use, and nothing applies'
+w $r/ctl 'new text m
+new text m'
+exists $r/m
+echo '# blank lines are ignored'
+w $r/ctl 'new text n
+
+new text o'
+exists $r/n $r/o

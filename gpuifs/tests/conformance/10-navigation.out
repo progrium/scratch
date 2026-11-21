@@ -1,0 +1,43 @@
+# DESIGN's settings snippet
+ok
+ok
+ok
+ok
+div root  style='h_flex size_full'
+  sidebar nav
+    sidebar-group g  label=Settings
+      sidebar-item general  label=General  icon=settings  active=on  tag=page:general
+      sidebar-item account  label=Account  icon=user  tag=page:account
+      sidebar-item keys  label=Shortcuts  icon=keyboard  tag=page:keys
+  div page  style='flex_1 p=24'
+# a sidebar takes only sidebar-group children, outside its slots
+unknown type
+ok
+# sidebar items click with their tag
+resync
+click win=settings node=root/nav/g/account tag=page:account
+# tabs: value is the selected tab's name
+ok
+ok
+ok
+ok
+b|
+not found
+b|
+# tabs take only tab children
+unknown type
+# a user switch is a change
+resync
+change win=settings node=root/page/t tag='' value=a via=user
+# breadcrumb and pagination
+ok
+home	Home
+docs	Docs
+ok
+ok
+3|
+bad value
+# a link
+ok
+https://example.com/help|
+exit=0

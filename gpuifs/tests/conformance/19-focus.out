@@ -1,0 +1,16 @@
+# nothing focused
+|
+# writing a path moves focus
+ok
+root/b|
+resync
+focus win=main node=root/b tag='' via=ctl
+# a path that is not there
+not found
+root/b|
+# the user moves focus
+resync
+blur win=main node=root/b tag='' via=user
+focus win=main node=root/a tag='' via=user
+root/a|
+exit=0

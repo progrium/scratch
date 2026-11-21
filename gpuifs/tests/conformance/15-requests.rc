@@ -1,0 +1,80 @@
+#!/bin/rc
+# 15-requests: DESIGN § Requests and § Windows. A request waits for an answer
+# by seq= on the node's ctl, takes its default after 5 seconds or at once when
+# no events file is open, and a late answer is not found (PLAN.md § Design
+# questions 2 and 5). Time is the headless fake clock, moved with tick.
+# milestone: M1
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wq $k/ctl window two
+wq $k/ctl window three
+wn=$k/windows/main
+
+echo '# close on a window ctl asks; keep seq= answers no'
+{
+	w $wn/ctl close
+	evraw 'win=main' >/tmp/ev
+	sed 's/ seq=[0-9]+//' /tmp/ev
+	s=`{seqof close}
+	w $wn/ctl keep 'seq='^$s
+	exists $wn
+	echo '# answering twice'
+	w $wn/ctl keep 'seq='^$s
+} <[3]$k/events
+
+echo '# the user''s close button, answered close seq='
+{
+	inj event close 'win=two' 'via=titlebar'
+	evraw 'win=two' >/tmp/ev
+	sed 's/ seq=[0-9]+//' /tmp/ev
+	s=`{seqof close}
+	w $k/windows/two/ctl close 'seq='^$s
+	exists $k/windows/two
+} <[3]$k/events
+
+echo '# no answer in 5 seconds: the default, close'
+{
+	inj event close 'win=three' 'via=titlebar'
+	evraw 'win=three' >/tmp/ev
+	s=`{seqof close}
+	inj tick 4
+	exists $k/windows/three
+	inj tick 1
+	exists $k/windows/three
+	echo '# a late answer'
+	w $wn/ctl close 'seq='^$s
+} <[3]$k/events
+
+echo '# an answer with a seq that was never a request'
+w $wn/ctl keep 'seq=999999'
+echo '# an answer with no seq on a node that takes no verb by that name'
+w $wn/root/ctl keep
+
+echo '# no events file open: the default applies at once'
+wq $k/ctl window four
+w $k/windows/four/ctl close
+exists $k/windows/four
+
+echo '# a tab close request, refused'
+wq $wn/root/ctl new tabs t
+wq $wn/root/t/ctl 'new tab a label=A closable=on
+new tab b label=B closable=on'
+{
+	inj event close 'win=main' 'node=root/t/b'
+	evraw 'win=main' >/tmp/ev
+	sed 's/ seq=[0-9]+//' /tmp/ev
+	s=`{seqof close}
+	w $wn/root/t/b/ctl keep 'seq='^$s
+	exists $wn/root/t/b
+} <[3]$wn/events
+
+echo '# quit is a request too; its default is to quit, so answer keep'
+{
+	inj event quit 'via=menu'
+	evraw >/tmp/ev
+	sed 's/ seq=[0-9]+//' /tmp/ev
+	s=`{seqof quit}
+	w $k/ctl keep 'seq='^$s
+	names $k/windows
+} <[3]$k/events

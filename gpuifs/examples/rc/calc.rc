@@ -17,7 +17,7 @@ cat >$r/tree <<'END'
 div root  style='v_flex size_full p=12 gap=12 bg=background'
   div screen  style='v_flex items_end justify_end h=96 px=12 rounded_lg bg=muted'
     text expr  style='text_sm text_color=muted_foreground truncate'
-    text out  style='text_4xl font_semibold truncate'  text=0
+    text out  style='text_3xl font_semibold truncate'  text=0
   grid keys  cols=4  gap=8  style=flex_1
     button clear  label=AC  style='secondary lg'  tag=k:clear
     button neg  label=±  style='secondary lg'  tag=k:neg

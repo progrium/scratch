@@ -1,0 +1,34 @@
+# the theme directory
+mode
+name
+tokens
+# tokens are name value lines, with ThemeColor names
+8
+# writing one line changes one token
+ok
+primary #0b5cff
+ok
+radius 6
+# several lines in one write
+ok
+accent #445566
+primary #112233
+# an unknown token, and a bad color
+not found
+bad value
+primary #112233
+# mode
+ok
+dark|
+ok
+light|
+bad value
+light|
+# name loads a registry theme; an unknown name is not found
+ok
+Tokyo Night|
+not found
+Tokyo Night|
+# theme load with a missing file
+not found
+exit=0

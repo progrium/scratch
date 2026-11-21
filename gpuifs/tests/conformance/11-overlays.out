@@ -1,0 +1,35 @@
+# overlays are made on overlays/ctl, not in the node tree
+unknown type
+unknown type
+# DESIGN's confirm-before-delete flow
+ok
+alert-dialog confirm-del  title='Delete 3 files?'  description='This cannot be undone.'  confirm=Delete  cancel=Keep  variant=danger  tag=del
+ok
+resync
+confirm win=main node=overlays/confirm-del tag=del
+# cancel
+ok
+resync
+cancel win=main node=overlays/confirm-del tag=del
+# a bad variant
+bad value
+# a dialog with a footer slot
+ok
+ok
+ok
+dialog about  title=About  width=420  modal=on  keyboard=on
+  text body  text='gpuifs 0.1'
+  div footer  style='h_flex justify_end'
+    button ok  label=OK  tag=about-ok
+# open and close verbs send no events: echoes are for state files
+ok
+ok
+resync
+# a popover bound to an anchor node
+ok
+ok
+not found
+# a tooltip file on any node
+ok
+More actions|
+exit=0

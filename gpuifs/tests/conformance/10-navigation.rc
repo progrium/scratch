@@ -1,0 +1,58 @@
+#!/bin/rc
+# 10-navigation: DESIGN § Navigation. The settings snippet, tabs and their
+# panels, breadcrumb and pagination files, and a link.
+# milestone: M1
+# needs: W1 W2 W3 W4 W5a W6b (catalog half)
+. ./lib.rc
+wq $k/ctl window settings
+wn=$k/windows/settings
+r=$wn/root
+
+echo '# DESIGN''s settings snippet'
+w $r/style h_flex size_full
+w $r/ctl 'new sidebar nav
+new div page style=''flex_1 p=24'''
+w $r/nav/ctl 'new sidebar-group g label=Settings'
+w $r/nav/g/ctl 'new sidebar-item general label=General icon=settings active=on tag=page:general
+new sidebar-item account label=Account icon=user tag=page:account
+new sidebar-item keys label=Shortcuts icon=keyboard tag=page:keys'
+cat $r/tree
+echo '# a sidebar takes only sidebar-group children, outside its slots'
+w $r/nav/ctl new text stray
+w $r/nav/ctl new text header 'text=App'
+echo '# sidebar items click with their tag'
+{
+	inj event click 'win=settings' 'node=root/nav/g/account'
+	evs 'win=settings'
+} <[3]$wn/events
+
+echo '# tabs: value is the selected tab''s name'
+w $r/page/ctl new tabs t 'style=underline'
+w $r/page/t/ctl 'new tab a label=One
+new tab b label=Two closable=on'
+w $r/page/t/a/ctl new text body 'text=first panel'
+w $r/page/t/value b
+val $r/page/t/value
+w $r/page/t/value c
+val $r/page/t/value
+echo '# tabs take only tab children'
+w $r/page/t/ctl new div x
+echo '# a user switch is a change'
+{
+	inj mirror 'win=settings' 'node=root/page/t' 'file=value' 'value=a'
+	inj event change 'win=settings' 'node=root/page/t' 'value=a'
+	evs 'win=settings'
+} <[3]$wn/events
+
+echo '# breadcrumb and pagination'
+w $r/page/ctl new breadcrumb crumbs
+echo 'home|Home
+docs|Docs' | tr '|' '	' >$r/page/crumbs/items
+cat $r/page/crumbs/items
+w $r/page/ctl new pagination pg 'total=120' 'per_page=20'
+w $r/page/pg/page 3
+val $r/page/pg/page
+w $r/page/pg/page three
+echo '# a link'
+w $r/page/ctl new link help 'label=Help' 'href=https://example.com/help'
+val $r/page/help/href

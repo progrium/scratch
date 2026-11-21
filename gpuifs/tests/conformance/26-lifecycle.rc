@@ -1,0 +1,20 @@
+#!/bin/rc
+# 26-lifecycle: DESIGN § Running a client in h9, steps 4 and 5. quit on the
+# root ctl hangs up: a blocked events read ends, and later access fails with
+# app gone. The runner appends gpuifs's exit status; this client exits
+# 'failed' on purpose, so gpuifs must exit 1.
+# milestone: M1
+# needs: W2 W3 W4
+. ./lib.rc
+mainwin
+
+echo '# a blocked events read ends at quit'
+{
+	w $k/ctl quit
+	cat <[0=3] >/tmp/rest
+	echo eof
+} <[3]$k/events
+echo '# later access fails with app gone'
+rd $k/version
+w $k/ctl window again
+exit failed

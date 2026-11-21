@@ -1,0 +1,20 @@
+# the drop file lists accepted types
+ok
+files text note|
+# a text drop: payload in /drags/<n>/data, answered accept
+resync
+drop win=main node=root/notes tag=pick type=text drag=7 pt=40,212
+hello world
+ok
+# /drags/7 goes once the request is answered
+no
+# a drop with no answer is refused after the timeout
+no
+# starting a drag: dragstart, the client writes the payload, dragend
+ok
+ok
+resync
+dragstart win=main node=root/card tag='' drag=9
+note-42
+dragend win=main node=root/card tag='' drag=9 result=dropped target=root/notes
+exit=0

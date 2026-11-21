@@ -1,0 +1,31 @@
+# DESIGN's keymap
+cmd-s        save
+cmd-shift-p  palette
+escape       dismiss      context=editor
+ctrl-tab     next-tab     context=workspace
+# a bad keystroke is refused whole and the old keymap stays
+4
+# a node's context file
+ok
+editor|
+# DESIGN's menu
+item new    label=New      key=cmd-n
+item open   label=Open…    key=cmd-o
+sep
+sub recent  label='Open Recent'
+item quit   label=Quit     key=cmd-q
+File
+# a second menu, and removing one
+File
+Help
+File
+# a client-named action comes as action id= with the focus
+resync
+action win=main id=save focus=root/src
+action id=quit
+# set id enabled= check= on the root ctl
+ok
+ok
+bad value
+bad syntax
+exit=0

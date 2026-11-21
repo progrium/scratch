@@ -1,0 +1,45 @@
+# list items: the select format, with groups and separators
+ok
+# Fruit
+apple	Apple	icon=apple
+pear	Pear	disabled
+-
+# Veg
+leek	Leek
+# a malformed items file is refused whole and the old one stays
+6
+# DESIGN's table snippet
+ok
+name	Name	280	sort
+size	Size	90	sort	align=right
+mod	Modified	160	sort
+1	a.txt	12	Nov 21 10:00
+2	b.txt	300	Nov 21 11:00
+# append adds rows, one write at a time
+4
+# user events: select is state, sort and scrolled_to_end are actions
+resync
+select win=main node=root/files tag='' row=2 col=name via=user
+sort win=main node=root/files tag='' col=size dir=desc
+scrolled_to_end win=main node=root/files tag=''
+# sorted=on lets the host sort
+ok
+# tree items and expanded ids
+ok
+ok
+src|
+not found
+# progress takes 0 to 100, or empty
+ok
+ok
+bad value
+40|
+|
+# description-list, badge, kbd
+ok
+Name	gpuifs
+Version	0.1
+ok
+ok
+cmd-shift-p|
+exit=0

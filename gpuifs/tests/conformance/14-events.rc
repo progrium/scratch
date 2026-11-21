@@ -1,0 +1,96 @@
+#!/bin/rc
+# 14-events: DESIGN § Events and § Two kinds of event. The three grains,
+# resync, tag routing, echoes, coalescing, ordering, gone and end of file.
+# milestone: M1
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wq $k/ctl window other
+wn=$k/windows/main
+r=$wn/root
+wq $r/ctl 'new div a tag=open:42 on=click
+new div b on=click'
+
+echo '# each open is a subscription that starts with resync seq=N'
+{ sed 1q <[0=3] | sed 's/[0-9]+$/N/' } <[3]$k/events
+
+echo '# grains: app, window, node'
+{
+	{
+		{
+			inj event click 'win=main' 'node=root/a'
+			inj event click 'win=main' 'node=root/b'
+			inj event click 'win=other' 'node=root'
+			echo '-- node root/a'
+			evs 'win=main' 'node=root/a'
+		} <[3]$r/a/events
+		echo '-- window main'
+		evs 'win=main'
+	} <[3]$wn/events
+	echo '-- app'
+	evs
+} <[3]$k/events
+
+echo '# tag routing: the tag file at the time of the event'
+{
+	inj event click 'win=main' 'node=root/a'
+	wq $r/a/tag open:43
+	inj event click 'win=main' 'node=root/a'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# a state event coalesces with a queued one for the same node, and moves to the back'
+{
+	inj event hover 'win=main' 'node=root/a' 'value=on'
+	inj event click 'win=main' 'node=root/b'
+	inj event hover 'win=main' 'node=root/a' 'value=off'
+	inj event hover 'win=main' 'node=root/b' 'value=on'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# never a change after the submit that came from it'
+wq $r/ctl new input in
+{
+	inj event change 'win=main' 'node=root/in'
+	inj event submit 'win=main' 'node=root/in'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# action events are never coalesced'
+{
+	inj event click 'win=main' 'node=root/b'
+	inj event click 'win=main' 'node=root/b'
+	inj event click 'win=main' 'node=root/b'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# seq increases across the app'
+{
+	inj event click 'win=main' 'node=root/a'
+	inj event click 'win=other' 'node=root'
+	inj event click 'win=main' 'node=root/b'
+	evraw >/tmp/ev
+} <[3]$k/events
+grep -v '^resync' /tmp/ev | sed -n 's/.* seq=([0-9]+).*/\1/p' >/tmp/seqs
+sort -n /tmp/seqs >/tmp/sorted
+cmp -s /tmp/sorted /tmp/seqs && echo increasing
+sort -u /tmp/seqs | count
+
+echo '# values with blanks are quoted, once'
+{
+	inj event action 'win=main' 'id=save' 'label=Save all' 'note=it''s'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# removing a node ends its stream with gone, then end of file'
+{
+	wq $r/ctl delete b
+	cat <[0=3]
+	echo eof
+} <[3]$r/b/events
+echo '# destroying a window ends its stream the same way'
+{
+	wq $k/windows/other/ctl destroy
+	cat <[0=3]
+	echo eof
+} <[3]$k/windows/other/events

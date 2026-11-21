@@ -1,0 +1,61 @@
+#!/bin/rc
+# 08-elements: DESIGN § Element tier and § Making an element interactive.
+# Each element type, its own files, the trailing-newline rule, and on=.
+# milestone: M1
+# needs: W1 W2 W3 W4 W5a
+. ./lib.rc
+mainwin
+r=$k/windows/main/root
+
+echo '# every element type'
+for(t in div text styled-text img svg icon scroll spacer canvas)
+	w $r/ctl new $t e-$t
+for(t in div text styled-text img svg icon scroll spacer canvas)
+	val $r/e-$t/type
+echo '# an unknown type'
+w $r/ctl new widget x
+w $r/ctl new Div x
+echo '# their own files'
+exists $r/e-text/text $r/e-styled-text/text $r/e-styled-text/runs $r/e-img/src $r/e-img/data $r/e-svg/src $r/e-icon/name $r/e-scroll/origin $r/e-canvas/ops
+echo '# a prop another type has is not there'
+w $r/ctl new text t2 'src=@logo'
+echo '# text drops one trailing newline'
+echo Hello >$r/e-text/text
+val $r/e-text/text
+echo '# flags'
+w $r/e-text/flags selectable truncate
+val $r/e-text/flags
+w $r/e-text/flags bold
+echo '# runs are start len style lines'
+w $r/e-styled-text/text 'fn main() {}'
+w $r/e-styled-text/runs '0 2 text_color=primary font_bold'
+val $r/e-styled-text/runs
+echo '# img src forms'
+w $r/e-img/src https://example.com/a.png
+val $r/e-img/src
+echo '# icon names are the kit''s'
+w $r/e-icon/name search
+w $r/e-icon/name chevron-down
+val $r/e-icon/name
+echo '# scroll origin reads and writes x y'
+w $r/e-scroll/origin 0 120
+val $r/e-scroll/origin
+w $r/e-scroll/origin up
+echo '# on: the events a raw element sends'
+w $r/e-div/on click hover drop mouse_down mouse_up scroll key focus blur move
+w $r/e-div/on click
+val $r/e-div/on
+w $r/e-div/on clack
+echo '# the clickable card from DESIGN'
+n=$r/list
+w $r/ctl new div list
+w $n/ctl 'new div card1 style=''v_flex gap=4 p=12 rounded_md border_1 border_color=border hover:bg=accent cursor_pointer'' tag=open:42'
+w $n/card1/ctl 'new text title style=''text_sm font_semibold'''
+echo 'Quarterly report' >$n/card1/title/text
+w $n/card1/on click
+cat $n/tree
+echo '# a click on it'
+{
+	inj event click 'win=main' 'node=root/list/card1'
+	evs 'win=main'
+} <[3]$k/windows/main/events

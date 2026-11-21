@@ -1,0 +1,50 @@
+#!/bin/rc
+# 18-keymap-menus: DESIGN § Actions, keymaps and menus. The keymap file,
+# context, menus/ item grammar, action events, and set id enabled= check=.
+# milestone: M1
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wn=$k/windows/main
+
+echo '# DESIGN''s keymap'
+echo 'cmd-s        save
+cmd-shift-p  palette
+escape       dismiss      context=editor
+ctrl-tab     next-tab     context=workspace' >$k/keymap
+cat $k/keymap
+echo '# a bad keystroke is refused whole and the old keymap stays'
+echo 'cmd-s save
+cmd-wibble-q quit' >$k/keymap
+cat $k/keymap | count
+echo '# a node''s context file'
+wq $wn/root/ctl new editor src
+w $wn/root/src/context editor
+val $wn/root/src/context
+
+echo '# DESIGN''s menu'
+echo 'item new    label=New      key=cmd-n
+item open   label=Open…    key=cmd-o
+sep
+sub recent  label=''Open Recent''
+item quit   label=Quit     key=cmd-q' >$k/menus/File
+cat $k/menus/File
+names $k/menus
+echo '# a second menu, and removing one'
+echo 'item about label=About' >$k/menus/Help
+names $k/menus
+rm $k/menus/Help
+names $k/menus
+
+echo '# a client-named action comes as action id= with the focus'
+{
+	inj event action 'id=save' 'win=main' 'focus=root/src'
+	inj event action 'id=quit'
+	evs
+} <[3]$k/events
+
+echo '# set id enabled= check= on the root ctl'
+w $k/ctl set save 'enabled=off'
+w $k/ctl set save 'check=on' 'enabled=on'
+w $k/ctl set save 'enabled=maybe'
+w $k/ctl set save

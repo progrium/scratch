@@ -1,0 +1,38 @@
+#!/bin/rc
+# 24-limits: DESIGN § Errors and limits. The 64 KiB ctl write, node depth 64,
+# and short read on an events file read with a small buffer.
+# milestone: M1
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/windows/main/root
+
+echo '# a ctl write over 64 KiB is too large'
+# echo makes one write of all its arguments; h9's root has no dd.
+x=`{awk 'BEGIN { for(i = 0; i < 70000; i++) printf "x" }'}
+w $r/ctl new text big 'text='^$x
+exists $r/big
+echo '# one just under it applies'
+x=`{awk 'BEGIN { for(i = 0; i < 60000; i++) printf "x" }'}
+w $r/ctl new text big 'text='^$x
+exists $r/big
+
+echo '# node depth: 64 levels under the window root is the limit'
+p=$r
+d=1
+while(! ~ $d 64) {
+	mkdir $p/n
+	p=$p/n
+	d=`{echo $d | awk '{ print $1 + 1 }'}
+}
+mkdir $p/n
+exists $p/n
+w $p/n/ctl new div deeper
+exists $p/n/deeper
+
+echo '# an events read smaller than the next line is a short read'
+{
+	inj event click 'win=main' 'node=root'
+	# read(1) reads one byte at a time (PLAN.md § Design questions 14)
+	read <[0=3] >/dev/null >[2]/tmp/w.err || phrase </tmp/w.err
+} <[3]$k/windows/main/events

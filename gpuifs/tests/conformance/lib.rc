@@ -1,0 +1,131 @@
+# lib.rc: helpers for the conformance scripts.  Use: . ./lib.rc
+#
+# Every script runs as   gpuifs --headless rc ./NN-name.rc   in this
+# directory, so it sees the tree at $gpuifs (normally /mnt/gpui) and
+# /debug/inject is there. Scripts use only h9's built-in root (no printf,
+# head, hoc, seq or kill), pipe events through a reader that takes 8 KiB
+# blocks, quote every = in rc arguments, and keep here documents at the top
+# level, as PLAN.md § Design questions 14 asks.
+#
+# A script prints what it checks on standard output; the runner compares that
+# with NN-name.out. Anything printed by a step that should succeed is a
+# failure, so the helpers print "ok" or the error phrase and nothing else.
+
+k=$gpuifs
+if(~ $#k 0) k=/mnt/gpui
+inject=$k/debug/inject
+
+# The error phrases of DESIGN § Errors and limits.
+phrases='unknown command|bad syntax|unknown style word|unknown type|type is fixed|in use|not found|bad value|too large|short read|no batch|app gone'
+
+# phrase: read error text on stdin, print only its DESIGN phrase, so a
+# golden file doesn't depend on the detail after the colon or on the
+# prefix echo or cat put in front of it.
+fn phrase {
+	sed -n 's/.*('^$phrases^').*/\1/p' | sed 1q
+}
+
+# w file text...: write the words as one write (echo joins them with
+# blanks), then print "ok" or the error phrase. ctl writes, and the short
+# per-write files (type style order tag on ...), report errors here.
+fn w {
+	_f=$1
+	shift
+	if(echo $* >$_f >[2]/tmp/w.err) echo ok
+	if not phrase </tmp/w.err
+}
+
+# wd file text...: as w, but print the whole error text after the
+# prefix, detail included, for the errors whose detail DESIGN spells out.
+fn wd {
+	_f=$1
+	shift
+	if(echo $* >$_f >[2]/tmp/w.err) echo ok
+	if not sed -n 's/^[^:]*: write error: //p; s/^echo: //p' /tmp/w.err | sed 1q
+}
+
+# wq file text...: write and print nothing on success, the phrase on
+# failure. For setup steps that should just work.
+fn wq {
+	_f=$1
+	shift
+	if(! echo $* >$_f >[2]/tmp/w.err) phrase </tmp/w.err
+}
+
+# val file...: print a file's bytes followed by a | so a golden file
+# shows whether a trailing newline is stored (PLAN.md § Design questions 11).
+fn val {
+	for(_f) {
+		cat $_f
+		echo '|'
+	}
+}
+
+# r file: print a file with its path relative to $k as a label.
+fn r {
+	for(_f) {
+		echo '--' `{echo $_f | sed 's!^'^$k^'/!!'}
+		cat $_f
+	}
+}
+
+# rd path: read a file or list a directory, print "ok" if it's there or
+# the error phrase if not. cat reports its own open errors, so this works
+# where an rc redirection's error text wouldn't be catchable.
+fn rd {
+	if(cat $1 >/dev/null >[2]/tmp/w.err) echo ok
+	if not phrase </tmp/w.err
+}
+
+# exists path...: print "yes" or "no" for each path.
+fn exists {
+	for(_f) {
+		if(test -e $_f) echo yes
+		if not echo no
+	}
+}
+
+# names dir: the directory's entries, one per line, sorted (ls sorts).
+fn names {
+	ls -p $1
+}
+
+# inj line...: write one /debug/inject command (see README.md).
+fn inj {
+	wq $inject $*
+}
+
+# Event subscriptions. A script opens an events file on fd 3 around a
+# block, so the subscription exists before the events it wants:
+#
+#	{
+#		...writes and injects...
+#		evs 'win=main'
+#	} <[3]$k/windows/main/events
+#
+# evs injects a "sync" event (with the attributes given, so it reaches
+# the file being read), then prints every line up to it with seq= removed.
+# awk reads in blocks; since sync is the last event queued, nothing after
+# it is consumed. evraw is the same with seq= kept, for answering requests.
+fn evraw {
+	inj event sync $*
+	awk '/^sync( |$)/ { exit } { print }' <[0=3]
+}
+fn evs {
+	evraw $* | sed 's/ seq=[0-9]+//'
+}
+
+# seqof name: the seq= of the first line of /tmp/ev that starts with name.
+fn seqof {
+	sed -n 's/^'^$1^' .* seq=([0-9]+).*/\1/p' /tmp/ev | sed 1q
+}
+
+# A window most scripts start with.
+fn mainwin {
+	wq $k/ctl window main 'title=Conformance' 'size=640,480'
+}
+
+# count: the number of lines on stdin, with no padding (Plan 9 wc pads).
+fn count {
+	awk 'END { print NR }'
+}

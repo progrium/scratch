@@ -1,0 +1,43 @@
+#!/bin/rc
+# 02-node-files: DESIGN § Node files. The common files every node has, and
+# what reading and writing each one does.
+# milestone: M1
+# needs: W1 W2 W3 W4 W5a
+. ./lib.rc
+mainwin
+r=$k/windows/main/root
+
+w $r/ctl new div card 'style=v_flex gap=4' 'tag=open:42'
+c=$r/card
+echo '# common files'
+exists $c/type $c/style $c/order $c/tag $c/ctl $c/events $c/bounds $c/id $c/tree
+echo '# type, style, tag, id'
+val $c/type $c/style $c/tag $c/id
+echo '# order lists children, new appends'
+w $c/ctl new text a 'text=A'
+w $c/ctl new text b 'text=B'
+w $c/ctl new text c 'text=C'
+val $c/order
+echo '# order reorders; a child not listed stays in the tree, undrawn'
+w $c/order c a
+val $c/order
+exists $c/a $c/b $c/c
+echo '# order naming a child that does not exist'
+w $c/order a b nope
+val $c/order
+echo '# tag'
+w $c/tag open:43
+val $c/tag
+echo '# ctl lists the verbs a div takes'
+grep -c '^(new|delete)( |$)' $c/ctl
+echo '# bounds are what the host last reported'
+inj bounds 'win=main' 'node=root/card' 'value=10 20 300 40'
+val $c/bounds
+echo '# type is settable before the first frame'
+mkdir $c/late
+w $c/late/type text
+val $c/late/type
+echo '# and fixed after it'
+inj frame 'win=main'
+w $c/late/type div
+val $c/late/type

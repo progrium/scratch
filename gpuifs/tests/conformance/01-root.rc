@@ -1,0 +1,21 @@
+#!/bin/rc
+# 01-root: DESIGN § The tree. The root's files, version, and what a window
+# verb adds under windows/.
+# milestone: M1
+# needs: W1 W2 W3 W4
+. ./lib.rc
+
+echo '# root'
+names $k
+echo '# version'
+sed 1q $k/version
+echo '# no windows yet'
+names $k/windows
+echo '# a window'
+w $k/ctl window main 'title=Root test'
+names $k/windows
+names $k/windows/main
+echo '# its root node'
+val $k/windows/main/root/type
+names $k/windows/main/overlays
+val $k/windows/main/title

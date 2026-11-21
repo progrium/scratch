@@ -1,0 +1,48 @@
+#!/bin/rc
+# 11-overlays: DESIGN § Overlays. The overlays/ directory, open and close,
+# the confirm-before-delete flow, and a dialog's footer slot.
+# milestone: M1
+# needs: W1 W2 W3 W4 W5a W6b (catalog half)
+. ./lib.rc
+mainwin
+wn=$k/windows/main
+o=$wn/overlays
+
+echo '# overlays are made on overlays/ctl, not in the node tree'
+w $wn/root/ctl new dialog d
+w $o/ctl new div d
+echo '# DESIGN''s confirm-before-delete flow'
+w $o/ctl 'new alert-dialog confirm-del title=''Delete 3 files?'' description=''This cannot be undone.'' confirm=Delete cancel=Keep variant=danger tag=del'
+cat $o/confirm-del/tree
+{
+	w $o/confirm-del/ctl open
+	inj event confirm 'win=main' 'node=overlays/confirm-del'
+	evs 'win=main'
+} <[3]$wn/events
+echo '# cancel'
+{
+	w $o/confirm-del/ctl open
+	inj event cancel 'win=main' 'node=overlays/confirm-del'
+	evs 'win=main'
+} <[3]$wn/events
+echo '# a bad variant'
+w $o/ctl 'new alert-dialog x variant=sideways'
+echo '# a dialog with a footer slot'
+w $o/ctl 'new dialog about title=About width=420 modal=on keyboard=on'
+w $o/about/ctl 'new text body text=''gpuifs 0.1''
+new div footer style=''h_flex justify_end'''
+w $o/about/footer/ctl new button ok 'label=OK' 'tag=about-ok'
+cat $o/about/tree
+echo '# open and close verbs send no events: echoes are for state files'
+{
+	w $o/about/ctl open
+	w $o/about/ctl close
+	evs 'win=main'
+} <[3]$wn/events
+echo '# a popover bound to an anchor node'
+w $wn/root/ctl new button more 'label=More'
+w $o/ctl 'new popover pop anchor=root/more placement=bottom-start trigger=click'
+w $o/ctl 'new popover pop2 anchor=root/nope'
+echo '# a tooltip file on any node'
+w $wn/root/more/tooltip 'More actions'
+val $wn/root/more/tooltip

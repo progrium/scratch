@@ -1,0 +1,36 @@
+#!/bin/rc
+# 23-errors: DESIGN § Errors and limits. One write that produces each error
+# phrase (short read and app gone have their own scripts: 24-limits and
+# 26-lifecycle), and the phrase: detail form.
+# milestone: M1
+# needs: W1 W2 W3 W4 W5a
+. ./lib.rc
+mainwin
+wn=$k/windows/main
+r=$wn/root
+wq $r/ctl new div card
+
+echo '# unknown command'
+wd $r/ctl frobnicate
+echo '# bad syntax'
+w $r/ctl 'new div x style=''unclosed'
+echo '# unknown style word'
+wd $r/card/style flexx
+echo '# unknown type'
+wd $r/ctl new widget x
+echo '# type is fixed'
+inj frame 'win=main'
+w $r/card/type text
+echo '# in use'
+w $r/ctl new div card
+w $k/ctl window main
+echo '# not found'
+w $r/ctl delete nope
+w $r/order card nope
+echo '# bad value'
+w $r/card/style 'w=wide'
+echo '# no batch'
+w $wn/ctl commit
+echo '# every failure has the phrase: detail form'
+echo frobnicate >$r/ctl >[2]/tmp/w.err
+sed -n 's/.*(unknown command): (.+)$/\1: detail/p' /tmp/w.err

@@ -1,0 +1,38 @@
+#!/bin/rc
+# 07-theme: DESIGN § Theme. theme/tokens lines, one-line writes, mode and name.
+# milestone: M1
+# needs: W2 W3 W4 W5a
+. ./lib.rc
+t=$k/theme
+
+echo '# the theme directory'
+names $t
+echo '# tokens are name value lines, with ThemeColor names'
+grep -c '^(background|foreground|primary|border|muted|accent|ring|radius) ' $t/tokens
+echo '# writing one line changes one token'
+w $t/tokens 'primary #0b5cff'
+grep '^primary ' $t/tokens
+w $t/tokens 'radius 6'
+grep '^radius ' $t/tokens
+echo '# several lines in one write'
+w $t/tokens 'primary #112233
+accent #445566'
+grep '^(primary|accent) ' $t/tokens | sort
+echo '# an unknown token, and a bad color'
+w $t/tokens 'no_such_token #ffffff'
+w $t/tokens 'primary blue'
+grep '^primary ' $t/tokens
+echo '# mode'
+w $t/mode dark
+val $t/mode
+w $t/mode light
+val $t/mode
+w $t/mode sepia
+val $t/mode
+echo '# name loads a registry theme; an unknown name is not found'
+w $t/name 'Tokyo Night'
+val $t/name
+w $t/name 'No Such Theme'
+val $t/name
+echo '# theme load with a missing file'
+w $k/ctl theme load /nonexistent/theme.json

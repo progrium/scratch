@@ -1,0 +1,52 @@
+# DESIGN's form snippet
+form prefs  layout=v
+  field name  label=Name
+    input in  placeholder='Your name'
+  field lang  label=Language
+    select in  searchable=on
+  field ok
+    button save  label=Save  style=primary  tag=save
+# items read back as written
+rs	Rust
+go	Go
+c	C
+# a select takes only ids in its items
+ok
+go|
+not found
+go|
+# user events: the input says only that it changed
+resync
+change win=main node=root/prefs/name/in tag='' via=user
+submit win=main node=root/prefs/name/in tag=''
+change win=main node=root/prefs/lang/in tag='' value=rs via=user
+click win=main node=root/prefs/ok/save tag=save
+# the client reads the text from value
+Ada|
+rs|
+# checkbox values
+off|
+ok
+ok
+mixed|
+bad value
+# a client write is an echo with via=ctl
+ok
+resync
+change win=main node=root/cb tag='' value=off via=ctl
+# controlled=on: the user's change is an event, the value waits for the client
+ok
+resync
+change win=main node=root/cb tag='' value=on via=user
+off|
+# secret inputs keep a readable value
+hunter2|
+# slider ranges and bad numbers
+ok
+ok
+20 80|
+bad value
+# radio-group items are id label lines
+ok
+m|
+exit=0

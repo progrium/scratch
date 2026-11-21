@@ -1,0 +1,44 @@
+ok
+# common files
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+# type, style, tag, id
+div|
+v_flex gap=4|
+open:42|
+root/card|
+# order lists children, new appends
+ok
+ok
+ok
+a b c|
+# order reorders; a child not listed stays in the tree, undrawn
+ok
+c a|
+yes
+yes
+yes
+# order naming a child that does not exist
+not found
+c a|
+# tag
+ok
+open:43|
+# ctl lists the verbs a div takes
+2
+# bounds are what the host last reported
+10 20 300 40|
+# type is settable before the first frame
+ok
+text|
+# and fixed after it
+type is fixed
+text|
+exit=0
