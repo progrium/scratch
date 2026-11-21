@@ -551,6 +551,15 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
             };
             let h = inner.focus_handle(&path, cx);
             with_window(inner, &win, cx, |window, cx| h.focus(window, cx));
+            // The tree already echoed this move (via=ctl); don't report it as the user's.
+            let view = inner.windows.borrow().get(&win).map(|w| w.view.clone());
+            if let Some(v) = view {
+                let rel = path
+                    .strip_prefix(&format!("windows/{win}/"))
+                    .unwrap_or(&path)
+                    .to_string();
+                v.update(cx, |v, _| v.set_known_focus(Some(rel)));
+            }
         }
         HostCmd::Clipboard => {
             let text = inner.tree.borrow().root_file("clipboard");

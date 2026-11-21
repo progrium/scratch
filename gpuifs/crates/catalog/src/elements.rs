@@ -9,6 +9,14 @@ const fn p(name: &'static str, kind: PropKind) -> PropSpec {
     PropSpec { name, kind, default: None }
 }
 
+/// `flags` on text elements: `selectable`, `truncate`, or both.
+const TEXT_FLAGS: PropKind = PropKind::Enum(&[
+    "selectable",
+    "truncate",
+    "selectable truncate",
+    "truncate selectable",
+]);
+
 const fn element(name: &'static str, props: &'static [PropSpec], slots: Slots) -> TypeSpec {
     TypeSpec {
         name,
@@ -28,7 +36,7 @@ pub static SPECS: &[TypeSpec] = &[
     // A styled run of text. `flags` takes `selectable` and `truncate`.
     element(
         "text",
-        &[p("text", PropKind::Text), p("flags", PropKind::Text)],
+        &[p("text", PropKind::Text), p("flags", TEXT_FLAGS)],
         Slots::None,
     ),
     // Text plus `start len style...` highlight lines in `runs`.
@@ -37,7 +45,7 @@ pub static SPECS: &[TypeSpec] = &[
         &[
             p("text", PropKind::Text),
             p("runs", PropKind::Bytes),
-            p("flags", PropKind::Text),
+            p("flags", TEXT_FLAGS),
         ],
         Slots::None,
     ),
@@ -54,8 +62,8 @@ pub static SPECS: &[TypeSpec] = &[
         sizable: true,
         ..element("icon", &[p("name", PropKind::Word)], Slots::None)
     },
-    // A scrolling div; `origin` reads and writes `x y`.
-    element("scroll", &[p("origin", PropKind::Text)], Slots::Any),
+    // A scrolling div; `origin` reads and writes `x y` (two numbers).
+    element("scroll", &[p("origin", PropKind::Number)], Slots::Any),
     // `flex_1`, for pushing siblings apart.
     element("spacer", &[], Slots::None),
 ];

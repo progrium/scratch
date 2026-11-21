@@ -91,6 +91,11 @@ impl WindowView {
         }
     }
 
+    /// A focus move the client asked for, which needs no event.
+    pub(crate) fn set_known_focus(&mut self, rel: Option<String>) {
+        self.last_focus = rel;
+    }
+
     /// Focus moves are noticed after each frame: mirror `focus`, send
     /// `focus`/`blur` to nodes that listed them in `on`.
     fn track_focus(&mut self, window: &Window) {

@@ -427,6 +427,6 @@ mod tests {
         assert_eq!(p.group_hover.len(), 1);
         assert_eq!(p.size.as_deref(), Some("sm"));
         assert!(p.has_variant("primary"));
-        assert_eq!(p.base.background.is_some(), true);
+        assert!(p.base.background.is_some());
     }
 }

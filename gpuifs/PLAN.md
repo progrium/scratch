@@ -510,6 +510,34 @@ impl Emitter { pub fn event(&self, name: &str, attrs: &[(&str, &str)]);   // kin
 pub fn register(reg: &mut ComponentRegistry);   // one per group module; W0 wires all of them
 ```
 
+W5b's additive host API (see `crates/host/src/lib.rs` for docs):
+
+```rust
+impl RenderCx<'_> {
+    pub fn render(&mut self, node: &NodeView) -> AnyElement;             // any node, through its component
+    pub fn element(&mut self, node: &NodeView) -> Stateful<Div>;          // id + style + state styles + group
+                                                                          // + `on` + context + tooltip + bounds
+    pub fn element_from(&mut self, node: &NodeView, base: Div) -> Stateful<Div>;
+    pub fn style_of(&self, node: &NodeView) -> Rc<ParsedStyle>;           // base/hover/.., size, variants
+    pub fn focus_handle(&mut self, node: &NodeView) -> FocusHandle;       // kept while the node lives
+    pub fn scroll_handle(&mut self, node: &NodeView) -> ScrollHandle;
+    pub fn token(&self, name: &str) -> Option<Hsla>;                      // theme token by name
+    pub fn cx_ref(&self) -> &App;
+}
+impl NodeView { pub fn name(&self) -> &str; pub fn rel_path(&self) -> &str; pub fn flag(&self, file: &str) -> bool;
+                pub fn is_set(&self, file: &str) -> bool; pub fn spec(&self) -> Option<&'static TypeSpec>;
+                pub fn children(&self) -> Vec<NodeView>; pub fn child(&self, name: &str) -> Option<NodeView>;
+                pub fn on_words(&self) -> Vec<String>; pub fn host_root_file(&self, path: &str) -> Option<Bytes>;
+                pub fn emitter(&self) -> Emitter; }
+```
+
+- A request opened with `Emitter::request` is answered by calling the
+  component's `verb` with the answer (`close seq=12`, `keep seq=12`).
+  `open`/`close` on an overlay's `ctl` also arrive as `verb`s.
+- `host::testing::Harness` (`cfg(test)` or feature `test-support`):
+  `Harness::new(cx)`, `write`/`ctl`/`mkdir`/`remove`, `read`, `subscribe` +
+  `events`, `bounds`, `click`, `hover`, `keys`, `node`, `settle`.
+
 ## Working rules
 
 - **Branches.** Each workstream works on `gpuifs-<id>-<name>` (for example

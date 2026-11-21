@@ -47,7 +47,7 @@ fn mouse_button(b: MouseButton) -> &'static str {
 }
 
 fn num(p: Pixels) -> String {
-    let v = f32::from(p);
+    let v = (f32::from(p) * 10.).round() / 10.;
     if v.fract() == 0.0 {
         format!("{}", v as i64)
     } else {
