@@ -433,6 +433,15 @@ impl Snapshot {
 
 pub struct Subscription { /* Send */ }
 impl Subscription { pub async fn read(&mut self, max: usize) -> Result<Bytes, SubEnd>; } // whole lines; Eof after `gone`
+
+// Additive (W2):
+//   HostCmd::Redraw { win } (a batch committed or timed out), HostCmd::ThemeLoad { path }
+//   EventBus: Clone (clones share one bus, so the 9P thread keeps its own handle)
+//   Tree::node / committed_node / committed_overlays / windows / window_spec / window_file
+//   Tree::root_file / menus / theme_overrides / drag_data / drag_done
+//   Tree::window_closed(win) -> Changes, Tree::app_gone()   // EOF every reader, later ops `app gone`
+//   NodeRef::rel_path / win / spec / text / is_set / child / type_fixed
+//   tick() also hands out defaults applied at once (no `events` reader)
 ```
 
 ### `ninep`
