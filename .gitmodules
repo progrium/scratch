@@ -1,0 +1,3 @@
+[submodule "gpuifs/third_party/hyper9"]
+	path = gpuifs/third_party/hyper9
+	url = https://github.com/progrium/hyper9

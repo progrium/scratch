@@ -65,8 +65,9 @@ fn client_sees_the_tree_and_its_exit_status_comes_back() {
 #[test]
 fn failed_writes_are_reported() {
     let Some(root) = root() else { return };
+    // Whether rc sees the error too depends on the file (at write or at
+    // clunk); the trace says it either way.
     let (out, _) = run(&root, &[], "echo 'window main' >$gpuifs/ctl\necho flexx >$gpuifs/windows/main/root/style\n");
-    assert!(out.status.success(), "{out:?}");
     assert!(text(&out.stderr).contains("error path=windows/main/root/style err='unknown style word"), "{}", text(&out.stderr));
 }
 
