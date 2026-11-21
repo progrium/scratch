@@ -1529,3 +1529,15 @@ batch timeout win=main
 ";
     assert_eq!(read(&t, "trace"), want);
 }
+
+#[test]
+fn design_state_names_coalesce_even_as_actions() {
+    let mut t = app();
+    ok(&mut t, &ctl(R), "new div card");
+    let mut s = sub(&t, "events");
+    t.emit(user(EventKind::Action, "hover", "root/card").attr("value", "on"));
+    t.emit(user(EventKind::Action, "hover", "root/card").attr("value", "off"));
+    let got = drain(&mut s);
+    assert_eq!(got.lines().count(), 1, "{got}");
+    assert!(got.contains("value=off via=user"), "{got}");
+}

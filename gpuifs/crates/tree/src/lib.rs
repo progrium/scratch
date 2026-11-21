@@ -46,6 +46,12 @@ pub use snapshot::Snapshot;
 
 use state::{Node, State};
 
+/// Event names that are always state events (DESIGN § Two kinds of event).
+pub const STATE_EVENTS: &[&str] = &[
+    "change", "select", "cursor", "resize", "layout", "move", "scroll", "hover", "focus", "blur",
+    "state",
+];
+
 /// How long a batch may stay open before it is committed.
 pub const BATCH_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long a request waits for an answer before its default applies.
@@ -574,7 +580,12 @@ impl Tree {
     }
 
     /// Returns the event's seq; fills `tag` (and `win` from a full node path).
-    pub fn emit(&mut self, ev: EventMsg) -> u64 {
+    pub fn emit(&mut self, mut ev: EventMsg) -> u64 {
+        // DESIGN § Two kinds of event names the state events; they coalesce
+        // whatever kind the caller (or an empty catalog spec) gave.
+        if ev.kind == EventKind::Action && STATE_EVENTS.contains(&ev.name.as_str()) {
+            ev.kind = EventKind::State;
+        }
         let (win, key, rel) = self.locate(&ev);
         let seq = self.bus.next_seq();
         let mut attrs = Vec::with_capacity(ev.attrs.len() + 4);
