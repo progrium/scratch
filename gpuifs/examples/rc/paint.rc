@@ -1,0 +1,94 @@
+#!/bin/rc
+# paint.rc: a finger-painting program on a canvas. Pick a color and a
+# brush, drag to draw, undo, clear, save and load the drawing.
+#
+#	gpuifs -t Paint rc paint.rc
+#
+# Shows: canvas ops as a retained display list, one short ctl write per
+# stroke segment (add path ...), coalesced drag events with x= y=, del for
+# undo, the display list as the file format (save is cat ops >file),
+# colors as theme tokens so a drawing follows dark mode.   Needs: M4
+. ./lib.rc
+
+echo 'window main title=Paint size=900,640 min=500,400 pos=center' >$k/ctl
+w=$k/windows/main
+r=$w/root
+cat >$r/tree <<'END'
+div root  style='v_flex size_full bg=background'
+  toolbar bar
+    button-group color  value=foreground  tag=color
+      button foreground  label=Ink
+      button primary  label=Blue
+      button danger  label=Red
+      button success  label=Green
+      button warning  label=Amber
+    separator s1  dir=v
+    slider size  min=1  max=24  value=4  style=w=140  tag=size
+    separator s2  dir=v
+    button undo  icon=undo  style='ghost sm'  tag=undo  tooltip='Undo (cmd-z)'
+    button clear  icon=trash  style='ghost sm'  tag=clear  tooltip=Clear
+    spacer sp
+    button load  label=Open  style='ghost sm'  tag=load
+    button save  label=Save  style='outline sm'  tag=save
+  canvas c  style='flex_1 cursor_crosshair'  on='mouse_down mouse_up drag'
+END
+C=$r/c
+file=drawing.ops
+echo 'cmd-z undo
+cmd-s save
+cmd-o load' >$k/keymap
+
+fn blank { echo 'rect bg 0 0 4000 4000 fill=background' >$C/ops }
+blank
+color=foreground
+size=4
+n=0
+strokes=()		# ids of the segments of each stroke, for undo
+last=()
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case mouse_down
+		x=`{attr x}; y=`{attr y}
+		n=`{add $n 1}
+		echo 'add circle d'$n' '$x' '$y' '`{echo $size | awk '{ print $1 / 2 }'}' fill='$color >$C/ctl
+		last=($x $y)
+		strokes=($strokes s$n)
+		>/tmp/stroke.s$n
+		echo d$n >>/tmp/stroke.s$n
+	case drag
+		if(~ $#last 2){
+			x=`{attr x}; y=`{attr y}
+			n=`{add $n 1}
+			echo 'add path p'$n' M'$last(1)','$last(2)' L'$x','$y' stroke='$color' width='$size' cap=round' >$C/ctl
+			echo p$n >>/tmp/stroke.$strokes($#strokes)
+			last=($x $y)
+		}
+	case mouse_up
+		last=()
+	case change
+		if(has 'tag=color') color=`{attr value}
+		if(has 'tag=size') size=`{attr value}
+	case click action
+		x=`{attr tag; attr id}
+		switch($"x){
+		case undo
+			if(! ~ $#strokes 0){
+				s=$strokes($#strokes)
+				for(i in `{cat /tmp/stroke.$s}) echo del $i >$C/ctl
+				strokes=`{echo $strokes | awk '{ $NF = ""; print }'}
+			}
+		case clear
+			blank
+			strokes=()
+		case save
+			cat $C/ops >$file
+			echo 'notify ''Saved '$file''' type=success' >$w/ctl
+		case load
+			if(test -f $file) cat $file >$C/ops
+			strokes=()
+		}
+	case *
+		stdquit
+	}
+}

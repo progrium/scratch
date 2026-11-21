@@ -1,0 +1,8 @@
+scroll story  style='flex_1 overflow_y_scroll p=24'
+  accordion a  value=one  style=max_w=520
+    accordion-item one  title='What is gpuifs?'
+      text t  text='A GPUI Kit host that serves the UI as a 9P file tree.'
+    accordion-item two  title='Which languages can use it?'
+      text t  text='Any language that can read and write files.'
+    accordion-item three  title='Where does typing happen?'
+      text t  text='In the host. The client sees one change event.'

@@ -1,0 +1,169 @@
+#!/bin/rc
+# dock.rc: a small IDE workspace, after GPUI Kit's dock story. A file tree,
+# an editor, an outline and an output panel in a dock the user can drag,
+# split and zoom; a command palette; a custom title bar. The dock layout is
+# saved on quit and restored on the next launch.
+#
+#	gpuifs -t Workspace rc dock.rc [dir]
+#
+# Shows: dock and dock-panel with layout read/write (the client never tracks
+# a drag), title-bar, editor with language, save and cursor events, TODO
+# diagnostics from grep, a palette dialog with a searchable list, status
+# bar, keymap contexts, menus with set enabled=.   Needs: M4 (dock)
+. ./lib.rc
+
+top=$1
+if(~ $#top 0) top=.
+state=.workspace-layout.json
+
+echo 'window main title=Workspace size=1280,800 min=900,560 titlebar=custom pos=center' >$k/ctl
+w=$k/windows/main
+r=$w/root
+
+cat >$r/tree <<'END'
+div root  style='v_flex size_full bg=background'
+  title-bar tb  title=Workspace
+    div right  style='h_flex gap=4'
+      button run  icon=play  style='ghost xs'  tag=run  tooltip='Run (cmd-r)'
+      button pal  icon=search  style='ghost xs'  tag=palette  tooltip='Commands (cmd-shift-p)'
+  dock ws  style=flex_1
+    dock-panel files  title=Files  icon=folder  zone=left
+      tree t  selectable=on  style=size_full
+    dock-panel src  title=Untitled  icon=file  zone=center
+      editor e  line_numbers=on  style=size_full  context=editor
+    dock-panel outline  title=Outline  icon=list  zone=right
+      list l  selectable=on  style=size_full
+    dock-panel out  title=Output  icon=terminal  zone=bottom  closable=on
+      editor log  readonly=on  soft_wrap=on  style=size_full
+  status-bar st
+    text left  style='text_xs text_color=muted_foreground'
+    text right  style='text_xs text_color=muted_foreground'
+END
+d=$r/ws
+E=$d/src/e
+
+cat >$k/keymap <<'END'
+cmd-s        save          context=editor
+cmd-r        run
+cmd-shift-p  palette
+cmd-p        palette
+escape       dismiss
+END
+echo 'item save     label=Save        key=cmd-s
+item run      label=Run         key=cmd-r
+sep
+item palette  label=''Command Palette…''  key=cmd-shift-p
+sep
+item quit     label=Quit        key=cmd-q' >$k/menus/File
+echo 'set save enabled=off' >$k/ctl
+
+# The palette: a dialog holding a searchable list of commands.
+o=$w/overlays
+echo 'new dialog palette width=520 keyboard=on overlay_closable=on' >$o/ctl
+echo 'new list cmds searchable=on selectable=on style=h=280' >$o/palette/ctl
+tsv >$o/palette/cmds/items <<'END'
+save    | Save file           | icon=check
+run     | Run current file    | icon=play
+grep    | Find TODOs          | icon=search
+reset   | Reset layout        | icon=layout-dashboard
+theme   | Toggle dark mode    | icon=sun-moon
+quit    | Quit                | icon=power
+END
+
+# Restore the user's dock layout from last time.
+test -f $state && cat $state >$d/layout
+
+walk -f $top | sed 's,^\./,,' | awk 'BEGIN { OFS = "\t" } {
+	n = split($0, a, "/"); p = "-"
+	for(i = 1; i < n; i++) { q = (i == 1) ? a[1] : q "/" a[i]; if(!(q in seen)) { seen[q] = 1; print q, p, a[i], "icon=folder" } p = q }
+	print $0, p, a[n], "icon=file"
+}' >$d/files/t/items
+
+cur=()
+fn lang {
+	switch($1){
+	case *.rs;      echo rust
+	case *.go;      echo go
+	case *.c *.h;   echo c
+	case *.py;      echo python
+	case *.md;      echo markdown
+	case *.rc *.sh; echo bash
+	case *;         echo text
+	}
+}
+fn open {
+	if(test -f $1){
+		cur=$1
+		echo begin >$w/ctl
+		lang $1 >$E/language
+		cat $1 >$E/value
+		echo `{basename $1} >$d/src/title
+		echo `{basename $1}^' — Workspace' >$r/tb/title
+		outline
+		echo commit >$w/ctl
+		echo 'set save enabled=on' >$k/ctl
+	}
+}
+# outline: fn, func and fn-like definitions with their line numbers
+fn outline {
+	grep -n '^(fn|func|pub fn|def|class|struct|impl) ' $cur |
+		awk -F: 'BEGIN { OFS = "\t" } { print $1, $2 }' >$d/outline/l/items
+}
+fn todos {
+	grep -n 'TODO|FIXME' $cur | awk -F: 'BEGIN { OFS = "\t" } {
+		c = index($0, "TODO"); if(c == 0) c = index($0, "FIXME")
+		print $1, c - length($1) - 1, 4, "warning", "TODO left in the code"
+	}' >$E/diagnostics
+}
+fn save {
+	if(! ~ $#cur 0){
+		cat $E/value >$cur
+		todos
+		outline
+		echo 'notify ''Saved '^`{basename $cur}^''' type=success' >$w/ctl
+	}
+}
+fn run {
+	if(! ~ $#cur 0){
+		echo activate >$d/out/ctl
+		{ echo '% rc '^$cur; rc $cur >[2=1] </dev/null; echo '% exit '^$status } >$d/out/log/value
+	}
+}
+fn cmd {
+	switch($1){
+	case save;    save
+	case run;     run
+	case grep;    todos
+	case palette; echo open >$o/palette/ctl
+	case dismiss; echo close >$o/palette/ctl
+	case reset;   echo -n >$d/layout
+	case theme
+		if(~ `{cat $k/theme/mode} dark) echo light >$k/theme/mode
+		if not echo dark >$k/theme/mode
+	case quit
+		cat $d/layout >$state
+		echo quit >$k/ctl
+	}
+}
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case open select
+		if(has 'node=root/ws/files/t') open `{attr value; attr id}
+		if(has 'node=overlays/palette/cmds'){
+			echo close >$o/palette/ctl
+			cmd `{attr value; attr id}
+		}
+		if(has 'node=root/ws/outline/l') echo `{attr value}^' 1 '^`{attr value}^' 1' >$E/selection
+	case action click
+		cmd `{attr id; attr tag}
+	case save
+		save
+	case cursor
+		echo 'Ln '^`{attr line}^', Col '^`{attr col} >$r/st/right/text
+	case change
+		if(has 'node=root/ws/src/e') echo 'Edited' >$r/st/left/text
+	case close quit
+		cmd quit
+	}
+}

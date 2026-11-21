@@ -1,0 +1,11 @@
+scroll story  style='flex_1 p=24'
+  resizable r  dir=h  style='h=360 border_1 border_color=border rounded_md'
+    panel a  size=200  min=120
+      div x  style='size_full p=12 bg=muted'
+        text t  text=Left
+    panel b
+      resizable r  dir=v  style=size_full
+        panel top
+          text t  style=p=12  text=Top
+        panel bottom  size=120
+          text t  style=p=12  text=Bottom

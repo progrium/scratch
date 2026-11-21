@@ -1,0 +1,5 @@
+scroll story  style='flex_1 overflow_y_scroll p=24'
+  div v  style='h_flex gap=8'
+    button p  label='Click me'
+    button h  label='Hover card'  style=outline
+    button t  label='With tooltip'  style=ghost

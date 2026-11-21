@@ -1,0 +1,106 @@
+#!/bin/rc
+# stocks.rc: a live quote board, after GPUI Kit's real-time table story.
+# Prices move every second; pick a row to chart it.
+#
+#	gpuifs -t Stocks rc stocks.rc
+#
+# Shows: a background rc process rewriting a table's rows every second
+# while the user scrolls, sorts and selects (all of which stay in the host:
+# rows keep their ids, so selection survives each rewrite), host-side
+# sorting with sorted=on, a line chart fed from TSV, description-list,
+# a switch that pauses the feed. Two rc processes share state through
+# files in /tmp, the Plan 9 way.   Needs: M3
+. ./lib.rc
+
+echo 'window main title=Stocks size=1000,640 min=720,480 pos=center' >$k/ctl
+r=$k/windows/main/root
+
+cat >$r/tree <<'END'
+div root  style='v_flex size_full bg=background'
+  toolbar bar
+    text t  style='text_lg font_semibold px=8'  text=Watchlist
+    spacer s
+    switch live  label=Live  value=on  tag=live
+  resizable split  dir=v  style=flex_1
+    panel top
+      table quotes  stripe=on  selectable=row  sortable=on  sorted=on  style=size_full
+    panel bottom  size=240  min=160
+      div detail  style='h_flex size_full gap=16 p=16'
+        chart price  kind=line  x=t  y=price  style=flex_1
+        description-list facts  columns=1  bordered=on  style=w=260
+  status-bar st
+    text left  style='text_xs text_color=muted_foreground'
+END
+Q=$r/split/top/quotes
+D=$r/split/bottom/detail
+tsv >$Q/columns <<'END'
+sym  | Symbol | 90  | sort | fixed
+name | Name   | 240 | sort
+px   | Price  | 100 | sort | align=right
+chg  | Change | 100 | sort | align=right
+pct  | %      | 90  | sort | align=right
+vol  | Volume | 120 | sort | align=right
+END
+
+# sym name price open volume
+cat >/tmp/quotes <<'END'
+AAPL Apple 228.10 228.10 51200000
+MSFT Microsoft 415.30 415.30 21800000
+NVDA NVIDIA 138.40 138.40 240000000
+GOOG Alphabet 176.20 176.20 18900000
+AMZN Amazon 202.60 202.60 37400000
+META Meta 571.80 571.80 12100000
+TSLA Tesla 342.00 342.00 88000000
+LB Longbridge 7.85 7.85 3100000
+ARM Arm 141.90 141.90 4600000
+TSM TSMC 190.40 190.40 13500000
+END
+echo AAPL >/tmp/sel
+rm -f /tmp/paused /tmp/hist.*
+
+# tick: move every price a little, rewrite rows, extend the selected
+# symbol's history, and redraw its chart and facts.
+fn tick {
+	awk 'BEGIN { srand() } {
+		$3 = sprintf("%.2f", $3 * (1 + (rand() - 0.5) / 50)); $5 += int(rand() * 50000); print
+	}' /tmp/quotes >/tmp/quotes.new && mv /tmp/quotes.new /tmp/quotes
+	awk 'BEGIN { OFS = "\t" } {
+		c = $3 - $4; arrow = (c >= 0) ? "▲ " : "▼ "
+		name = $2; for(i = 6; i <= NF; i++) name = name " " $i
+		print $1, $1, name, $3, arrow sprintf("%.2f", c < 0 ? -c : c), sprintf("%+.2f%%", 100 * c / $4), $5
+	}' /tmp/quotes >$Q/rows
+	s=`{cat /tmp/sel}
+	t=`{date | awk '{ print $4 }'}
+	grep '^'$s' ' /tmp/quotes | awk -v 't='$t '{ print t, $3 }' >>/tmp/hist.$s
+	{ echo 't	price'; tail -60 /tmp/hist.$s | tsvspace } >$D/price/data
+	grep '^'$s' ' /tmp/quotes | awk 'BEGIN { OFS = "\t" } {
+		print "Symbol", $1; print "Open", $4; print "Last", $3
+		printf "Change\t%+.2f%%\n", 100 * ($3 - $4) / $4; print "Volume", $5
+	}' >$D/facts/items
+	echo 'Updated '^$t >$r/st/left/text
+}
+fn tsvspace {
+	awk 'BEGIN { OFS = "\t" } { $1 = $1; print }'
+}
+
+tick
+{ while(sleep 1) if(! test -f /tmp/paused) tick } &
+feed=$apid
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case select
+		if(has 'node=root/split/top/quotes'){
+			attr row >/tmp/sel
+			tick
+		}
+	case change
+		if(has 'tag=live'){
+			if(~ `{attr value} on) rm -f /tmp/paused
+			if not touch /tmp/paused
+		}
+	case *
+		stdquit
+	}
+}
+echo kill >/proc/$feed/note

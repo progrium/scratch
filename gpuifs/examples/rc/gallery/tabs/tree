@@ -1,0 +1,16 @@
+scroll story  style='flex_1 overflow_y_scroll p=24'
+  div v  style='v_flex gap=24'
+    tabs a  value=one  style=underline
+      tab one  label=Account
+        text t  text='Account panel'
+      tab two  label=Password
+        text t  text='Password panel'
+      tab three  label=Billing  closable=on
+        text t  text='Billing panel'
+    tabs b  value=one  style=pill
+      tab one  label=Day
+      tab two  label=Week
+      tab three  label=Month
+    tabs c  value=two  style=segmented
+      tab one  label=List  icon=list
+      tab two  label=Grid  icon=layout-grid

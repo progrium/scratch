@@ -1,0 +1,57 @@
+#!/bin/rc
+# signin.rc: a sign-in form built as one subtree document, with
+# validation errors on the fields and a welcome dialog.
+#
+#	gpuifs -t 'Sign in' rc signin.rc
+#
+# Shows: the tree file (the design doc's own sign-in screen), field error
+# text, flags=secret (its value never reaches the trace), a link the host
+# opens itself, begin/commit so errors appear in one frame, a dialog in
+# overlays/ with a footer slot.   Needs: M3
+. ./lib.rc
+
+echo 'window main title=''Sign in'' size=400,440 pos=center resizable=off' >$k/ctl
+w=$k/windows/main
+r=$w/root
+
+cat >$r/tree <<'END'
+div root  style='v_flex size_full p=24 gap=16 bg=background'
+  text title  style='text_xl font_semibold'  text='Sign in'
+  form f  layout=v
+    field user  label=Email  required=on
+      input in  placeholder=you@example.com  tag=login
+    field pass  label=Password  required=on
+      input in  flags=secret  tag=login
+    field go
+      button submit  label='Sign in'  style='primary w_full'  tag=login
+  link help  label='Forgot password?'  href=https://example.com/reset
+END
+echo root/f/user/in >$w/focus
+
+# The welcome dialog exists from the start, closed.
+echo 'new dialog hi title=Welcome width=320 keyboard=on overlay_closable=on' >$w/overlays/ctl
+echo 'new div footer style=''h_flex justify_end''' >$w/overlays/hi/ctl
+echo 'new button ok label=Continue style=primary tag=ok' >$w/overlays/hi/footer/ctl
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click submit
+		if(has 'tag=login'){
+			u=`{cat $r/f/user/in/value}
+			p=`{cat $r/f/pass/in/value}
+			echo begin >$w/ctl
+			echo -n >$r/f/user/error
+			echo -n >$r/f/pass/error
+			if(! ~ $"u *@*.*) echo 'Enter an email address, like you@example.com' >$r/f/user/error
+			if(~ $#p 0) echo 'Enter your password' >$r/f/pass/error
+			if not if(~ $"u *@*.*){
+				echo 'Signed in as '^$"u >$w/overlays/hi/description
+				echo open >$w/overlays/hi/ctl
+			}
+			echo commit >$w/ctl
+		}
+		if(has 'tag=ok') echo quit >$k/ctl
+	case *
+		stdquit
+	}
+}

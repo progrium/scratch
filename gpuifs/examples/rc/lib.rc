@@ -1,0 +1,55 @@
+# lib.rc: helpers shared by the rc examples.  Use: . ./lib.rc
+#
+# The examples use only the commands in h9's built-in root (rc, awk, sed,
+# cat, ls, read, sleep, date, ...), so they run with gpuifs --root builtin.
+
+# Where the tree is mounted. gpuifs sets $gpuifs in the guest.
+k=$gpuifs
+if(~ $#k 0) k=/mnt/gpui
+
+# The event loop reads one line per event:
+#
+#	cat $k/events | while(ev=`{read}) { switch($ev(1)) { ... } }
+#
+# The cat matters. read(1) reads one byte at a time, which an events file
+# refuses (short read), so cat reads in 8 KiB blocks and read takes lines
+# from the pipe. $ev is the event split into words: $ev(1) is its name.
+
+# attr name: print the value of name= in the current event, $ev.
+# Values with blanks in them come quoted and split across words; the
+# examples choose tags and ids without blanks so this stays simple.
+fn attr {
+	for(a in $ev)
+		if(~ $a $1^'='*)
+			echo $a | sed 's/^[^=]*=//; s/^''//; s/''$//'
+}
+
+# has word...: true if the current event has any of the words exactly,
+# as in: if(has 'tag=save' 'id=save') ...
+# (~ $ev pattern joins the list into one string first, so a whole-event
+# match needs *...* patterns, as DESIGN.md's notes client uses.)
+fn has {
+	_has=()
+	for(w in $ev) for(p in $*) if(~ $w $p) _has=1
+	~ $#_has 1
+}
+
+# tsv: turn "a | b | c" lines into tab-separated lines, for items,
+# columns and rows files. 9front has no printf(1), and tabs typed into
+# a script are invisible.
+fn tsv {
+	awk -F'|' 'BEGIN { OFS = "\t" } { for(i = 1; i <= NF; i++) gsub(/^ +| +$/, "", $i); $1 = $1; print }'
+}
+
+# add n m: print n+m. There is no hoc in the built-in root.
+fn add {
+	echo $1 $2 | awk '{ print $1 + $2 }'
+}
+
+# The answer most examples give to close and quit requests: quit the app.
+fn stdquit {
+	switch($ev(1)){
+	case close quit
+		echo quit >$k/ctl
+	}
+}

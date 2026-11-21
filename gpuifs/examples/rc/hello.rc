@@ -1,0 +1,34 @@
+#!/bin/rc
+# hello.rc: the design doc's Greeter. Type a name, press Greet or Enter.
+#
+#	gpuifs -t Greeter rc hello.rc
+#
+# Shows: a window, a subtree document, input + button, submit and click
+# events routed by tag, reading an input's value file.   Needs: M3
+. ./lib.rc
+
+echo 'window main title=Greeter size=360,170 pos=center resizable=off' >$k/ctl
+r=$k/windows/main/root
+
+cat >$r/tree <<'END'
+div root  style='v_flex size_full p=20 gap=12 bg=background'
+  div row  style='h_flex gap=8'
+    input name  placeholder='Your name'  style=flex_1  tag=greet
+    button go  label=Greet  style=primary  tag=greet
+  text out  style='text_lg text_color=muted_foreground'  text='Who are you?'
+END
+echo root/row/name >$k/windows/main/focus
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click submit
+		if(has 'tag=greet'){
+			n=`{cat $r/row/name/value}
+			if(~ $#n 0) n=stranger
+			echo 'Hello, '^$"n^'!' >$r/out/text
+			echo 'text_lg font_semibold text_color=foreground' >$r/out/style
+		}
+	case *
+		stdquit
+	}
+}

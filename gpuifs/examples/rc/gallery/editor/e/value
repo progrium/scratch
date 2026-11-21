@@ -1,0 +1,7 @@
+use std::sync::Arc;
+
+fn main() {
+    let tree = Arc::new(Tree::new());
+    let snapshot = tree.snapshot();
+    println!("{} nodes", snapshot.len())
+}

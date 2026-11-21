@@ -1,0 +1,7 @@
+src         | -   | src        | icon=folder
+src/main    | src | main.rs    | icon=file
+src/tree    | src | tree.rs    | icon=file
+src/ninep   | src | ninep      | icon=folder
+src/ninep/m | src/ninep | msg.rs | icon=file
+docs        | -   | docs       | icon=folder
+docs/d      | docs | DESIGN.md | icon=file

@@ -1,0 +1,166 @@
+#!/bin/rc
+# files.rc: a file browser for the current directory. Folders on the left,
+# a sortable listing on the right, a breadcrumb, previews in a sheet, a
+# context menu with Delete, and drag-and-drop from the desktop to copy in.
+#
+#	gpuifs -t Files rc files.rc
+#
+# Shows: tree and table fed from walk(1) and ls(1) through awk, resizable
+# panels, breadcrumb, a context-menu bound to the table, alert-dialog,
+# a sheet holding an editor, markdown or image, img data written as bytes
+# (guest paths are not host paths), drop requests with /drags payloads.
+# Needs: M3; drop needs M4
+. ./lib.rc
+
+echo 'window files title=Files size=980,620 min=640,400 pos=center' >$k/ctl
+w=$k/windows/files
+r=$w/root
+
+cat >$r/tree <<'END'
+div root  style='size_full bg=background'
+  resizable split  dir=h  style=size_full
+    panel left  size=240  min=160
+      tree dirs  selectable=on  style='size_full p=4'
+    panel right
+      div v  style='v_flex size_full'
+        div bar  style='h_flex items_center gap=4 px=12 py=8 border_b_1 border_color=border'
+          button up  icon=arrow-up  style='ghost sm'  tag=up  tooltip='Enclosing folder'
+          breadcrumb crumbs  style=flex_1
+          button mk  icon=folder-plus  style='ghost sm'  tag=mkdir  tooltip='New folder'
+        table list  stripe=on  selectable=row  sortable=on  sorted=on  resizable=on  drop=files  style='flex_1 drop-over:bg=accent'
+        status-bar st
+          text left  style='text_xs text_color=muted_foreground'
+END
+T=$r/split/right/v/list
+tsv >$T/columns <<'END'
+name | Name     | 320 | sort
+kind | Kind     | 90  | sort
+size | Size     | 90  | sort | align=right
+mod  | Modified | 160 | sort
+END
+
+o=$w/overlays
+echo 'new context-menu menu anchor=root/split/right/v/list
+new alert-dialog del title=Delete confirm=Delete cancel=Keep variant=danger tag=del
+new sheet preview side=right size=560' >$o/ctl
+echo 'item open    label=Open
+item delete  label=Delete…  key=cmd-backspace
+sep
+item reveal  label=''Copy path''' >$o/menu/menu
+echo 'cmd-backspace  delete
+cmd-up         up
+cmd-shift-n    mkdir' >$k/keymap
+
+dir=.
+sel=()
+
+fn dirs {
+	{
+		echo '.	-	'^`{basename `{pwd}}^'	icon=folder'
+		walk -d -n 1,4 . | sed 's,^\./,,' | grep -v '^\.$' |
+			awk 'BEGIN { OFS = "\t" } { p = $0; if(!sub(/\/[^\/]*$/, "", p)) p = "."; n = split($0, a, "/"); print $0, p, a[n], "icon=folder" }'
+	} >$r/split/left/dirs/items
+}
+fn list {
+	ls -lp $dir | awk 'BEGIN { OFS = "\t" } {
+		n = $10; for(i = 11; i <= NF; i++) n = n " " $i
+		k = ($1 ~ /^d/) ? "folder" : "file"
+		print n, n, k, (k == "folder" ? "" : $6), $7 " " $8 " " $9
+	}' >$T/rows
+	echo `{ls $dir | wc -l} items >$r/split/right/v/st/left/text
+	# breadcrumb: one item per path prefix
+	echo $dir | awk -v 'top='^`{basename `{pwd}} 'BEGIN { OFS = "\t" } {
+		print ".", top
+		if($0 == ".") exit
+		n = split($0, a, "/"); p = ""
+		for(i = 1; i <= n; i++) { p = (i == 1) ? a[1] : p "/" a[i]; print p, a[i] }
+	}' >$r/split/right/v/bar/crumbs/items
+}
+fn go {
+	dir=$1
+	sel=()
+	list
+}
+fn preview {
+	f=$dir/$1
+	P=$o/preview
+	switch($1){
+	case *.md
+		echo 'sheet preview side=right size=560
+  markdown m  style=''size_full p=16''  selectable=on' >$P/tree
+		cat $f >$P/m/text
+	case *.png *.jpg *.jpeg *.gif
+		echo 'sheet preview side=right size=560
+  img i  style=''w_full''' >$P/tree
+		cat $f >$P/i/data
+	case *
+		echo 'sheet preview side=right size=560
+  editor e  readonly=on  line_numbers=on  style=size_full' >$P/tree
+		switch($1){
+		case *.rs; echo rust >$P/e/language
+		case *.go; echo go >$P/e/language
+		case *.c *.h; echo c >$P/e/language
+		case *.rc *.sh; echo bash >$P/e/language
+		case *.py; echo python >$P/e/language
+		}
+		cat $f >$P/e/value
+	}
+	echo $1 >$P/title
+	echo open >$P/ctl
+}
+fn open {
+	if(test -d $dir/$1) {
+		if(~ $dir .) go $1
+		if not go $dir/$1
+	}
+	if not preview $1
+}
+
+dirs
+go .
+n=0
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case select
+		if(has 'node=root/split/left/dirs') go `{attr value}
+		if(has 'node=root/split/right/v/list') sel=`{attr row}
+	case open
+		open `{attr row}
+	case click action
+		x=`{attr tag; attr id}
+		if(has 'node=root/split/right/v/bar/crumbs') x=()
+		switch($"x){
+		case up
+			if(! ~ $dir .) go `{echo $dir | sed 's,/[^/]*$,,; s,^[^/]*$,.,'}
+		case mkdir
+			n=`{add $n 1}
+			mkdir $dir/new-folder-$n && dirs && list
+		case open
+			if(! ~ $#sel 0) open $sel
+		case delete
+			if(! ~ $#sel 0){
+				echo 'Delete '^$"sel^'?' >$o/del/title
+				echo 'It will be removed from '^$dir^'. This cannot be undone.' >$o/del/description
+				echo open >$o/del/ctl
+			}
+		case reveal
+			if(! ~ $#sel 0) echo `{pwd}^/^$dir^/^$"sel >$k/clipboard
+		}
+		if(has 'node=root/split/right/v/bar/crumbs') go `{attr id}
+	case confirm
+		if(has 'tag=del'){ rm -r $dir/$"sel; sel=(); dirs; list }
+	case drop
+		# The payload is one path per line. Platform drops are host files,
+		# so the host serves them read-only under /drags/<n>/files/ and the
+		# data file names those guest paths (PLAN.md, design question 12).
+		d=`{attr drag}
+		ifs='
+' { paths=`{cat $k/drags/$d/data} }
+		for(p in $paths) cp $p $dir/
+		echo accept 'seq='^`{attr seq} >$T/ctl
+		list
+	case *
+		stdquit
+	}
+}

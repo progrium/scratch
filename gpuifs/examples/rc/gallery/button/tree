@@ -1,0 +1,24 @@
+scroll story  style='flex_1 overflow_y_scroll p=24'
+  div v  style='v_flex gap=16'
+    div variants  style='h_flex gap=8 flex_wrap'
+      button a  label=Primary  style=primary
+      button b  label=Secondary  style=secondary
+      button c  label=Outline  style=outline
+      button d  label=Ghost  style=ghost
+      button e  label=Danger  style=danger
+      button f  label=Link  style=link
+    div sizes  style='h_flex items_center gap=8'
+      button xs  label=XSmall  style=xs
+      button sm  label=Small  style=sm
+      button md  label=Medium
+      button lg  label=Large  style=lg
+    div states  style='h_flex gap=8'
+      button icon  label=Search  icon=search
+      button load  label=Saving  loading=on
+      button off  label=Disabled  disabled=on
+      button sel  label=Selected  selected=on  style=outline
+    button-group g  value=b
+      button a  label=Day
+      button b  label=Week
+      button c  label=Month
+    dropdown-button more  label=More

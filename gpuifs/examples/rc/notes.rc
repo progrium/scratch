@@ -1,0 +1,86 @@
+#!/bin/rc
+# notes.rc: the design doc's complete client, a notes app. A searchable
+# list of notes, a markdown editor, a toolbar, a keymap and a File menu.
+# Notes are files in $home/notes.
+#
+#	gpuifs -t Notes rc notes.rc
+#
+# This is DESIGN.md § A complete client, with the fixes the plan's design
+# questions call for: the events loop pipes through cat, tags are matched
+# as whole words, a new note gets selected, and deleting asks first.
+# Needs: M3
+. ./lib.rc
+
+n=$home/notes
+mkdir -p $n >[2]/dev/null
+
+echo 'window main title=Notes size=900,600 min=600,400' >$k/ctl
+w=$k/windows/main
+
+cat >$w/root/tree <<'END'
+div root  style='h_flex size_full'
+  sidebar nav  style=w=220
+    list notes  searchable=on  selectable=on  tag=pick
+  div page  style='v_flex flex_1'
+    toolbar bar
+      button save  label=Save  icon=check  style='ghost sm'  tag=save
+      button del   label=Delete  icon=trash  style='ghost sm danger'  tag=del
+    editor body  style=flex_1  language=markdown  soft_wrap=on
+END
+
+echo 'cmd-s save
+cmd-n new
+cmd-backspace del' >$k/keymap
+echo 'item new label=New key=cmd-n
+item save label=Save key=cmd-s
+sep
+item del label=Delete… key=cmd-backspace
+sep
+item quit label=Quit key=cmd-q' >$k/menus/File
+echo 'new alert-dialog sure title=''Delete this note?'' confirm=Delete cancel=Keep variant=danger tag=sure' >$w/overlays/ctl
+
+L=$w/root/nav/notes
+B=$w/root/page/body
+fn refresh { ls -p $n | awk '{ print $0 "\t" $0 "\ticon=file-text" }' >$L/items }
+refresh
+cur=()
+
+fn pick {
+	cur=$1
+	echo $cur >$L/value
+	cat $n/$cur >$B/value
+	echo $cur' — Notes' >$w/title
+}
+
+cat $k/events | while(ev=`{read}){
+	x=`{attr tag; attr id}
+	switch($ev(1)){
+	case select
+		if(has 'tag=pick') pick `{attr value}
+	case click action
+		switch($"x){
+		case save
+			if(! ~ $#cur 0){
+				cat $B/value >$n/$cur
+				echo 'notify Saved type=success' >$w/ctl
+			}
+		case new
+			c=untitled-`{date -n}
+			echo '# New note' >$n/$c
+			refresh
+			pick $c
+			echo root/page/body >$w/focus
+		case del
+			if(! ~ $#cur 0) echo open >$w/overlays/sure/ctl
+		case quit
+			echo quit >$k/ctl
+		}
+	case confirm
+		rm $n/$cur
+		cur=()
+		echo -n >$B/value
+		refresh
+	case *
+		stdquit
+	}
+}

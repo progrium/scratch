@@ -1,0 +1,50 @@
+#!/bin/rc
+# confirm.rc: a zenity-style question box for shell scripts.
+#
+#	gpuifs -t Confirm rc confirm.rc 'Delete 3 files?' 'This cannot be undone.' && rm *.tmp
+#
+# Exits '' (success) on Delete, 'cancel' on Keep, Escape or the close button.
+# The answer leaves the event loop on standard output, because the loop runs
+# in a pipe and can't set the script's own status.
+#
+# Shows: a one-window utility, Enter and Escape bound in the keymap, a
+# client that decides its own exit status.   Needs: M2 (raw elements only)
+. ./lib.rc
+
+q=$1
+d=$2
+if(~ $#q 0) q='Are you sure?'
+if(~ $#d 0) d=''
+
+echo 'window ask title=Confirm size=380,150 pos=center resizable=off' >$k/ctl
+r=$k/windows/ask/root
+btn='px=14 py=6 rounded_md text_sm cursor_pointer'
+
+echo 'begin' >$k/windows/ask/ctl
+echo 'v_flex size_full p=20 gap=8 bg=background' >$r/style
+echo 'new text q style=''text_base font_semibold''
+new text d style=''text_sm text_color=muted_foreground''
+new spacer s
+new div bar style=''h_flex gap=8 justify_end''' >$r/ctl
+echo 'new div no tag=no on=click style='''$btn' border_1 border_color=border hover:bg=accent''
+new div yes tag=yes on=click style='''$btn' bg=danger text_color=danger_foreground hover:opacity=0.9''' >$r/bar/ctl
+echo 'new text t text=Keep' >$r/bar/no/ctl
+echo 'new text t text=Delete' >$r/bar/yes/ctl
+echo $q >$r/q/text
+echo $d >$r/d/text
+echo 'commit' >$k/windows/ask/ctl
+
+echo 'enter   yes
+escape  no' >$k/keymap
+
+a=`{cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click action
+		if(has 'tag=yes' 'id=yes') { echo yes; echo quit >$k/ctl }
+		if(has 'tag=no' 'id=no') { echo no; echo quit >$k/ctl }
+	case close quit
+		echo no; echo quit >$k/ctl
+	}
+}}
+if(~ $a yes) exit ''
+exit cancel

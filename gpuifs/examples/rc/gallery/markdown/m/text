@@ -1,0 +1,11 @@
+# gpuifs
+
+A **GPUI Kit** host that serves a writable *9P* file tree.
+
+- Any language with file I/O
+- `cat` shows what is on screen
+- [The design](https://example.com/gpuifs)
+
+```rc
+echo 'window main title=Hello' >/mnt/gpui/ctl
+```

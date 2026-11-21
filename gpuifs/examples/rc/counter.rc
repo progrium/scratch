@@ -1,0 +1,43 @@
+#!/bin/rc
+# counter.rc: the smallest stateful app, built only from raw elements.
+#
+#	gpuifs -t Counter rc counter.rc
+#
+# Shows: the element tier (div, text) with style words, hover: and active:
+# state styles that never reach the client, on=click on a plain div, a
+# keymap whose actions arrive as action events, a menu.   Needs: M2
+. ./lib.rc
+
+echo 'window main title=Counter size=300,180 pos=center' >$k/ctl
+r=$k/windows/main/root
+
+# One style for both round buttons; '' is a literal quote inside quotes.
+b='size=40 flex items_center justify_center rounded_full border_1 border_color=border text_xl cursor_pointer hover:bg=accent active:bg=muted'
+
+echo 'h_flex size_full items_center justify_center gap=20 bg=background' >$r/style
+echo 'new div dec tag=dec on=click style='''$b'''
+new text n style=''text_3xl font_semibold w=72 text_center'' text=0
+new div inc tag=inc on=click style='''$b'''' >$r/ctl
+echo 'new text t text=−' >$r/dec/ctl
+echo 'new text t text=+' >$r/inc/ctl
+
+echo '=      inc
+-      dec
+0      reset' >$k/keymap
+echo 'item inc    label=Increment  key==
+item dec    label=Decrement  key=-
+sep
+item reset  label=Reset      key=0' >$k/menus/Counter
+
+n=0
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click action
+		if(has 'tag=inc' 'id=inc') n=`{add $n 1}
+		if(has 'tag=dec' 'id=dec') n=`{add $n -1}
+		if(has 'id=reset') n=0
+		echo $n >$r/n/text
+	case *
+		stdquit
+	}
+}

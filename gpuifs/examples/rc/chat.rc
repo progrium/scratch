@@ -1,0 +1,102 @@
+#!/bin/rc
+# chat.rc: a chat window with a small rule-based assistant (an ELIZA in
+# awk), with a typing indicator and markdown replies.
+#
+#	gpuifs -t Chat rc chat.rc
+#
+# Shows: message-list fed from one transcript file (id role time header,
+# markdown body, blank line), stick_to_bottom, an input whose submit event
+# carries no text (the client reads value), a typing placeholder replaced
+# in place, avatars, a sheet with the raw transcript.   Needs: M3
+. ./lib.rc
+
+log=/tmp/chat.txt
+>$log
+
+echo 'window main title=Chat size=520,700 min=380,420 pos=center' >$k/ctl
+w=$k/windows/main
+r=$w/root
+cat >$r/tree <<'END'
+div root  style='v_flex size_full bg=background'
+  div head  style='h_flex items_center gap=10 px=16 py=10 border_b_1 border_color=border'
+    avatar a  name=Eliza  style=sm
+    div n  style='v_flex flex_1'
+      text name  style=font_semibold  text=Eliza
+      text st  style='text_xs text_color=muted_foreground'  text=online
+    button raw  icon=file-text  style='ghost sm'  tag=raw  tooltip=Transcript
+    button clear  icon=trash  style='ghost sm'  tag=clear  tooltip='Clear chat'
+  message-list msgs  stick_to_bottom=on  style='flex_1 p=16'
+  div compose  style='h_flex gap=8 p=12 border_t_1 border_color=border'
+    input in  placeholder='Message Eliza…'  style=flex_1  tag=send
+    button go  icon=send  style=primary  tag=send
+END
+M=$r/msgs
+echo root/compose/in >$w/focus
+echo 'new sheet raw side=right size=420 title=Transcript' >$w/overlays/ctl
+echo 'new editor e readonly=on soft_wrap=on language=markdown style=size_full' >$w/overlays/raw/ctl
+
+n=0
+fn say {
+	# say role [text...]: append one message and redraw the list.
+	# With no text, the markdown body is read from standard input.
+	n=`{add $n 1}
+	role=$1
+	shift
+	{
+		echo m$n $role `{date | awk '{ print substr($4, 1, 5) }'}
+		if(~ $#* 0) cat
+		if not echo $"*
+		echo
+	} >>$log
+	cat $log >$M/items
+}
+fn unsay {
+	# drop the last message (the typing indicator)
+	awk 'BEGIN { RS = ""; ORS = "\n\n" } { m[NR] = $0 } END { for(i = 1; i < NR; i++) print m[i] }' $log >$log.new
+	mv $log.new $log
+}
+fn eliza {
+	echo $"* | awk '{
+		s = tolower($0)
+		if(s ~ /^(hi|hello|hey)/)        { print "Hello! What would you like to talk about?"; exit }
+		if(s ~ /i am|i.m /)              { sub(/.*(i am|i.m) /, "", s); print "How long have you been **" s "**?"; exit }
+		if(s ~ /i feel/)                 { sub(/.*i feel /, "", s); print "Why do you feel " s "?"; exit }
+		if(s ~ /because/)                { print "Is that the *real* reason?"; exit }
+		if(s ~ /(mother|father|family)/) { print "Tell me more about your family."; exit }
+		if(s ~ /(9p|plan 9|rc)/)         { print "Ah, a person of taste. Everything is a file:\n\n```rc\necho hello >/mnt/gpui/windows/main/root/text\n```"; exit }
+		if(s ~ /\?$/)                    { print "Why do you ask?"; exit }
+		n = split("Please go on.|I see.|What does that suggest to you?|Can you elaborate on that?", r, "|")
+		srand(); print r[int(rand() * n) + 1]
+	}'
+}
+
+say assistant 'Hello, I''m **Eliza**. How are you feeling today?'
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click submit
+		x=`{attr tag}
+		switch($x){
+		case send
+			m=`{cat $r/compose/in/value}
+			if(! ~ $#m 0){
+				echo -n >$r/compose/in/value
+				say user $"m
+				echo typing… >$r/head/n/st/text
+				say assistant '_…_'
+				sleep 1
+				unsay
+				eliza $"m | say assistant
+				echo online >$r/head/n/st/text
+			}
+		case clear
+			>$log
+			cat $log >$M/items
+		case raw
+			cat $log >$w/overlays/raw/e/value
+			echo open >$w/overlays/raw/ctl
+		}
+	case *
+		stdquit
+	}
+}

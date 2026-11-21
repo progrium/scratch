@@ -1,0 +1,2 @@
+scroll story  style='flex_1 p=24'
+  table t  stripe=on  selectable=row  sortable=on  sorted=on  resizable=on  style=h=360
