@@ -78,7 +78,7 @@ sort -u /tmp/seqs | count
 
 echo '# values with blanks are quoted, once'
 {
-	inj event action 'win=main' 'id=save' 'label=Save all' 'note=it''s'
+	inj event action 'win=main' 'id=save' 'label=''Save all''' 'note=''it''''s'''
 	evs 'win=main'
 } <[3]$wn/events
 

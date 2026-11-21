@@ -31,7 +31,7 @@ val $w/prefs/lang/in/value
 
 echo '# user events: the input says only that it changed'
 {
-	inj mirror 'win=main' 'node=root/prefs/name/in' 'file=value' 'value=Ada Lovelace'
+	inj mirror 'win=main' 'node=root/prefs/name/in' 'file=value' 'value=''Ada Lovelace'''
 	inj event change 'win=main' 'node=root/prefs/name/in'
 	inj mirror 'win=main' 'node=root/prefs/name/in' 'file=value' 'value=Ada'
 	inj event change 'win=main' 'node=root/prefs/name/in'
@@ -46,7 +46,7 @@ val $w/prefs/name/in/value
 val $w/prefs/lang/in/value
 
 echo '# checkbox values'
-wq $w/ctl new checkbox cb 'label=Remember me'
+wq $w/ctl new checkbox cb 'label=''Remember me'''
 val $w/cb/value
 w $w/cb/value on
 w $w/cb/value mixed

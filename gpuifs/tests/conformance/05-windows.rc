@@ -6,7 +6,7 @@
 . ./lib.rc
 
 echo '# window with every option'
-w $k/ctl window main 'title=Main window' 'size=800,600' 'min=400,300' 'pos=center' 'kind=normal' 'titlebar=system' 'resizable=on'
+w $k/ctl window main 'title=''Main window''' 'size=800,600' 'min=400,300' 'pos=center' 'kind=normal' 'titlebar=system' 'resizable=on'
 val $k/windows/main/title
 echo '# the name is taken'
 w $k/ctl window main

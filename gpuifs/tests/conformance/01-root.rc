@@ -12,7 +12,7 @@ sed 1q $k/version
 echo '# no windows yet'
 names $k/windows
 echo '# a window'
-w $k/ctl window main 'title=Root test'
+w $k/ctl window main 'title=''Root test'''
 names $k/windows
 names $k/windows/main
 echo '# its root node'

@@ -7,7 +7,7 @@
 mainwin
 wn=$k/windows/main
 r=$wn/root
-w $r/ctl new canvas chart 'style=w=400 h=300'
+w $r/ctl new canvas chart 'style=''w=400 h=300'''
 c=$r/chart
 
 echo '# DESIGN''s ops'

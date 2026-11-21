@@ -15,7 +15,7 @@ w $r/notes/drop files text note
 val $r/notes/drop
 echo '# a text drop: payload in /drags/<n>/data, answered accept'
 {
-	inj drag 'n=7' 'type=text' 'data=hello world'
+	inj drag 'n=7' 'type=text' 'data=''hello world'''
 	inj event drop 'win=main' 'node=root/notes' 'type=text' 'drag=7' 'pt=40,212'
 	evraw 'win=main' >/tmp/ev
 	sed 's/ seq=[0-9]+//' /tmp/ev

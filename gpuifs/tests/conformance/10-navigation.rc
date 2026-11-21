@@ -30,7 +30,7 @@ echo '# tabs: value is the selected tab''s name'
 w $r/page/ctl new tabs t 'style=underline'
 w $r/page/t/ctl 'new tab a label=One
 new tab b label=Two closable=on'
-w $r/page/t/a/ctl new text body 'text=first panel'
+w $r/page/t/a/ctl new text body 'text=''first panel'''
 w $r/page/t/value b
 val $r/page/t/value
 w $r/page/t/value c

@@ -7,7 +7,7 @@
 mainwin
 r=$k/windows/main/root
 
-w $r/ctl new div card 'style=v_flex gap=4' 'tag=open:42'
+w $r/ctl new div card 'style=''v_flex gap=4''' 'tag=open:42'
 c=$r/card
 echo '# common files'
 exists $c/type $c/style $c/order $c/tag $c/ctl $c/events $c/bounds $c/id $c/tree
@@ -31,7 +31,7 @@ val $c/tag
 echo '# ctl lists the verbs a div takes'
 grep -c '^(new|delete)( |$)' $c/ctl
 echo '# bounds are what the host last reported'
-inj bounds 'win=main' 'node=root/card' 'value=10 20 300 40'
+inj bounds 'win=main' 'node=root/card' 'value=''10 20 300 40'''
 val $c/bounds
 echo '# type is settable before the first frame'
 mkdir $c/late

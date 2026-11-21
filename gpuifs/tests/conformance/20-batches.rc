@@ -21,7 +21,7 @@ w $wn/ctl commit
 val $r/a/text
 echo '# abort throws the batch away'
 w $wn/ctl begin
-w $r/ctl new text b 'text=gone soon'
+w $r/ctl new text b 'text=''gone soon'''
 w $r/a/text changed
 exists $r/b
 w $wn/ctl abort

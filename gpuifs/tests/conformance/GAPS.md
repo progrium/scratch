@@ -114,7 +114,8 @@ four change what clients can do, so they matter most.
 ## Structure
 
 22. **`overlays/ctl`.** § Overlays writes `new` to `overlays/ctl`, but the
-    tree diagram lists `overlays/` with nothing in it.
+    tree diagram lists `overlays/` with nothing in it. W2 makes `overlays/`
+    a node-like directory (`bounds ctl events id order tree type`).
 23. **mkdir and `order`.** Does `mkdir` append the new node to its parent's
     `order`, as `new` does? Otherwise a mkdir'd node is never drawn.
     *Assumed:* it appends.

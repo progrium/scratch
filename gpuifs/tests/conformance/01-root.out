@@ -28,6 +28,12 @@ state
 title
 # its root node
 div|
+bounds
 ctl
+events
+id
+order
+tree
+type
 Root test|
 exit=0
