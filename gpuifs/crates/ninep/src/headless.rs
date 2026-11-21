@@ -279,6 +279,8 @@ fn fmt_host(h: &HostCmd) -> String {
         HostCmd::Clipboard => "clipboard".into(),
         HostCmd::ComponentVerb { node, cmd } => format!("verb {node} {}", fmt_cmd(cmd)),
         HostCmd::Answer { seq, answer } => format!("answer seq={seq} {}", fmt_cmd(&answer.0)),
+        HostCmd::Redraw { win } => format!("redraw {win}"),
+        HostCmd::ThemeLoad { path } => format!("theme load {}", proto::quote(path)),
     }
 }
 
