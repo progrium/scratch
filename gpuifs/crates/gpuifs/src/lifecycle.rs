@@ -11,27 +11,32 @@
 //! - the machine, on its own thread, running `cmd`.
 //!
 //! When the client exits, gpuifs exits with 0 for an empty exit string and
-//! 1 otherwise, unless `-k`. When the app quits, the machine gets a hangup
-//! and has 2 seconds before h9 tears it down.
+//! 1 otherwise, unless `-k`. When the app quits, blocked `events` reads end
+//! and later access fails with `app gone` at once; a client still running
+//! [`GRACE`] later gets a hangup, and h9 tears the machine down 2 seconds
+//! after that. A client that exits on its own in that time gives gpuifs its
+//! exit code as usual; one ended by the hangup exits 0, since the app quit.
 
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use ninep::FsBackend;
 use proto::{Error, ErrorKind};
 
-use crate::cli::{Addr, Args};
+use crate::cli::Args;
 
 /// Where the machine mounts the tree.
 pub const MOUNT: &str = "/mnt/gpui";
 /// How long the machine has after a hangup before h9 tears it down, plus
 /// slack for the teardown itself.
 const TEARDOWN: Duration = Duration::from_millis(2500);
+/// How long a client has to exit by itself after the app quits.
+pub const GRACE: Duration = Duration::from_millis(500);
 
 /// Returns the process exit code.
 pub fn run(args: Args) -> i32 {
@@ -44,8 +49,15 @@ pub fn run(args: Args) -> i32 {
 /// What every part of the lifecycle shares.
 pub struct App {
     gone: AtomicBool,
+    /// The client is running.
+    running: AtomicBool,
+    /// It got a hangup because the app quit.
+    hung_up: AtomicBool,
     signals: Mutex<h9sys::Signals>,
     quit_tx: Mutex<Option<mpsc::Sender<Event>>>,
+    /// The exit code once the client ended.
+    done: Mutex<Option<i32>>,
+    done_cv: Condvar,
 }
 
 /// What the main thread waits for.
@@ -60,8 +72,12 @@ impl App {
     fn new(tx: mpsc::Sender<Event>) -> Arc<App> {
         Arc::new(App {
             gone: AtomicBool::new(false),
+            running: AtomicBool::new(false),
+            hung_up: AtomicBool::new(false),
             signals: Mutex::new(h9sys::Signals::none()),
             quit_tx: Mutex::new(Some(tx)),
+            done: Mutex::new(None),
+            done_cv: Condvar::new(),
         })
     }
 
@@ -69,16 +85,48 @@ impl App {
         self.gone.load(Ordering::Acquire)
     }
 
-    /// The app quit: later access fails with `app gone`, and the client
-    /// gets a hangup. Idempotent.
-    pub fn quit(&self) {
+    /// The app quit: later access fails with `app gone`, and a client
+    /// still running after [`GRACE`] gets a hangup. Idempotent.
+    pub fn quit(self: &Arc<Self>) {
         if self.gone.swap(true, Ordering::AcqRel) {
             return;
         }
-        self.signals.lock().unwrap().hangup();
         if let Some(tx) = self.quit_tx.lock().unwrap().take() {
             let _ = tx.send(Event::Quit);
         }
+        let app = self.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(GRACE);
+            app.hangup_if_running();
+        });
+    }
+
+    fn hangup_if_running(&self) {
+        if self.running.load(Ordering::Acquire) {
+            self.hung_up.store(true, Ordering::Release);
+            self.signals.lock().unwrap().hangup();
+        }
+    }
+
+    /// Records how the client's run ended and returns gpuifs's exit code.
+    fn client_ended(&self, r: &Result<h9sys::Status, String>) -> i32 {
+        self.running.store(false, Ordering::Release);
+        let code = if self.hung_up.load(Ordering::Acquire) { 0 } else { exit_code(r) };
+        *self.done.lock().unwrap() = Some(code);
+        self.done_cv.notify_all();
+        code
+    }
+
+    /// The client's exit code, waiting up to `d` for it to end. 0 when no
+    /// client runs.
+    #[cfg_attr(not(feature = "gui"), allow(dead_code))]
+    fn wait_client(&self, d: Duration) -> i32 {
+        let g = self.done.lock().unwrap();
+        if g.is_none() && !self.running.load(Ordering::Acquire) {
+            return 0;
+        }
+        let (g, _) = self.done_cv.wait_timeout_while(g, d, |c| c.is_none()).unwrap();
+        g.unwrap_or(0)
     }
 }
 
@@ -87,29 +135,77 @@ impl App {
 pub struct Guard {
     inner: Arc<dyn FsBackend>,
     app: Arc<App>,
-    /// Headless only: a `quit` on the root ctl quits the app here, since no
-    /// host is there to do it.
-    watch_quit: bool,
+    /// Headless only: copies new `trace` lines to stderr after each write.
+    tracer: Option<Mutex<Tracer>>,
 }
 
 impl Guard {
-    pub fn new(inner: Arc<dyn FsBackend>, app: Arc<App>, watch_quit: bool) -> Arc<dyn FsBackend> {
-        Arc::new(Guard { inner, app, watch_quit })
+    pub fn new(inner: Arc<dyn FsBackend>, app: Arc<App>, headless: bool) -> Arc<Guard> {
+        let tracer = headless.then(|| Mutex::new(Tracer::default()));
+        Arc::new(Guard { inner, app, tracer })
     }
+
+    /// Prints the `trace` lines that are new since the last call.
+    pub fn flush_trace(&self) {
+        let Some(t) = &self.tracer else { return };
+        let mut t = t.lock().unwrap();
+        if let Some(cur) = self.inner.snapshot().read(&tree::FsPath::new("trace")) {
+            let new = t.advance(cur);
+            if !new.is_empty() {
+                use std::io::Write;
+                let _ = std::io::stderr().write_all(&new);
+            }
+        }
+    }
+}
+
+/// What of the root `trace` file has been printed. The file keeps its
+/// newest 1 MiB, so old lines fall off its front.
+#[derive(Default)]
+pub struct Tracer {
+    seen: bytes::Bytes,
+}
+
+impl Tracer {
+    /// The bytes of `cur` not printed yet.
+    pub fn advance(&mut self, cur: bytes::Bytes) -> Vec<u8> {
+        let new = if cur.starts_with(&self.seen) {
+            cur[self.seen.len()..].to_vec()
+        } else {
+            // Lines fell off the front: what follows the last line seen.
+            let last = self.seen[..self.seen.len().saturating_sub(1)]
+                .rsplit(|&b| b == b'\n')
+                .next()
+                .map(|l| [l, b"\n"].concat())
+                .unwrap_or_default();
+            match find_last(&cur, &last) {
+                Some(i) if !last.is_empty() => cur[i + last.len()..].to_vec(),
+                _ => cur.to_vec(),
+            }
+        };
+        self.seen = cur;
+        new
+    }
+}
+
+fn find_last(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).rev().find(|&i| &hay[i..i + needle.len()] == needle && (i == 0 || hay[i - 1] == b'\n'))
 }
 
 fn gone() -> Error {
     Error::new(ErrorKind::AppGone, "")
 }
 
-/// Whether a write to the root `ctl` holds a `quit` verb. `quit seq=N`
-/// answers a request rather than asking, as `close seq=N` does.
-fn is_quit(op: &tree::Op) -> bool {
-    let tree::Op::Write { path, data } = op else { return false };
-    if path.as_str().trim_matches('/') != "ctl" {
-        return false;
+fn op_path(op: &tree::Op) -> Option<String> {
+    match op {
+        tree::Op::Write { path, .. } | tree::Op::Append { path, .. } | tree::Op::Mkdir { path } | tree::Op::Remove { path } => {
+            Some(path.as_str().to_string())
+        }
+        tree::Op::SessionClosed => None,
     }
-    proto::parse_ctl(data).is_ok_and(|cmds| cmds.iter().any(|c| c.verb == "quit" && c.prop("seq").is_none()))
 }
 
 #[async_trait::async_trait]
@@ -122,12 +218,15 @@ impl FsBackend for Guard {
         if self.app.is_gone() && !closing {
             return Err(gone());
         }
-        let quit = self.watch_quit && is_quit(&op);
-        self.inner.apply(s, op).await?;
-        if quit {
-            self.app.quit();
+        // The failed op's path, for the trace: an error at clunk never
+        // reaches most clients (rc ignores close's), so headless says it.
+        let path = self.tracer.as_ref().and_then(|_| op_path(&op));
+        let r = self.inner.apply(s, op).await;
+        self.flush_trace();
+        if let (Err(e), Some(p)) = (&r, path) {
+            eprintln!("error path={p} err={}", proto::quote(&e.to_string()));
         }
-        Ok(())
+        r
     }
     fn subscribe(&self, events_file: &tree::FsPath) -> Result<tree::Subscription, Error> {
         if self.app.is_gone() {
@@ -137,6 +236,18 @@ impl FsBackend for Guard {
     }
     fn new_session(&self) -> tree::SessionId {
         self.inner.new_session()
+    }
+    fn extra_stat(&self, p: &tree::FsPath) -> Option<tree::Stat> {
+        self.inner.extra_stat(p)
+    }
+    fn extra_readdir(&self, p: &tree::FsPath) -> Vec<tree::Stat> {
+        self.inner.extra_readdir(p)
+    }
+    fn extra_read(&self, p: &tree::FsPath) -> Option<bytes::Bytes> {
+        self.inner.extra_read(p)
+    }
+    fn is_gone(&self) -> bool {
+        self.app.is_gone() || self.inner.is_gone()
     }
 }
 
@@ -176,65 +287,42 @@ fn serve_stream(stream: UnixStream, backend: Arc<dyn FsBackend>) {
         .expect("spawning the 9P thread");
 }
 
-/// `-a addr`: accepts connections on a thread, each served on its own.
+/// `-a addr`: serves it on a thread, each connection its own session.
 /// Returns the unix socket's path, to remove at exit.
-fn listen(addr: &str, backend: Arc<dyn FsBackend>) -> Result<Option<PathBuf>, String> {
-    match Addr::parse(addr)? {
-        Addr::Unix(path) => {
-            use std::os::unix::fs::PermissionsExt;
-            let p = PathBuf::from(&path);
-            // A socket left by a gpuifs that's gone; a live one is in use.
-            if p.exists() {
-                if UnixStream::connect(&p).is_ok() {
-                    return Err(format!("{path}: in use"));
-                }
-                let _ = std::fs::remove_file(&p);
-            }
-            let l = std::os::unix::net::UnixListener::bind(&p).map_err(|e| format!("{path}: {e}"))?;
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("{path}: {e}"))?;
-            std::thread::Builder::new()
-                .name("gpuifs-listen".into())
-                .spawn(move || {
-                    for c in l.incoming() {
-                        match c {
-                            Ok(s) => serve_stream(s, backend.clone()),
-                            Err(e) => eprintln!("gpuifs: accept: {e}"),
-                        }
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            Ok(Some(p))
-        }
-        Addr::Tcp(host, port) => {
-            let l = std::net::TcpListener::bind((host.as_str(), port)).map_err(|e| format!("tcp!{host}!{port}: {e}"))?;
-            std::thread::Builder::new()
-                .name("gpuifs-listen".into())
-                .spawn(move || {
-                    for c in l.incoming() {
-                        let s = match c {
-                            Ok(s) => s,
-                            Err(e) => {
-                                eprintln!("gpuifs: accept: {e}");
-                                continue;
-                            }
-                        };
-                        let _ = s.set_nodelay(true);
+fn listen(addr: &str, insecure: bool, backend: Arc<dyn FsBackend>) -> Result<Option<PathBuf>, String> {
+    let a = ninep::transport::parse_addr(addr)?;
+    let sock = match &a {
+        ninep::transport::Addr::Unix(p) => Some(p.clone()),
+        _ => None,
+    };
+    // Bind before returning, so a bad address fails gpuifs at once.
+    let listener = match &sock {
+        Some(p) => Some(ninep::transport::bind_unix(p).map_err(|e| format!("{addr}: {e}"))?),
+        None => None,
+    };
+    let addr = addr.to_string();
+    std::thread::Builder::new()
+        .name("gpuifs-listen".into())
+        .spawn(move || {
+            let r = smol::block_on(async {
+                match listener {
+                    Some(l) => loop {
+                        let (s, _) = l.accept().await?;
                         let b = backend.clone();
-                        std::thread::spawn(move || {
-                            let io = match smol::Async::new(s) {
-                                Ok(io) => io,
-                                Err(e) => return eprintln!("gpuifs: 9p: {e}"),
-                            };
-                            if let Err(e) = smol::block_on(ninep::serve(io, b)) {
-                                eprintln!("gpuifs: 9p: {e}");
-                            }
-                        });
-                    }
-                })
-                .map_err(|e| e.to_string())?;
-            Ok(None)
-        }
-    }
+                        smol::spawn(async move {
+                            let _ = ninep::serve(s, b).await;
+                        })
+                        .detach();
+                    },
+                    None => ninep::transport::listen_and_serve(&a, insecure, backend).await,
+                }
+            });
+            if let Err(e) = r {
+                eprintln!("gpuifs: -a {addr}: {e}");
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(sock)
 }
 
 /// The machine's config for `args`, with `guest` as its end of the pair.
@@ -243,7 +331,8 @@ fn machine_config(args: &Args, guest: OwnedFd) -> Result<h9sys::Config, String> 
     let mut env = vec![format!("gpuifs={MOUNT}")];
     env.extend(args.env.iter().cloned());
     Ok(h9sys::Config {
-        root: args.root.clone().unwrap_or_else(|| "builtin".into()),
+        // As in h9: --root, else $H9ROOT, else the built-in root.
+        root: args.root.clone().or_else(|| std::env::var("H9ROOT").ok().filter(|r| !r.is_empty())).unwrap_or_else(|| "builtin".into()),
         cwd,
         dirs: args.dirs.clone(),
         ninep_fd: guest,
@@ -264,6 +353,7 @@ fn start_client(args: &Args, backend: Arc<dyn FsBackend>, app: &Arc<App>, tx: mp
     let cfg = machine_config(args, OwnedFd::from(guest_end))?;
     serve_stream(host_end, backend);
     let (prog, argv) = (args.cmd[0].clone(), args.cmd.clone());
+    app.running.store(true, Ordering::Release);
     // The machine is !Send: it's made, run and dropped on its thread, and
     // only its signals come back.
     let (sig_tx, sig_rx) = mpsc::channel();
@@ -283,12 +373,18 @@ fn start_client(args: &Args, backend: Arc<dyn FsBackend>, app: &Arc<App>, tx: mp
             let _ = tx.send(Event::Client(r));
         })
         .map_err(|e| e.to_string())?;
-    let signals = sig_rx.recv().map_err(|_| "h9 thread died".to_string())??;
+    let signals = match sig_rx.recv() {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            app.running.store(false, Ordering::Release);
+            return Err(e);
+        }
+        Err(_) => {
+            app.running.store(false, Ordering::Release);
+            return Err("h9 thread died".into());
+        }
+    };
     *app.signals.lock().unwrap() = signals;
-    // A quit that came while the machine was being made.
-    if app.is_gone() {
-        app.signals.lock().unwrap().hangup();
-    }
     Ok(())
 }
 
@@ -296,11 +392,21 @@ fn start_client(args: &Args, backend: Arc<dyn FsBackend>, app: &Arc<App>, tx: mp
 fn headless(args: Args) -> i32 {
     let (tx, rx) = mpsc::channel();
     let app = App::new(tx.clone());
-    let inner: Arc<dyn FsBackend> = ninep::HeadlessBackend::new(tree::Registry::from_catalog());
-    let backend = Guard::new(inner, app.clone(), true);
-    let trace_stop = trace_to_stderr(&backend);
+    let hb = ninep::HeadlessBackend::new(tree::Registry::from_catalog());
+    // The tree quits the app (`quit` on the root ctl, or a quit request's
+    // answer); headless has no host to tell, so it watches.
+    {
+        let (hb, app) = (hb.clone(), app.clone());
+        std::thread::spawn(move || {
+            smol::block_on(hb.wait_gone());
+            app.quit();
+        });
+    }
+    let inner: Arc<dyn FsBackend> = hb;
+    let guard = Guard::new(inner, app.clone(), true);
+    let backend: Arc<dyn FsBackend> = guard.clone();
 
-    let sock = match args.addr.as_deref().map(|a| listen(a, backend.clone())).transpose() {
+    let sock = match args.addr.as_deref().map(|a| listen(a, args.insecure, backend.clone())).transpose() {
         Ok(s) => s.flatten(),
         Err(e) => {
             eprintln!("gpuifs: -a {e}");
@@ -324,72 +430,26 @@ fn headless(args: Args) -> i32 {
     let code = loop {
         match rx.recv() {
             Ok(Event::Client(r)) => {
-                if app.is_gone() {
-                    // The client's end after the app quit is the app's
-                    // doing, not a failure.
-                    break 0;
-                }
-                let code = exit_code(&r);
-                if !args.keep {
+                let code = app.client_ended(&r);
+                if app.is_gone() || !args.keep {
                     break code;
                 }
             }
             Ok(Event::Quit) => {
-                // Wait for the client's hangup and h9's teardown.
-                if !args.cmd.is_empty() {
-                    let _ = rx.recv_timeout(TEARDOWN);
-                }
-                break 0;
+                // The client's own exit, or its hangup and h9's teardown.
+                break match rx.recv_timeout(GRACE + TEARDOWN) {
+                    Ok(Event::Client(r)) => app.client_ended(&r),
+                    _ => 0,
+                };
             }
             // -a with no client and no quit yet: the senders live in App.
             Err(_) => break 0,
         }
     };
-    if let Some(stop) = trace_stop {
-        stop();
-    }
+    // Lines from timeouts after the last write.
+    guard.flush_trace();
     cleanup();
     code
-}
-
-/// Copies the root `trace` file to stderr on a thread. The returned
-/// function drains what is already queued and stops it.
-fn trace_to_stderr(backend: &Arc<dyn FsBackend>) -> Option<Box<dyn FnOnce()>> {
-    use std::io::Write;
-    let mut sub = backend.subscribe(&tree::FsPath::new("trace")).ok()?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let (done_tx, done_rx) = mpsc::channel::<()>();
-    let s = stop.clone();
-    std::thread::Builder::new()
-        .name("gpuifs-trace".into())
-        .spawn(move || {
-            smol::block_on(async {
-                loop {
-                    let read = sub.read(64 << 10);
-                    // Once stopping, take only what's already there.
-                    let timeout = async {
-                        loop {
-                            smol::Timer::after(Duration::from_millis(50)).await;
-                            if s.load(Ordering::Acquire) {
-                                return Err(tree::SubEnd::Eof);
-                            }
-                        }
-                    };
-                    match smol::future::or(read, timeout).await {
-                        Ok(b) => {
-                            let _ = std::io::stderr().write_all(&b);
-                        }
-                        Err(_) => break,
-                    }
-                }
-            });
-            let _ = done_tx.send(());
-        })
-        .ok()?;
-    Some(Box::new(move || {
-        stop.store(true, Ordering::Release);
-        let _ = done_rx.recv_timeout(Duration::from_millis(500));
-    }))
 }
 
 /// The GPUI app: `host::run` owns the main thread until the app quits.
@@ -404,9 +464,9 @@ fn gui(args: Args) -> i32 {
         move |inner: Arc<dyn FsBackend>| {
             // The host quits the app itself; the guard only shuts the door
             // once it has.
-            let backend = Guard::new(inner, app.clone(), false);
+            let backend: Arc<dyn FsBackend> = Guard::new(inner, app.clone(), false);
             if let Some(a) = &args.addr {
-                match listen(a, backend.clone()) {
+                match listen(a, args.insecure, backend.clone()) {
                     Ok(p) => *sock.lock().unwrap() = p,
                     Err(e) => {
                         eprintln!("gpuifs: -a {e}");
@@ -427,10 +487,10 @@ fn gui(args: Args) -> i32 {
             let (app, sock) = (app.clone(), sock.clone());
             std::thread::spawn(move || {
                 if let Ok(Event::Client(r)) = rx.recv() {
+                    let code = app.client_ended(&r);
                     if app.is_gone() {
                         return;
                     }
-                    let code = exit_code(&r);
                     if !keep {
                         if let Some(p) = sock.lock().unwrap().as_ref() {
                             let _ = std::fs::remove_file(p);
@@ -442,13 +502,13 @@ fn gui(args: Args) -> i32 {
         }
     };
     host::run(opts, started);
-    // The app quit: the client gets a hangup and its 2 seconds.
+    // The app quit: the client exits, or gets a hangup and its 2 seconds.
     app.quit();
-    std::thread::sleep(Duration::from_millis(100));
+    let code = app.wait_client(GRACE + TEARDOWN);
     if let Some(p) = sock.lock().unwrap().as_ref() {
         let _ = std::fs::remove_file(p);
     }
-    0
+    code
 }
 
 #[cfg(not(feature = "gui"))]
@@ -462,26 +522,22 @@ mod tests {
     use super::*;
     use bytes::Bytes;
 
-    fn write(path: &str, data: &str) -> tree::Op {
-        tree::Op::Write { path: tree::FsPath::new(path), data: Bytes::from(data.to_string()) }
-    }
-
-    #[test]
-    fn quit_detection() {
-        assert!(is_quit(&write("ctl", "quit\n")));
-        assert!(is_quit(&write("/ctl", "theme dark\nquit\n")));
-        assert!(!is_quit(&write("ctl", "quit seq=4\n")));
-        assert!(!is_quit(&write("windows/main/ctl", "quit\n")));
-        assert!(!is_quit(&write("ctl", "window main\n")));
-        assert!(!is_quit(&tree::Op::Mkdir { path: tree::FsPath::new("ctl") }));
-    }
-
     #[test]
     fn exit_codes() {
         assert_eq!(exit_code(&Ok(h9sys::Status::Exited(String::new()))), 0);
         assert_eq!(exit_code(&Ok(h9sys::Status::Exited("rc: oops".into()))), 1);
         assert_eq!(exit_code(&Ok(h9sys::Status::Killed("h9: timeout".into()))), 1);
         assert_eq!(exit_code(&Err("rc: not found".into())), 1);
+    }
+
+    #[test]
+    fn tracer() {
+        let mut t = Tracer::default();
+        assert_eq!(t.advance(Bytes::from_static(b"a\nb\n")), b"a\nb\n");
+        assert_eq!(t.advance(Bytes::from_static(b"a\nb\n")), b"");
+        assert_eq!(t.advance(Bytes::from_static(b"a\nb\nc\n")), b"c\n");
+        // "a" fell off the front.
+        assert_eq!(t.advance(Bytes::from_static(b"b\nc\nd\n")), b"d\n");
     }
 
     #[test]
@@ -494,5 +550,6 @@ mod tests {
         assert!(app.is_gone());
         assert!(matches!(rx.recv(), Ok(Event::Quit)));
         assert!(rx.recv().is_err());
+        assert_eq!(app.wait_client(Duration::ZERO), 0);
     }
 }

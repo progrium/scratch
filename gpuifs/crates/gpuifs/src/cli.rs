@@ -2,7 +2,7 @@
 //! `gpuifs [-t title] -a addr [-insecure]`, and dev-only `--headless`.
 
 pub const USAGE: &str = "\
-usage: gpuifs [-t title] [-k] [--root builtin|DIR] [--dir HOSTDIR[:DST]]...
+usage: gpuifs [-t title] [-k] [--root builtin|DIR (default $H9ROOT, else builtin)] [--dir HOSTDIR[:DST]]...
               [--env name=value]... [h9 sandbox flags] cmd [arg...]
        gpuifs [-t title] [-k] -a unix!PATH|tcp!HOST!PORT [-insecure] [cmd [arg...]]
        gpuifs --headless ...   (no window: the tree alone, with a trace on stderr)
@@ -28,31 +28,6 @@ pub struct Args {
     pub cmd: Vec<String>,
     /// `--env name=value`: extra guest environment variables.
     pub env: Vec<String>,
-}
-
-/// Where `-a` serves 9P.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Addr {
-    Unix(String),
-    Tcp(String, u16),
-}
-
-impl Addr {
-    /// Plan 9 dial strings: `unix!/path`, `tcp!host!port`. A bare path is
-    /// a unix socket.
-    pub fn parse(s: &str) -> Result<Addr, String> {
-        let parts: Vec<&str> = s.split('!').collect();
-        match parts.as_slice() {
-            ["unix", p] if !p.is_empty() => Ok(Addr::Unix(p.to_string())),
-            ["tcp", h, p] => {
-                let port = p.parse().map_err(|_| format!("bad port in {s}"))?;
-                let host = if h.is_empty() || *h == "*" { "0.0.0.0" } else { h };
-                Ok(Addr::Tcp(host.to_string(), port))
-            }
-            [p] if p.contains('/') => Ok(Addr::Unix(p.to_string())),
-            _ => Err(format!("bad address {s}: want unix!PATH or tcp!HOST!PORT")),
-        }
-    }
 }
 
 impl Args {
@@ -142,10 +117,14 @@ impl Args {
             return Err("no command, and no -a address to serve".into());
         }
         if let Some(addr) = &self.addr {
-            if let Addr::Tcp(..) = Addr::parse(addr)? {
-                if !self.insecure {
+            match ninep::transport::parse_addr(addr)? {
+                ninep::transport::Addr::Tcp(..) if !self.insecure => {
                     return Err("-a tcp!... serves the whole app to anyone who connects; add -insecure if you mean it".into());
                 }
+                ninep::transport::Addr::Stdio if !self.cmd.is_empty() => {
+                    return Err("-a - serves on stdin and stdout, which the client's output would share".into());
+                }
+                _ => {}
             }
         }
         if let Some(r) = &self.root {
@@ -205,13 +184,14 @@ mod tests {
     fn addr() {
         let a = p("-a unix!/tmp/g.sock").unwrap();
         assert!(a.cmd.is_empty());
-        assert_eq!(Addr::parse(a.addr.as_deref().unwrap()).unwrap(), Addr::Unix("/tmp/g.sock".into()));
+        assert_eq!(a.addr.as_deref(), Some("unix!/tmp/g.sock"));
         assert!(p("-a tcp!localhost!5640").is_err());
         let a = p("-a tcp!localhost!5640 -insecure").unwrap();
         assert!(a.insecure);
-        assert_eq!(Addr::parse("tcp!*!564").unwrap(), Addr::Tcp("0.0.0.0".into(), 564));
-        assert!(Addr::parse("tcp!x!port").is_err());
-        assert!(Addr::parse("nonsense").is_err());
+        assert!(p("-a tcp!x!port -insecure").is_err());
+        assert!(p("-a nonsense").is_err());
+        assert!(p("-a - rc x.rc").is_err());
+        assert!(p("-a -").is_ok());
     }
 
     #[test]
