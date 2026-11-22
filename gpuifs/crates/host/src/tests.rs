@@ -255,3 +255,13 @@ fn scroll_origin_round_trips(cx: &mut TestAppContext) {
     let o = h.read(&format!("{R}/sc/origin")).unwrap_or_default();
     assert_eq!(o.trim(), "0 30");
 }
+
+#[gpui::test]
+fn bordered_bounds_include_the_border(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new div b style='w=40 h=20 border_1 border_color=border'");
+    h.ctl(R, "new div c style='w=40 h=20 border_2 border_l=4'");
+    assert_eq!(h.bounds(&format!("{R}/b"))[2..], [40., 20.]);
+    assert_eq!(h.bounds(&format!("{R}/c"))[2..], [40., 20.]);
+    assert_eq!(h.bounds(&format!("{R}/b"))[0], h.bounds(&format!("{R}/c"))[0]);
+}

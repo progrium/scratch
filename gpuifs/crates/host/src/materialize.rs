@@ -217,12 +217,18 @@ pub(crate) fn element(rcx: &mut RenderCx, node: &NodeView, base: gpui::Div) -> g
 
     // `bounds`: window-relative x y w h from the last layout.
     let host = rcx.host.clone();
-    el.on_prepaint(move |b: Bounds<Pixels>, _: &mut Window, _: &mut App| {
+    // The prepaint canvas is an absolute child, so it sees the padding box;
+    // add the border back to report the element's own bounds.
+    let bw = st.base.border_widths.clone();
+    el.on_prepaint(move |b: Bounds<Pixels>, window: &mut Window, _: &mut App| {
+        let rem = window.rem_size();
+        let px_of = |e: Option<gpui::AbsoluteLength>| e.map(|l| f32::from(l.to_pixels(rem))).unwrap_or(0.);
+        let (t, r, bo, l) = (px_of(bw.top), px_of(bw.right), px_of(bw.bottom), px_of(bw.left));
         let nb = [
-            f32::from(b.origin.x),
-            f32::from(b.origin.y),
-            f32::from(b.size.width),
-            f32::from(b.size.height),
+            f32::from(b.origin.x) - l,
+            f32::from(b.origin.y) - t,
+            f32::from(b.size.width) + l + r,
+            f32::from(b.size.height) + t + bo,
         ];
         if let Ok(mut t) = host.tree.try_borrow_mut() {
             t.report_bounds(&path, nb);
