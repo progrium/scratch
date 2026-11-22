@@ -169,6 +169,21 @@ pub(crate) const ROOT_DIRS: &[&str] = &["theme", "menus", "drags", "assets", "wi
 /// Theme tokens that are lengths, not `ThemeColor`s, with their defaults.
 pub(crate) const LENGTH_TOKENS: &[(&str, &str)] = &[("radius", "6"), ("radius_lg", "8")];
 
+/// Props that hold component state: a `tree` rewrite that keeps the node
+/// keeps them unless the document names them.
+pub(crate) const STATE_PROPS: &[&str] = &[
+    "value",
+    "selection",
+    "expanded",
+    "layout",
+    "origin",
+    "open",
+    "collapsed",
+    "page",
+    "query",
+    "sizes",
+];
+
 pub(crate) const SIZE_WORDS: &[&str] = &["xs", "sm", "md", "lg"];
 
 /// `div` is always known, even before `catalog::elements` is filled in.

@@ -17,9 +17,10 @@
 //! - Writing a read-only file fails with `bad value: read-only`.
 //! - `begin` on the root `ctl` freezes every window for that session;
 //!   `abort` restores the window (or the app) to its state at `begin`.
-//! - A `tree` write keeps files the host mirrored (component state, such as
-//!   an input's `value`) unless the document names them; every other file the
-//!   document leaves out goes back to its default.
+//! - A `tree` write keeps a kept node's state (files the host mirrored, and
+//!   `value`, `selection`, `expanded`, `layout`, ...) unless the document
+//!   names them; every other file the document leaves out goes back to its
+//!   default.
 //! - State events carry `via=ctl|user`; action events carry `via` only when
 //!   the caller set one in `attrs`.
 #![allow(clippy::new_without_default)]

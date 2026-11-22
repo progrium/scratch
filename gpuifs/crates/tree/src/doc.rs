@@ -100,15 +100,19 @@ impl Tx<'_> {
             self.set_type_doc(path, &d.ty)?;
         }
         // Files the document leaves out go back to their defaults, except
-        // component state the host mirrored.
+        // component state: files the host mirrored, and the state props
+        // (`value`, `selection`, ...) however they were last written.
         let named: HashSet<&str> = d.props.iter().map(|(k, _)| k.as_str()).collect();
         {
             let g = self.st.generation;
             let n = self.st.node_mut(path).unwrap();
             let before = n.files.len();
             let mirrored = n.mirrored.clone();
-            n.files
-                .retain(|f, _| named.contains(f.as_str()) || mirrored.contains(f));
+            n.files.retain(|f, _| {
+                named.contains(f.as_str())
+                    || mirrored.contains(f)
+                    || STATE_PROPS.contains(&f.as_str())
+            });
             if n.files.len() != before {
                 n.version = g;
             }

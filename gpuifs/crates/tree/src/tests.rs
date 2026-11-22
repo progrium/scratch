@@ -1597,3 +1597,19 @@ fn gpui_words_that_are_also_variants() {
         ErrorKind::UnknownStyleWord
     );
 }
+
+#[test]
+fn tree_rewrite_keeps_a_client_written_value() {
+    let mut t = app();
+    ok(&mut t, &format!("{R}/tree"), SIGNIN);
+    ok(&mut t, &format!("{R}/f/user/in/value"), "Ada\n");
+    ok(&mut t, &format!("{R}/tree"), SIGNIN);
+    assert_eq!(read(&t, &format!("{R}/f/user/in/value")), "Ada");
+    // Naming it in the document sets it.
+    ok(
+        &mut t,
+        &format!("{R}/f/user/tree"),
+        "field user  label=Email\n  input in  value=Bob\n",
+    );
+    assert_eq!(read(&t, &format!("{R}/f/user/in/value")), "Bob");
+}
