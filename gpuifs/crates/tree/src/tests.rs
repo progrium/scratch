@@ -122,6 +122,16 @@ static EDITOR: TypeSpec = TypeSpec {
     }],
     ..spec("editor", &[p("value", PropKind::Bytes)])
 };
+static TREEVIEW: TypeSpec = TypeSpec {
+    tier: Tier::Component,
+    ..spec(
+        "tree",
+        &[
+            p("items", PropKind::Data(LineFormat::TreeItems)),
+            p("expanded", PropKind::Text),
+        ],
+    )
+};
 static FORM: TypeSpec = TypeSpec {
     slots: Slots::ChildTypes(&["field"]),
     ..spec("form", &[])
@@ -138,8 +148,8 @@ static ALERT: TypeSpec = TypeSpec {
 fn reg() -> Registry {
     let mut r = Registry::new();
     for s in [
-        &DIV, &TEXT, &BUTTON, &INPUT, &CHECKBOX, &SLIDER, &SELECT, &TABLE, &EDITOR, &FORM, &FIELD,
-        &ALERT,
+        &DIV, &TEXT, &BUTTON, &INPUT, &CHECKBOX, &SLIDER, &SELECT, &TABLE, &EDITOR, &TREEVIEW,
+        &FORM, &FIELD, &ALERT,
     ] {
         r.insert(s);
     }
@@ -1612,4 +1622,21 @@ fn tree_rewrite_keeps_a_client_written_value() {
         "field user  label=Email\n  input in  value=Bob\n",
     );
     assert_eq!(read(&t, &format!("{R}/f/user/in/value")), "Bob");
+}
+
+#[test]
+fn tree_expanded_ids_must_be_items() {
+    let mut t = app();
+    ok(&mut t, &ctl(R), "new tree files");
+    ok(
+        &mut t,
+        &format!("{R}/files/items"),
+        "src\t-\tsrc\nmain\tsrc\tmain.rs\n",
+    );
+    ok(&mut t, &format!("{R}/files/expanded"), "src\n");
+    assert_eq!(
+        kind(write(&mut t, &format!("{R}/files/expanded"), "src nope")),
+        ErrorKind::NotFound
+    );
+    assert_eq!(read(&t, &format!("{R}/files/expanded")), "src");
 }

@@ -662,7 +662,7 @@ fn example_tsv_files_parse() {
             .collect::<Vec<_>>()
             .join("\n")
     };
-    let items: Vec<TreeItem> = lines::parse_lines(&detab(tsv("tree/t/items.tsv"))).unwrap();
+    let items: Vec<TreeItem> = lines::parse_lines(&detab(tsv("treeview/t/items.tsv"))).unwrap();
     assert!(items.iter().any(|i| i.parent.is_none()));
     let _: Vec<Column> = lines::parse_lines(&detab(tsv("table/t/columns.tsv"))).unwrap();
     let _: Vec<lines::Row> = lines::parse_lines(&detab(tsv("table/t/rows.tsv"))).unwrap();

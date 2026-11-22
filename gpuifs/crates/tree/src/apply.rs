@@ -1483,6 +1483,13 @@ impl Tx<'_> {
                     .unwrap_or_default();
                 check_item_ids(spec, items, &v)?;
             }
+            if file == "expanded" {
+                let items = self
+                    .st
+                    .node_file(self.reg, node, "items")
+                    .unwrap_or_default();
+                check_tree_ids(spec, items, &v)?;
+            }
             self.check_ref(node, p.kind, &v)?;
             v
         } else {
@@ -1613,6 +1620,31 @@ fn check_item_ids(spec: &'static TypeSpec, items: &[u8], value: &[u8]) -> Result
             .map(|r| r.id)
             .collect(),
     };
+    if ids.is_empty() {
+        return Ok(());
+    }
+    for w in String::from_utf8_lossy(value).split_whitespace() {
+        if !ids.iter().any(|id| id == w) {
+            return Err(err(ErrorKind::NotFound, format!("item {w}")));
+        }
+    }
+    Ok(())
+}
+
+/// On a type whose `items` file holds tree items (`tree`), each word of
+/// `expanded` must be an item id, once `items` has any.
+fn check_tree_ids(spec: &'static TypeSpec, items: &[u8], value: &[u8]) -> Result<(), Error> {
+    use proto::lines::*;
+    let is_tree =
+        prop_spec(spec, "items").is_some_and(|p| p.kind == PropKind::Data(LineFormat::TreeItems));
+    if !is_tree {
+        return Ok(());
+    }
+    let ids: Vec<String> = parse_lines::<TreeItem>(&String::from_utf8_lossy(items))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.id)
+        .collect();
     if ids.is_empty() {
         return Ok(());
     }
