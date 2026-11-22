@@ -94,7 +94,7 @@ pub(crate) fn apply(tree: &mut Tree, s: SessionId, op: Op) -> Result<Changes, Er
                 session: s,
                 scope,
                 frozen: old.clone(),
-                started: Instant::now(),
+                started: tree.now(),
             }),
             BatchOp::End(scope) => {
                 if let Some(i) = tree
@@ -1469,7 +1469,10 @@ impl Tx<'_> {
         } else if let Some(p) = prop_spec(spec, file) {
             let v = check_prop(p.kind, file, &data)?;
             if file == "value" {
-                let items = self.st.node_file(self.reg, node, "items").unwrap_or_default();
+                let items = self
+                    .st
+                    .node_file(self.reg, node, "items")
+                    .unwrap_or_default();
                 check_item_ids(spec, items, &v)?;
             }
             v

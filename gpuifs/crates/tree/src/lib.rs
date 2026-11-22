@@ -370,6 +370,9 @@ pub struct Tree {
     pending: Vec<HostCmd>,
     bus: EventBus,
     shared: Arc<Shared>,
+    /// Added to the real clock wherever the tree stamps a time (batch
+    /// starts, request deadlines), for a fake clock such as headless's.
+    skew: Duration,
 }
 
 impl Tree {
@@ -382,7 +385,20 @@ impl Tree {
             pending: Vec::new(),
             bus: EventBus::default(),
             shared: Arc::new(Shared::default()),
+            skew: Duration::ZERO,
         }
+    }
+
+    /// Moves the tree's clock forward: later batch starts and request
+    /// deadlines are stamped `Instant::now() + total skew`. Pass `tick` the
+    /// real time; `tick` adds the skew too.
+    pub fn advance_clock(&mut self, d: Duration) {
+        self.skew += d;
+    }
+
+    /// The tree's clock: the real one plus every `advance_clock`.
+    pub fn now(&self) -> Instant {
+        Instant::now() + self.skew
     }
 
     pub fn registry(&self) -> &Registry {
@@ -666,7 +682,7 @@ impl Tree {
                 Request {
                     target: key,
                     default,
-                    deadline: Instant::now() + timeout,
+                    deadline: self.now() + timeout,
                     drag,
                     closes_window,
                 },
@@ -697,7 +713,9 @@ impl Tree {
     }
 
     /// Batch and request timeouts, plus defaults applied since the last tick.
+    /// `now` is the real clock; the tree adds its `advance_clock` skew.
     pub fn tick(&mut self, now: Instant) -> Vec<HostCmd> {
+        let now = now + self.skew;
         let mut out = std::mem::take(&mut self.pending);
         let expired: Vec<u64> = self
             .requests

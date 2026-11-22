@@ -1556,3 +1556,28 @@ fn keymap_keystrokes_are_checked() {
     );
     assert!(read(&t, "keymap").starts_with("cmd-s save\ncmd-shift-p"));
 }
+
+#[test]
+fn advanced_clock_stamps_batches_and_requests() {
+    let mut t = app();
+    t.advance_clock(Duration::from_secs(10));
+    ok(&mut t, &ctl(W), "begin");
+    let _s = sub(&t, "events");
+    t.open_request(
+        EventMsg::new(EventKind::Request, "quit"),
+        Answer::verb("quit"),
+        REQUEST_TIMEOUT,
+    );
+    // Real-time ticks see the skew too.
+    assert!(t.tick(Instant::now()).is_empty());
+    t.advance_clock(BATCH_TIMEOUT);
+    assert_eq!(
+        t.tick(Instant::now()),
+        vec![HostCmd::Redraw { win: "main".into() }]
+    );
+    t.advance_clock(REQUEST_TIMEOUT);
+    assert!(matches!(
+        &t.tick(Instant::now())[..],
+        [HostCmd::Answer { .. }]
+    ));
+}
