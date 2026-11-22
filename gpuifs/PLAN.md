@@ -290,6 +290,27 @@ requests answered through `completions`/`hover` files by `seq=`),
 `collapsible`, `group-box`, `separator`, `resizable`/`panel`, `grid`,
 `dock`/`dock-panel` with `layout` read/write.
 
+As built (W6d's answers where DESIGN.md is silent):
+
+- `complete` and `hover` requests are opt-in: the editor sends them only
+  when its `on` file lists `complete`/`hover`, so a client that doesn't do
+  completion sees no request per keystroke. Answer files start `seq=N`;
+  only the newest request's answer is used.
+- The editor's `save` is a client action named `save` (keymap or menu key)
+  that reaches the focused editor; it becomes the editor's `save` event
+  instead of an app `action`. With no `save` binding, `cmd-s`/`ctrl-s` sends it.
+- `accordion` children are `accordion-item` nodes (`title`, `icon`,
+  `disabled`); `value` is the open items' names. `collapsible` sends
+  `change value=on|off`.
+- `dock-panel` defaults: `zone=center`, `closable=off`, `zoomable=on`.
+  Closing a tab sends `panel-close id=<name>` on the dock (default `close`,
+  then `close` on the dock-panel); `keep seq=N` reopens it. A loaded
+  `layout` restores exactly: panels it doesn't name stay closed until
+  `activate`; an empty `layout` resets every panel to its `zone`.
+- `diff` also takes `path` (header and language) and `line_numbers`.
+- `resizable` mirrors each `panel`'s `size` after a drag, then sends one
+  `resize sizes=`; a client write to `size` resizes with no event.
+
 ### W7 · Canvas, drag and drop, clipboard
 
 The `canvas` node (`ops` display list, `ctl` `set`/`add`/`del`/`raise`/`lower`,
