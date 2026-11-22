@@ -1558,7 +1558,7 @@ fn keymap_keystrokes_are_checked() {
     ok(
         &mut t,
         "keymap",
-        "cmd-s save\ncmd-shift-p palette\nescape dismiss context=editor\nctrl-tab next-tab\nctrl-- zoom-out\n",
+        "cmd-s save\ncmd-shift-p palette\nescape dismiss context=editor\nctrl-tab next-tab\nctrl-- zoom-out\n-      dec\nshift-= plus\n",
     );
     assert_eq!(
         kind(write(&mut t, "keymap", "cmd-s save\ncmd-wibble-q quit\n")),

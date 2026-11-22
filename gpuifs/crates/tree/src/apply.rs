@@ -379,6 +379,7 @@ pub(crate) fn check_keystroke(k: &str) -> Result<(), Error> {
     let bad = || err(ErrorKind::BadValue, format!("keystroke: {k}"));
     let (mods, key) = match k.strip_suffix("--") {
         Some(m) => (m, "-"),
+        None if k == "-" => ("", "-"),
         None => match k.rsplit_once('-') {
             Some((m, key)) => (m, key),
             None => ("", k),
