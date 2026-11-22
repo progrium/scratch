@@ -1,0 +1,23 @@
+-- window main Chat
+div root  style='v_flex size_full bg=background'
+  div head  style='h_flex items_center gap=10 px=16 py=10 border_b_1 border_color=border'
+    avatar a  name=Eliza  style=sm
+    div n  style='v_flex flex_1'
+      text name  style=font_semibold  text=Eliza
+      text st  style='text_xs text_color=muted_foreground'  text=online
+    button raw  icon=file-text  style='ghost sm'  tag=raw  tooltip=Transcript
+    button clear  icon=trash  style='ghost sm'  tag=clear  tooltip='Clear chat'
+  message-list msgs  style='flex_1 p=16'  items=<<END
+m1 assistant HH:MM
+Hello, I'm **Eliza**. How are you feeling today?
+
+
+  END
+  div compose  style='h_flex gap=8 p=12 border_t_1 border_color=border'
+    input in  placeholder='Message Eliza…'  style=flex_1  tag=send
+    button go  icon=send  style=primary  tag=send
+-- overlay main/raw
+sheet raw  size=420  title=Transcript
+  editor e  readonly=on  soft_wrap=on  language=markdown  style=size_full
+-- keymap
+-- stderr

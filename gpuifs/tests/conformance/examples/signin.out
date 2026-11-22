@@ -1,0 +1,17 @@
+-- window main Sign in
+div root  style='v_flex size_full p=24 gap=16 bg=background'
+  text title  style='text_xl font_semibold'  text='Sign in'
+  form f  layout=v
+    field user  label=Email  required=on
+      input in  placeholder=you@example.com  tag=login
+    field pass  label=Password  required=on
+      input in  flags=secret  tag=login
+    field go
+      button submit  label='Sign in'  style='primary w_full'  tag=login
+  link help  label='Forgot password?'  href=https://example.com/reset
+-- overlay main/hi
+dialog hi  title=Welcome  width=320  keyboard=on  overlay_closable=on
+  div footer  style='h_flex justify_end'
+    button ok  label=Continue  style=primary  tag=ok
+-- keymap
+-- stderr

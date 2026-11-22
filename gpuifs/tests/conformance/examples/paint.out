@@ -1,0 +1,26 @@
+-- window main Paint
+div root  style='v_flex size_full bg=background'
+  toolbar bar
+    button-group color  value=foreground  tag=color
+      button foreground  label=Ink
+      button primary  label=Blue
+      button danger  label=Red
+      button success  label=Green
+      button warning  label=Amber
+    separator s1  dir=v
+    slider size  min=1  max=24  value=4  style=w=140  tag=size
+    separator s2  dir=v
+    button undo  icon=undo  style='ghost sm'  tag=undo  tooltip='Undo (cmd-z)'
+    button clear  icon=trash  style='ghost sm'  tag=clear  tooltip=Clear
+    spacer sp
+    button load  label=Open  style='ghost sm'  tag=load
+    button save  label=Save  style='outline sm'  tag=save
+  canvas c  style='flex_1 cursor_crosshair'  on='mouse_down mouse_up drag'  ops=<<END
+rect bg 0 0 4000 4000 fill=background
+
+  END
+-- keymap
+cmd-z undo
+cmd-s save
+cmd-o load
+-- stderr

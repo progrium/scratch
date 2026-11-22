@@ -19,7 +19,7 @@ w=$k/windows/main
 
 cat >$w/root/tree <<'END'
 div root  style='h_flex size_full'
-  sidebar nav  style=w=220
+  div nav  style='v_flex w=220 border_r_1 border_color=border'
     list notes  searchable=on  selectable=on  tag=pick
   div page  style='v_flex flex_1'
     toolbar bar

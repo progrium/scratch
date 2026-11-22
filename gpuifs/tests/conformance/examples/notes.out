@@ -1,0 +1,23 @@
+-- window main Notes
+div root  style='h_flex size_full'
+  div nav  style='v_flex w=220 border_r_1 border_color=border'
+    list notes  searchable=on  selectable=on  tag=pick
+  div page  style='v_flex flex_1'
+    toolbar bar
+      button save  label=Save  icon=check  style='ghost sm'  tag=save
+      button del  label=Delete  icon=trash  style='ghost sm danger'  tag=del
+    editor body  style=flex_1  language=markdown  soft_wrap=on
+-- overlay main/sure
+alert-dialog sure  title='Delete this note?'  confirm=Delete  cancel=Keep  variant=danger  tag=sure
+-- menu File
+item new label=New key=cmd-n
+item save label=Save key=cmd-s
+sep
+item del label=Delete… key=cmd-backspace
+sep
+item quit label=Quit key=cmd-q
+-- keymap
+cmd-s save
+cmd-n new
+cmd-backspace del
+-- stderr

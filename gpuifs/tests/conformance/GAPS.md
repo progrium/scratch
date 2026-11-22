@@ -164,3 +164,20 @@ four change what clients can do, so they matter most.
 33. **`radius` in `theme/tokens`.** DESIGN's tokens example has `radius 6`,
     but `radius` is a `Theme` field, not a `ThemeColor` one. 07-theme
     assumes `tokens` carries it anyway. Owner: W5a.
+
+## Found by the examples' tree-building phase
+
+34. **DESIGN's own notes client puts a `list` in a `sidebar`**, but W6b's
+    sidebar takes only `sidebar-group` children (DESIGN § Navigation says
+    so too). `rc/notes.rc` now uses a `div`; § A complete client should
+    change the same way, or `sidebar` should take any child.
+35. **Popover and hover-card anchors are checked when the overlay is made.**
+    `anchor=` must name a node that exists, so an overlay bound to a node
+    that comes and goes (a gallery story) has to be made and deleted with
+    it. `rc/gallery.rc` does that now. DESIGN doesn't say whether an
+    anchor is resolved at creation or when it opens, or what happens to a
+    popover whose anchor is removed.
+36. **Child names that are node file names.** A child named `tree` (or
+    `type`, `style`, `order`, ...) clashes with the parent's file of that
+    name. gallery's `tree` story is now `treeview`. DESIGN should list the
+    reserved names, and `new`/`mkdir` should refuse them with `in use`.

@@ -1,0 +1,47 @@
+-- window main Calculator
+div root  style='v_flex size_full p=12 gap=12 bg=background'
+  div screen  style='v_flex items_end justify_end h=96 px=12 rounded_lg bg=muted'
+    text expr  style='text_sm text_color=muted_foreground truncate'
+    text out  style='text_3xl font_semibold truncate'  text=0
+  grid keys  cols=4  gap=8  style=flex_1
+    button clear  label=AC  style='secondary lg'  tag=k:clear
+    button neg  label=±  style='secondary lg'  tag=k:neg
+    button pct  label=%  style='secondary lg'  tag=k:pct
+    button div  label=÷  style='primary lg'  tag=k:div
+    button k7  label=7  style=lg  tag=k:7
+    button k8  label=8  style=lg  tag=k:8
+    button k9  label=9  style=lg  tag=k:9
+    button mul  label=×  style='primary lg'  tag=k:mul
+    button k4  label=4  style=lg  tag=k:4
+    button k5  label=5  style=lg  tag=k:5
+    button k6  label=6  style=lg  tag=k:6
+    button sub  label=−  style='primary lg'  tag=k:sub
+    button k1  label=1  style=lg  tag=k:1
+    button k2  label=2  style=lg  tag=k:2
+    button k3  label=3  style=lg  tag=k:3
+    button add  label=+  style='primary lg'  tag=k:add
+    button k0  label=0  style='lg col_span=2'  tag=k:0
+    button dot  label=.  style=lg  tag=k:dot
+    button eq  label==  style='primary lg'  tag=k:eq
+-- keymap
+0  k:0
+1  k:1
+2  k:2
+3  k:3
+4  k:4
+5  k:5
+6  k:6
+7  k:7
+8  k:8
+9  k:9
+.  k:dot
++  k:add
+-  k:sub
+*  k:mul
+/  k:div
+%  k:pct
+enter      k:eq
+=          k:eq
+escape     k:clear
+backspace  k:back
+-- stderr

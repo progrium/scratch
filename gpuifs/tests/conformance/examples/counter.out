@@ -1,0 +1,17 @@
+-- window main Counter
+div root  style='h_flex size_full items_center justify_center gap=20 bg=background'
+  div dec  tag=dec  on=click  style='size=40 flex items_center justify_center rounded_full border_1 border_color=border text_xl cursor_pointer hover:bg=accent active:bg=muted'
+    text t  text=−
+  text n  style='text_3xl font_semibold w=72 text_center'  text=0
+  div inc  tag=inc  on=click  style='size=40 flex items_center justify_center rounded_full border_1 border_color=border text_xl cursor_pointer hover:bg=accent active:bg=muted'
+    text t  text=+
+-- menu Counter
+item inc    label=Increment  key==
+item dec    label=Decrement  key=-
+sep
+item reset  label=Reset      key=0
+-- keymap
+=      inc
+-      dec
+0      reset
+-- stderr

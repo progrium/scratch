@@ -71,6 +71,7 @@ fn story {
 	g=gallery/$1
 	sed -n 1p $g/title >$r/main/head/t/title/text
 	sed -n 2p $g/title >$r/main/head/t/desc/text
+	unanchored
 	cat $g/tree >$S/tree
 	for(f in `{walk -f $g | sed 's,^'$g'/,,' | grep -v '^(title|tree)$'}){
 		switch($f){
@@ -80,25 +81,35 @@ fn story {
 			cat $g/$f >$S/$f
 		}
 	}
+	if(~ $1 popover) anchored
 }
 
 # Overlays used by the stories. They are made once; stories only open them.
 o=$w/overlays
 echo 'new dialog dlg title=''Edit profile'' description=''Make changes to your profile here.'' width=420 keyboard=on
 new alert-dialog del title=''Delete 3 files?'' description=''This cannot be undone.'' confirm=Delete cancel=Keep variant=danger tag=del
-new sheet sheet side=right size=360 title=Filters
-new popover pop anchor=root/main/story/v/p placement=bottom-start trigger=click
-new hover-card card anchor=root/main/story/v/h' >$o/ctl
+new sheet sheet side=right size=360 title=Filters' >$o/ctl
 echo 'new input name placeholder=Name
 new div footer style=''h_flex justify_end gap=8''' >$o/dlg/ctl
 echo 'new button cancel label=Cancel style=ghost tag=dlg:cancel
 new button save label=Save style=primary tag=dlg:save' >$o/dlg/footer/ctl
 echo 'new checkbox a label=''Only open''
 new checkbox b label=''Assigned to me''' >$o/sheet/ctl
-echo 'new text t text=''A popover, opened by its anchor.'' style=p=12' >$o/pop/ctl
-echo 'new div c style=''v_flex gap=4 p=12 w=240''' >$o/card/ctl
-echo 'new text n text=''@gpuifs'' style=font_semibold
+
+# The popover and hover card are bound to buttons in the popover story, and
+# an anchor must name a node that exists, so they live only while that
+# story is shown.
+fn anchored {
+	echo 'new popover pop anchor=root/main/story/v/p placement=bottom-start trigger=click
+new hover-card card anchor=root/main/story/v/h' >$o/ctl
+	echo 'new text t text=''A popover, opened by its anchor.'' style=p=12' >$o/pop/ctl
+	echo 'new div c style=''v_flex gap=4 p=12 w=240''' >$o/card/ctl
+	echo 'new text n text=''@gpuifs'' style=font_semibold
 new text d text=''Files all the way down.'' style=text_sm' >$o/card/c/ctl
+}
+fn unanchored {
+	for(n in pop card) if(test -d $o/$n) echo delete $n >$o/ctl
+}
 
 cur=button
 story button

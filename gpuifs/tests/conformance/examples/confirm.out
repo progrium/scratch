@@ -1,0 +1,14 @@
+-- window ask Confirm
+div root  style='v_flex size_full p=20 gap=8 bg=background'
+  text q  style='text_base font_semibold'  text=Delete?
+  text d  style='text_sm text_color=muted_foreground'
+  spacer s
+  div bar  style='h_flex gap=8 justify_end'
+    div no  tag=no  on=click  style='px=14 py=6 rounded_md text_sm cursor_pointer border_1 border_color=border hover:bg=accent'
+      text t  text=Keep
+    div yes  tag=yes  on=click  style='px=14 py=6 rounded_md text_sm cursor_pointer bg=danger text_color=danger_foreground hover:opacity=0.9'
+      text t  text=Delete
+-- keymap
+enter   yes
+escape  no
+-- stderr

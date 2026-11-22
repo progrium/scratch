@@ -1,0 +1,37 @@
+-- window main planets.csv
+div root  style='v_flex size_full bg=background'
+  div top  style='h_flex items_center gap=8 p=12 border_b_1 border_color=border'
+    text name  style='font_semibold flex_1'  text=planets.csv
+    input q  placeholder=Filter…  flags=cleanable  style=w=260
+      icon prefix  name=search
+  table t  stripe=on  sortable=on  sorted=on  resizable=on  style=flex_1  columns=<<END  rows=<<END
+c1	Planet	180	sort
+c2	Type	180	sort
+c3	Mass (Earth=1)	100	sort	align=right
+c4	Radius (km)	100	sort	align=right
+c5	Moons	100	sort	align=right
+c6	Day (hours)	100	sort	align=right
+c7	Year (days)	100	sort	align=right
+
+  END
+1	Mercury	Terrestrial	0.055	2440	0	4222.6	88
+2	Venus	Terrestrial	0.815	6052	0	2802	224.7
+3	Earth	Terrestrial	1	6371	1	24	365.2
+4	Mars	Terrestrial	0.107	3390	2	24.7	687
+5	Jupiter	Gas giant	317.8	69911	95	9.9	4331
+6	Saturn	Gas giant	95.2	58232	146	10.7	10747
+7	Uranus	Ice giant	14.5	25362	28	17.2	30589
+8	Neptune	Ice giant	17.1	24622	16	16.1	59800
+9	Pluto	Dwarf	0.0022	1188	5	153.3	90560
+10	Ceres	Dwarf	0.00016	470	0	9.1	1682
+
+  END
+  status-bar st
+    text left  style='text_xs text_color=muted_foreground'  text='10 rows'
+-- overlay main/card
+sheet card  size=380
+  description-list facts  columns=1  bordered=on
+-- keymap
+cmd-f find
+escape clear
+-- stderr

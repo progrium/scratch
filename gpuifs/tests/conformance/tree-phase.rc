@@ -23,7 +23,7 @@ fn snap {
 	for(win in `{ls -p $k/windows}) {
 		echo '-- window' $win `{cat $k/windows/$win/title}
 		cat $k/windows/$win/root/tree
-		for(ov in `{ls -p $k/windows/$win/overlays | grep -v '^(ctl|events)$'}) {
+		for(ov in `{ls -p $k/windows/$win/overlays}) if(test -d $k/windows/$win/overlays/$ov) {
 			echo '-- overlay' $win/$ov
 			cat $k/windows/$win/overlays/$ov/tree
 		}
