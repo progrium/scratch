@@ -1562,13 +1562,19 @@ impl Tx<'_> {
                 }
                 continue;
             }
-            if spec.variants.contains(&name) {
+            // A word that is both a gpui `Styled` method and a kit variant
+            // (`border`: MarkerVariant) is the method wherever the variant
+            // doesn't apply: with an argument, or on a type without it.
+            let gpui_word = style::lookup(name).is_some_and(|e| !e.kit);
+            if spec.variants.contains(&name) && (w.args.is_empty() || !gpui_word) {
                 if !w.args.is_empty() {
                     return Err(err(ErrorKind::BadValue, name.to_string()));
                 }
                 continue;
             }
-            if !style::variant_owners(name).is_empty() || self.reg.is_variant_word(name) {
+            if !gpui_word
+                && (!style::variant_owners(name).is_empty() || self.reg.is_variant_word(name))
+            {
                 return Err(unknown());
             }
             let e = style::lookup(name).ok_or_else(unknown)?;

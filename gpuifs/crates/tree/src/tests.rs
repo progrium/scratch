@@ -1581,3 +1581,19 @@ fn advanced_clock_stamps_batches_and_requests() {
         [HostCmd::Answer { .. }]
     ));
 }
+
+#[test]
+fn gpui_words_that_are_also_variants() {
+    // `border` is gpui's Styled::border and GPUI Kit's MarkerVariant.
+    let mut t = app();
+    ok(
+        &mut t,
+        &ctl(R),
+        "new div card style='border=3 border_color=border'",
+    );
+    ok(&mut t, &format!("{R}/card/style"), "border=1");
+    assert_eq!(
+        kind(write(&mut t, &format!("{R}/card/style"), "primary")),
+        ErrorKind::UnknownStyleWord
+    );
+}
