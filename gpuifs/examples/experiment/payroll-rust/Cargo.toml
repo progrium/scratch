@@ -1,0 +1,15 @@
+[package]
+name = "payroll"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone, not a member of the gpuifs workspace.
+[workspace]
+
+[dependencies]
+# Same pins as gpuifs/Cargo.toml.
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "cf945af2d6491ff9bc175f3f1656a14793987db2" }
+# The desktop platform (application()) and the full Lucide icon set, same rev.
+gpui-kit = { git = "https://github.com/longbridge/gpui-component", rev = "cf945af2d6491ff9bc175f3f1656a14793987db2" }
