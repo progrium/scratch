@@ -3,7 +3,11 @@ form prefs  layout=v
   field name  label=Name
     input in  placeholder='Your name'
   field lang  label=Language
-    select in  searchable=on
+    select in  searchable=on  items=<<END
+rs	Rust
+go	Go
+c	C
+END
   field ok
     button save  label=Save  style=primary  tag=save
 # items read back as written

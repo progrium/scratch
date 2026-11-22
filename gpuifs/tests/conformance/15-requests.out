@@ -30,7 +30,7 @@ ok
 main
 # a tab close request, refused
 resync
-close win=main node=root/t/b tag=''
+close win=main node=root/t/b tag='' via=user
 ok
 yes
 exit=0

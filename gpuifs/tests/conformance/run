@@ -69,14 +69,15 @@ for t; do
 
 	if [ $update -eq 1 ]; then
 		strip "out/$t.out" >"$t.out"
-		[ -f "$t.trace" ] && strip "out/$t.trace" >"$t.trace"
+		[ -f "$t.trace" ] && strip "out/$t.trace" | grep -v '^error path=' >"$t.trace"
 		echo "updated $t"
 		continue
 	fi
 
 	ok=1
 	if ! strip "out/$t.out" | diff -u "$t.out" - >"out/$t.diff"; then ok=0; fi
-	if [ -f "$t.trace" ] && ! strip "out/$t.trace" | diff -u "$t.trace" - >>"out/$t.diff"; then ok=0; fi
+	# headless also prints `error path=` for each failed write; the trace proper doesn't hold those
+	if [ -f "$t.trace" ] && ! strip "out/$t.trace" | grep -v '^error path=' | diff -u "$t.trace" - >>"out/$t.diff"; then ok=0; fi
 	if [ $ok -eq 1 ]; then
 		echo "pass $t"
 		pass=$((pass + 1))

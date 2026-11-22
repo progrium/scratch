@@ -36,7 +36,7 @@ div root  style='h_flex size_full bg=background'
       sidebar-item date  label='Date Picker'  tag=story:date
     sidebar-group data  label=Data
       sidebar-item table  label=Table  tag=story:table
-      sidebar-item tree  label=Tree  tag=story:tree
+      sidebar-item treeview  label=Tree  tag=story:treeview
       sidebar-item progress  label=Progress  tag=story:progress
       sidebar-item chart  label=Chart  tag=story:chart
     sidebar-group overlay  label=Overlay
