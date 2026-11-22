@@ -218,7 +218,6 @@ impl EditorNode {
             .filter_map(|x| x.parse().ok())
             .collect();
         let (a, h) = match n[..] {
-            [l, c] => ((l, c), (l, c)),
             [l1, c1, l2, c2] => ((l1, c1), (l2, c2)),
             _ => return,
         };

@@ -44,6 +44,11 @@ pub enum LineFormat {
     Diagnostics,
     Messages,
     Completions,
+    /// An editor `selection`: `line col line col`, four 1-based numbers on
+    /// one line (one trailing newline dropped). Added by W6d.
+    Selection,
+    /// A JSON document, such as a dock's `layout`; empty is allowed. Added by W6d.
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

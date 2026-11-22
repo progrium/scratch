@@ -130,12 +130,12 @@ pub static SPECS: &[TypeSpec] = &[
         Slots::Any,
     ),
     // GPUI Kit's DockArea. `layout` reads and writes its serialized
-    // `DockAreaState` JSON; writing an empty `layout` resets every panel to
+    // `DockAreaState` JSON; writing an empty `layout` (or `{}`) resets every panel to
     // its `zone`. Closing a tab sends a `panel-close id=` request (default
     // `close`; answer `keep seq=` to keep it).
     component(
         "dock",
-        &[p("layout", PropKind::Bytes)],
+        &[pd("layout", PropKind::Data(LineFormat::Json), "{}")],
         &[
             ev("layout", EventKind::State),
             ev("panel-close", EventKind::Request),

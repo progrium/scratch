@@ -357,6 +357,19 @@ pub(crate) fn check_lines(fmt: LineFormat, data: &[u8]) -> Result<(), Error> {
         // An answer file: `seq=N`, then completion lines.
         LineFormat::Completions if s.trim().is_empty() => Ok(()),
         LineFormat::Completions => parse_completions(s).map(drop),
+        LineFormat::Selection => {
+            let n: Vec<&str> = s.split_whitespace().collect();
+            let ok = n.len() == 4 && n.iter().all(|x| x.parse::<u32>().is_ok_and(|v| v >= 1));
+            if ok {
+                Ok(())
+            } else {
+                Err(err(ErrorKind::BadValue, "selection: line col line col"))
+            }
+        }
+        LineFormat::Json if s.trim().is_empty() => Ok(()),
+        LineFormat::Json => serde_json::from_str::<serde_json::Value>(s)
+            .map(drop)
+            .map_err(|e| err(ErrorKind::BadValue, format!("not JSON: {e}"))),
     }
 }
 
@@ -434,6 +447,10 @@ fn check_prop(kind: PropKind, name: &str, data: &[u8]) -> Result<Bytes, Error> {
                 return Err(bad(&format!("one of {}", opts.join(" "))));
             }
             Bytes::copy_from_slice(v.as_bytes())
+        }
+        PropKind::Data(LineFormat::Selection) => {
+            check_lines(LineFormat::Selection, chomp(data))?;
+            Bytes::copy_from_slice(chomp(data))
         }
         PropKind::Data(fmt) => {
             check_lines(fmt, data)?;

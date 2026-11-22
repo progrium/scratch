@@ -11,3 +11,5 @@ style.workspace = true
 catalog.workspace = true
 bytes.workspace = true
 futures.workspace = true
+# W6d: a dock's `layout` file must be JSON.
+serde_json = "1"

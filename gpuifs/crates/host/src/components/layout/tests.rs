@@ -209,7 +209,7 @@ fn dock_shows_panels_and_mirrors_layout(cx: &mut TestAppContext) {
     assert_eq!(h.read(&format!("{d}/layout")).unwrap(), layout);
     assert!(h.bounds(&format!("{d}/src/e"))[2] > 0.);
     // A bad layout is ignored.
-    h.write(&format!("{d}/layout"), "{not json");
+    assert!(h.try_write(&format!("{d}/layout"), "{not json").is_err());
     assert_eq!(h.read(&format!("{d}/layout")).unwrap(), layout);
     // An empty layout resets to the zones.
     h.write(&format!("{d}/layout"), "");

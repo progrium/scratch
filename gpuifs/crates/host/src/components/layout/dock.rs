@@ -250,7 +250,7 @@ impl DockNode {
             _subs: subs,
         };
         let layout = me.shared.node.text("layout").unwrap_or_default();
-        if layout.trim().is_empty() {
+        if no_layout(&layout) {
             me.reconcile(window, cx);
         } else {
             me.load(&layout, window, cx);
@@ -318,7 +318,7 @@ impl DockNode {
     /// Loads a serialized layout; an empty one resets every panel to its zone.
     fn load(&mut self, json: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.shared.busy.set(true);
-        if json.trim().is_empty() {
+        if no_layout(json) {
             let all: Vec<Entity<DockPanelView>> =
                 self.shared.panels.borrow().values().cloned().collect();
             for p in all {
@@ -411,6 +411,11 @@ impl DockNode {
             child.emitter().event("close", &[]);
         }
     }
+}
+
+/// An empty `layout`, or the `{}` a new dock reads as, names no layout.
+fn no_layout(json: &str) -> bool {
+    matches!(json.trim(), "" | "{}")
 }
 
 /// The dock-panel names a layout holds.

@@ -306,7 +306,10 @@ As built (W6d's answers where DESIGN.md is silent):
   Closing a tab sends `panel-close id=<name>` on the dock (default `close`,
   then `close` on the dock-panel); `keep seq=N` reopens it. A loaded
   `layout` restores exactly: panels it doesn't name stay closed until
-  `activate`; an empty `layout` resets every panel to its `zone`.
+  `activate`; an empty `layout` (or `{}`, what a new dock reads before
+  the host has drawn it) resets every panel to its `zone`. The tree refuses a
+  `layout` that isn't JSON and a `selection` that isn't four numbers
+  (`LineFormat::Json`, `LineFormat::Selection`, both additive).
 - `diff` also takes `path` (header and language) and `line_numbers`.
 - `resizable` mirrors each `panel`'s `size` after a drag, then sends one
   `resize sizes=`; a client write to `size` resizes with no event.

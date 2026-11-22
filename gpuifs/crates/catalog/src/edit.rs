@@ -80,7 +80,7 @@ pub static SPECS: &[TypeSpec] = &[
             // `line col len severity message` lines, 1-based.
             p("diagnostics", PropKind::Data(LineFormat::Diagnostics)),
             // `line col line col`, 1-based, anchor then head.
-            p("selection", PropKind::Text),
+            p("selection", PropKind::Data(LineFormat::Selection)),
             p("completions", PropKind::Data(LineFormat::Completions)),
             p("hover", PropKind::Bytes),
         ],

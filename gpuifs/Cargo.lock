@@ -7440,6 +7440,7 @@ dependencies = [
  "catalog",
  "futures",
  "proto",
+ "serde_json",
  "style",
 ]
 
