@@ -290,7 +290,12 @@ impl Conn {
         let Some(prop) = spec.props.iter().find(|pr| pr.name == name) else { return false };
         matches!(
             prop.kind,
-            catalog::PropKind::Word | catalog::PropKind::Bool | catalog::PropKind::Number | catalog::PropKind::Enum(_)
+            catalog::PropKind::Word
+                | catalog::PropKind::Bool
+                | catalog::PropKind::Number
+                | catalog::PropKind::Enum(_)
+                | catalog::PropKind::Child
+                | catalog::PropKind::NodePath
         )
     }
 

@@ -270,10 +270,7 @@ impl<'a> RenderCx<'a> {
 
     /// Non-slot children, in order, rendered.
     pub fn children(&mut self, node: &NodeView) -> Vec<AnyElement> {
-        let slots: &[&str] = match node.spec().map(|s| s.slots) {
-            Some(catalog::Slots::Named(n)) => n,
-            _ => &[],
-        };
+        let slots: &[&str] = node.spec().map(|s| s.slots.names()).unwrap_or(&[]);
         node.children()
             .into_iter()
             .filter(|c| !slots.contains(&c.name()))

@@ -368,12 +368,14 @@ pub fn default_theme(mode: Mode) -> &'static [(&'static str, &'static str)];
 ```rust
 pub enum Tier { Element, Component, Overlay }
 pub enum PropKind { Text, Word, Bool, Number, Enum(&'static [&'static str]),
-                    Data(LineFormat), Bytes, ReadOnly }
+                    Data(LineFormat), Bytes, ReadOnly,
+                    Child, NodePath }       // additive (W6b): names a child / a window-relative node; else `not found`
 pub struct PropSpec  { pub name: &'static str, pub kind: PropKind, pub default: Option<&'static str> }
 pub struct VerbSpec  { pub name: &'static str, pub usage: &'static str }
 pub enum EventKind   { State, Action, Request }
 pub struct EventSpec { pub name: &'static str, pub kind: EventKind }
-pub enum Slots { None, Any, Named(&'static [&'static str]), ChildTypes(&'static [&'static str]) }
+pub enum Slots { None, Any, Named(&'static [&'static str]), ChildTypes(&'static [&'static str]),
+                 NamedAnd(&'static [&'static str], &'static [&'static str]) }   // additive (W6b): slots + child types
 pub struct TypeSpec {
     pub name: &'static str, pub tier: Tier,
     pub props: &'static [PropSpec], pub verbs: &'static [VerbSpec],

@@ -56,6 +56,12 @@ pub enum PropKind {
     Data(LineFormat),
     Bytes,
     ReadOnly,
+    /// One word naming a child of the node (`tabs` `value`). Once the node
+    /// has children, a name that isn't one of them is `not found`.
+    Child,
+    /// A window-relative node path (`root/more`), as event `node=` spells
+    /// it (an overlay's `anchor`). A path to no node is `not found`.
+    NodePath,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +96,19 @@ pub enum Slots {
     Any,
     Named(&'static [&'static str]),
     ChildTypes(&'static [&'static str]),
+    /// Named slots, plus children of these types under any other name
+    /// (`sidebar`: `header` and `footer`, and `sidebar-group` children).
+    NamedAnd(&'static [&'static str], &'static [&'static str]),
+}
+
+impl Slots {
+    /// The slot names, if the type has named slots.
+    pub fn names(&self) -> &'static [&'static str] {
+        match *self {
+            Slots::Named(n) | Slots::NamedAnd(n, _) => n,
+            _ => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

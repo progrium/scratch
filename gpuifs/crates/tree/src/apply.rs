@@ -440,6 +440,13 @@ fn check_prop(kind: PropKind, name: &str, data: &[u8]) -> Result<Bytes, Error> {
         }
         PropKind::Bytes => Bytes::copy_from_slice(data),
         PropKind::ReadOnly => return Err(read_only(name)),
+        PropKind::Child | PropKind::NodePath => {
+            let v = utf8(chomp(data))?.trim();
+            if v.contains(char::is_whitespace) {
+                return Err(bad("one word"));
+            }
+            Bytes::copy_from_slice(v.as_bytes())
+        }
     })
 }
 
@@ -1268,7 +1275,8 @@ impl Tx<'_> {
                     ))
                 }
             }
-            Slots::ChildTypes(types) => {
+            Slots::NamedAnd(names, _) if names.contains(&name) => Ok(()),
+            Slots::ChildTypes(types) | Slots::NamedAnd(_, types) => {
                 if types.contains(&child.name) || (at_mkdir && child.name == "div") {
                     Ok(())
                 } else {
@@ -1475,6 +1483,7 @@ impl Tx<'_> {
                     .unwrap_or_default();
                 check_item_ids(spec, items, &v)?;
             }
+            self.check_ref(node, p.kind, &v)?;
             v
         } else {
             return Err(err(ErrorKind::NotFound, format!("{node}/{file}")));
@@ -1503,6 +1512,34 @@ impl Tx<'_> {
                 ev = ev.attr("value", &String::from_utf8_lossy(&value));
             }
             self.echo(ev);
+        }
+        Ok(())
+    }
+
+    /// `Child` and `NodePath` props must name a node that exists.
+    fn check_ref(&self, node: &str, kind: PropKind, v: &[u8]) -> Result<(), Error> {
+        let v = String::from_utf8_lossy(v);
+        if v.is_empty() {
+            return Ok(());
+        }
+        match kind {
+            PropKind::Child => {
+                let n = self.st.node(node).unwrap();
+                if !n.children.is_empty() && !n.children.iter().any(|c| *c == v) {
+                    return Err(err(ErrorKind::NotFound, format!("{node}/{v}")));
+                }
+            }
+            PropKind::NodePath => {
+                let full = if v.starts_with("windows/") {
+                    v.to_string()
+                } else {
+                    format!("windows/{}/{v}", window_of(node).unwrap_or(""))
+                };
+                if !self.st.nodes.contains_key(&full) {
+                    return Err(err(ErrorKind::NotFound, v.to_string()));
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
