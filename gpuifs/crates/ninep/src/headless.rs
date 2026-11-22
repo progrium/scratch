@@ -130,7 +130,7 @@ impl HeadlessBackend {
                     quit_waiters: Mutex::new(Vec::new()),
                 });
                 let _ = ready_tx.send((shared.clone(), tree.bus().clone()));
-                TreeThread { tree, shared, opts, requests: HashMap::new(), skew: Duration::ZERO, dirty: BTreeSet::new() }
+                TreeThread { tree, shared, opts, requests: HashMap::new(), dirty: BTreeSet::new() }
                     .run(rx);
             })
             .expect("spawn tree thread");
@@ -251,9 +251,6 @@ struct TreeThread {
     shared: Arc<Shared>,
     opts: Options,
     requests: HashMap<u64, PendingRequest>,
-    /// Added to real time by `tick SECONDS`. The tree stamps deadlines with
-    /// real time, so a request opened now gets its timeout plus the skew.
-    skew: Duration,
     dirty: BTreeSet<String>,
 }
 
@@ -379,7 +376,8 @@ impl TreeThread {
     }
 
     fn now(&self) -> Instant {
-        Instant::now() + self.skew
+        // The tree adds its own skew (`advance_clock`) to this.
+        Instant::now()
     }
 
     fn apply(&mut self, s: SessionId, op: Op) -> Result<(), Error> {
@@ -434,7 +432,7 @@ impl TreeThread {
                 HostCmd::WindowCtl { win, cmd } if cmd.verb == "close" => {
                     // Asking to close, as the close button does: a request.
                     let ev = EventMsg::new(EventKind::Request, "close").win(&win).attr("via", "ctl");
-                    let seq = self.tree.open_request(ev, Answer::verb("close"), REQUEST_TIMEOUT + self.skew);
+                    let seq = self.tree.open_request(ev, Answer::verb("close"), REQUEST_TIMEOUT);
                     self.requests.insert(seq, PendingRequest { win: Some(win), name: "close".into(), drag: None });
                     queue.extend(self.tree.tick(self.now()));
                 }
@@ -551,7 +549,7 @@ impl TreeThread {
                     let drag = ev.attrs.iter().find(|(k, _)| k == "drag").and_then(|(_, v)| v.parse().ok());
                     let verb = default.unwrap_or_else(|| default_answer_verb(&name));
                     let win = prop(&c, "win").map(str::to_string);
-                    let seq = self.tree.open_request(ev, Answer::verb(&verb), REQUEST_TIMEOUT + self.skew);
+                    let seq = self.tree.open_request(ev, Answer::verb(&verb), REQUEST_TIMEOUT);
                     if !node || drag.is_some() {
                         self.requests.insert(seq, PendingRequest { win, name: name.clone(), drag });
                     }
@@ -588,7 +586,7 @@ impl TreeThread {
             },
             "tick" => {
                 let s: f64 = c.args[0].parse().unwrap();
-                self.skew += Duration::from_secs_f64(s);
+                self.tree.advance_clock(Duration::from_secs_f64(s));
                 self.tick();
             }
             "drag" => {

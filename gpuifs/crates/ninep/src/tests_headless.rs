@@ -308,3 +308,14 @@ fn rm_menu_file() {
         assert!(!cl.ls("menus").await.iter().any(|d| d.name == "Help"));
     });
 }
+
+#[test]
+fn batch_after_tick_skew_keeps_its_two_seconds() {
+    with_headless(Options::default(), |mut cl, _| async move {
+        put(&mut cl, "ctl", "window main").await.unwrap();
+        put(&mut cl, "debug/inject", "tick 10").await.unwrap();
+        put(&mut cl, "windows/main/ctl", "begin").await.unwrap();
+        put(&mut cl, "debug/inject", "tick 1").await.unwrap();
+        put(&mut cl, "windows/main/ctl", "commit").await.unwrap();
+    });
+}
