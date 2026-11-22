@@ -11,7 +11,7 @@ bytes of a type, and the source (or a broker holding them) answers.
 
 ## Types
 
-A type is an ID: lowercase letters, digits, `.`, `-`, `_`. These are
+A type is an ID: lowercase letters, digits, `.` and `-`. These are
 defined; others are agreed between programs, with `x.` for experiments.
 
 | Type | Bytes |

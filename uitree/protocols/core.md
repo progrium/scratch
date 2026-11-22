@@ -104,8 +104,8 @@ how multi-line values (`items`, `rows`, `text`) travel through a `ctl`.
 
 ```rc
 m=$ui/win/main
-echo 'set . title=Counter size=320,200 pos=center : v_flex items_center p=24 gap=12
-new text n text=0 : text_3xl font_bold
+echo 'set . title=Counter size=320,200 pos=center : v-flex items-center p=24 gap=12
+new text n text=0 : text-3xl font-bold
 new button inc label=+1 primary tag=inc
 set list items=<<END
 inbox Inbox
@@ -182,28 +182,30 @@ Every host must accept the **portable words**, which are enough to lay
 out any screen:
 
 ```text
-flex flex_row flex_col v_flex h_flex flex_1 flex_wrap flex_none
-items_start items_center items_end items_stretch items_baseline
-justify_start justify_center justify_end justify_between
+flex flex-row flex-col v-flex h-flex flex-1 flex-wrap flex-none
+items-start items-center items-end items-stretch items-baseline
+justify-start justify-center justify-end justify-between
 gap= p= px= py= pt= pb= pl= pr= m= mx= my=
-w= h= min_w= min_h= max_w= max_h= size_full w_full h_full
+w= h= min-w= min-h= max-w= max-h= size-full w-full h-full
 absolute relative top= left= right= bottom=
-overflow_hidden overflow_y_scroll overflow_x_scroll
-bg= text_color= border_1 border_color= rounded_sm rounded_md rounded_lg
-text_xs text_sm text_base text_lg text_xl font_semibold font_bold
-text_left text_center text_right truncate
+overflow-hidden overflow-y-scroll overflow-x-scroll
+bg= text-color= border-1 border-color= rounded-sm rounded-md rounded-lg
+text-xs text-sm text-base text-lg text-xl font-semibold font-bold
+text-left text-center text-right truncate
 ```
 
 `absolute` with `left=` and `top=` places a node by coordinates, so
 rectangle-based layouts (classic dialog resources) still have a form.
 A host may accept many more words (GPUI's whole `Styled` vocabulary, for
-uitreefs).
+uitreefs), always in the dashed spelling: uitreefs maps `flex-col` to GPUI's
+`flex_col`. The portable words follow Tailwind's class names where one
+exists.
 
 **Theme.** `theme/tokens` holds `name value` lines; writing a line
 changes one token everywhere at once. `theme/mode` is `light` or `dark`.
 `theme/name` selects a named theme the host has. The portable token names
-are `background foreground muted muted_foreground primary
-primary_foreground accent accent_foreground border ring danger success
+are `background foreground muted muted-foreground primary
+primary-foreground accent accent-foreground border ring danger success
 warning radius`.
 
 ## Windows
@@ -304,7 +306,7 @@ descriptor says which kind each of its events is.
 ### Making an element send events
 
 A raw element sends nothing unless asked. Its `on` file lists the
-element events to send: `click`, `hover`, `mouse_down`, `mouse_up`,
+element events to send: `click`, `hover`, `mouse-down`, `mouse-up`,
 `move`, `scroll`, `key`, `focus`, `blur`, `drop`, `drag`. `on=` sets it
 at creation.
 
@@ -380,13 +382,13 @@ keeps any child whose name and type match, so focus, scroll and editor
 state survive a rewrite.
 
 ```text
-div root  : v_flex size_full p=24 gap=16
-  text title  text='Sign in'  : text_xl font_semibold
+div root  : v-flex size-full p=24 gap=16
+  text title  text='Sign in'  : text-xl font-semibold
   form f
     field user  label=Email
       input in  placeholder=you@example.com
     field go
-      button submit  label='Sign in'  tag=login  : primary w_full
+      button submit  label='Sign in'  tag=login  : primary w-full
 ```
 
 Each line is `TYPE NAME [word ...] [prop=value ...] [: style ...]`, two
@@ -434,7 +436,7 @@ Programs match on the phrase.
 will see, because awk, COBOL and shell redirections often drop write
 errors: the host's standard error (`uitree: write win/main/x/text: not
 found: x`), `trace` (`error path=... err='...'`), and an `error` event
-(`error - x/text win=main code=not_found seq=40`).
+(`error - x/text win=main code=not-found seq=40`).
 
 ## Limits
 

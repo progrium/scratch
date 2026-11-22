@@ -63,7 +63,15 @@ does.
   separate, single quotes group, `''` is a literal quote. The first word
   of a `ctl` line is a verb; the first word of an event is its name.
   `name=value` words are attributes, split at the first `=`. Attribute
-  names are lowercase ASCII (`[a-z][a-z0-9_]*`).
+  names are lowercase ASCII (`[a-z][a-z0-9-]*`).
+- **Names use dashes.** Every name the spec defines is lowercase words
+  joined by `-`: types (`alert-dialog`), props (`max-len`), style words
+  (`flex-col`, `items-center`), theme tokens (`muted-foreground`), events
+  (`mouse-down`), verbs, error codes (`not-found`). No underscores and no
+  camel case, so a name is one shell word with nothing to quote and reads
+  the same in rc, awk and a URL. A host whose toolkit spells names
+  otherwise (GPUI's `flex_col`) maps them; the spelling on the wire is
+  always the dashed one.
 - **Ignore what you don't know.** Readers ignore unknown attributes and
   unknown events. Writers send only attributes the spec defines, except
   names starting `x.` (`x.myapp.foo=1`), which are free for experiments.

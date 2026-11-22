@@ -221,7 +221,7 @@ A document that must run on several hosts names alternatives with
 `alt=`:
 
 ```text
-table reg  alt=list  stripe : flex_1
+table reg  alt=list  stripe : flex-1
 ```
 
 The host builds the first of `table`, `list` it has, and the node's
