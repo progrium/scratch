@@ -205,3 +205,19 @@ fn date_and_color_values() {
     ctl(&mut t, R, "new combobox tags placeholder=Tags multiple=on");
     assert_eq!(fails(&mut t, &format!("{R}/tags/query"), "x"), ErrorKind::BadValue);
 }
+
+/// The GPUI Kit gallery stories made of form controls load as `tree`
+/// documents (examples/rc/gallery/<story>/tree).
+#[test]
+fn gallery_form_stories_load() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/rc/gallery");
+    for story in ["button", "toggles", "input", "select", "slider", "date"] {
+        let doc = std::fs::read_to_string(format!("{dir}/{story}/tree")).unwrap();
+        let mut t = app();
+        ctl(&mut t, R, "new scroll story");
+        if let Err(e) = write(&mut t, &format!("{R}/story/tree"), &doc) {
+            panic!("{story}: {e}");
+        }
+        assert_eq!(read(&t, &format!("{R}/story/tree")).lines().count(), doc.lines().count(), "{story}");
+    }
+}

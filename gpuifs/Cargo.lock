@@ -3326,6 +3326,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit",
  "gpui-pre",
+ "jiff",
  "ninep",
  "proto",
  "serde_json",

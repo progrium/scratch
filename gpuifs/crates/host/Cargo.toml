@@ -17,6 +17,8 @@ gpui.workspace = true
 gpui-component.workspace = true
 ninep.workspace = true
 serde_json = "1"
+# W6a: civil dates for date-picker and calendar (GPUI Kit's own date type).
+jiff = "1.0"
 # gpui-kit at the same rev as gpui-component: the desktop platform
 # (`gpui_kit::platform::application`), the default icon assets, and the
 # `inspector` feature, which keeps gpui's style reflection table in release

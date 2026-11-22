@@ -205,7 +205,8 @@ pub static SPECS: &[TypeSpec] = &[
     component(
         "textarea",
         &[
-            p("value", PropKind::Text),
+            // Multi-line: kept as written, trailing newline and all.
+            p("value", PropKind::Bytes),
             p("placeholder", PropKind::Text),
             p("max_len", PropKind::Number),
             p("flags", PropKind::Text),
