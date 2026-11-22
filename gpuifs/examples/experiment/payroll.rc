@@ -1,0 +1,66 @@
+#!/bin/rc
+# payroll.rc: weekly payroll with overtime, field errors, a pay stub and a
+# register. The arithmetic is in payroll.awk, in integer cents.
+#
+#	gpuifs -t Payroll rc payroll.rc
+k=$gpuifs
+if(~ $#k 0) k=/mnt/gpui
+
+echo 'window main title=Payroll size=820,600 min=640,480 pos=center' >$k/ctl
+w=$k/windows/main
+r=$w/root
+
+cat >$r/tree <<'END'
+div root  style='v_flex items_stretch size_full p=20 gap=14 bg=background'
+  div head  style='h_flex items_baseline gap=10'
+    text title  style='text_xl font_semibold'  text='ACME Widget Co.'
+    text sub  style='text_sm text_color=muted_foreground'  text='Weekly payroll, computed in rc'
+  div f  style='h_flex items_start gap=12'
+    field user  label=Employee  style=flex_1
+      input in  placeholder='Grace Hopper'  tag=run
+    field hours  label=Hours
+      input in  placeholder=40  tag=run
+    field rate  label='Rate per hour'
+      input in  placeholder=25.00  tag=run
+    field go  label=' '
+      button run  label='Run payroll'  style=primary  tag=run
+  div body  style='h_flex items_stretch flex_1 gap=20'
+    div stub  style='v_flex items_stretch w=300 gap=8'
+      text h  style=font_semibold  text='Pay stub'
+      description-list stub  columns=1  bordered=on
+    div reg  style='v_flex items_stretch flex_1 gap=8'
+      text h  style=font_semibold  text=Register
+      table table  style=flex_1  stripe=on
+      div foot  style='h_flex justify_end'
+        text total  style='text_sm text_color=muted_foreground'  text='No one paid yet.'
+END
+F=$r/f
+B=$r/body
+awk 'BEGIN { print "Employee\t-" }' >$B/stub/stub/items
+awk 'BEGIN { OFS = "\t"
+	print "name", "Employee", 170
+	print "hours", "Hours", 70, "align=right"
+	print "rate", "Rate", 80, "align=right"
+	print "net", "Net pay", 110, "align=right" }' >$B/reg/table/columns
+echo 'cmd-enter run' >$k/keymap
+echo root/f/user/in >$w/focus
+
+st=(0 0 0)
+fn run {
+	echo begin >$w/ctl
+	st=`{awk -v 'F='$F -v 'B='$B -v 'N='$st(1) -v 'TG='$st(2) -v 'TN='$st(3) -f payroll.awk}
+	if(~ $st(4) ok){
+		for(f in user hours rate) echo -n >$F/$f/in/value
+		echo root/f/user/in >$w/focus
+	}
+	echo commit >$w/ctl
+}
+
+cat $k/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click submit action
+		if(~ $ev *tag'='run* *id'='run*) run
+	case close quit
+		echo quit >$k/ctl
+	}
+}
