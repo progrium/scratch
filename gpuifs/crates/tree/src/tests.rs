@@ -1541,3 +1541,18 @@ fn design_state_names_coalesce_even_as_actions() {
     assert_eq!(got.lines().count(), 1, "{got}");
     assert!(got.contains("value=off via=user"), "{got}");
 }
+
+#[test]
+fn keymap_keystrokes_are_checked() {
+    let mut t = app();
+    ok(
+        &mut t,
+        "keymap",
+        "cmd-s save\ncmd-shift-p palette\nescape dismiss context=editor\nctrl-tab next-tab\nctrl-- zoom-out\n",
+    );
+    assert_eq!(
+        kind(write(&mut t, "keymap", "cmd-s save\ncmd-wibble-q quit\n")),
+        ErrorKind::BadValue
+    );
+    assert!(read(&t, "keymap").starts_with("cmd-s save\ncmd-shift-p"));
+}

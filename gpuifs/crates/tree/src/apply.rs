@@ -343,7 +343,14 @@ pub(crate) fn check_lines(fmt: LineFormat, data: &[u8]) -> Result<(), Error> {
         LineFormat::DescItems => parse_lines::<DescItem>(s).map(drop),
         LineFormat::RadioItems => parse_lines::<RadioItem>(s).map(drop),
         LineFormat::Menu => parse_lines::<MenuLine>(s).map(drop),
-        LineFormat::Keymap => parse_lines::<KeyBinding>(s).map(drop),
+        LineFormat::Keymap => {
+            for b in parse_lines::<KeyBinding>(s)? {
+                for k in &b.keys {
+                    check_keystroke(k)?;
+                }
+            }
+            Ok(())
+        }
         LineFormat::CanvasOps => parse_lines::<CanvasOp>(s).map(drop),
         LineFormat::Diagnostics => parse_lines::<Diagnostic>(s).map(drop),
         LineFormat::Messages => parse_messages(s).map(drop),
@@ -351,6 +358,39 @@ pub(crate) fn check_lines(fmt: LineFormat, data: &[u8]) -> Result<(), Error> {
         LineFormat::Completions if s.trim().is_empty() => Ok(()),
         LineFormat::Completions => parse_completions(s).map(drop),
     }
+}
+
+/// Modifiers GPUI's keystroke syntax takes.
+const MODIFIERS: &[&str] = &[
+    "cmd",
+    "ctrl",
+    "alt",
+    "shift",
+    "fn",
+    "super",
+    "win",
+    "platform",
+    "secondary",
+];
+
+/// One keystroke in GPUI syntax: modifiers joined by `-`, then a key
+/// (`cmd-shift-p`, `ctrl--` for the minus key).
+pub(crate) fn check_keystroke(k: &str) -> Result<(), Error> {
+    let bad = || err(ErrorKind::BadValue, format!("keystroke: {k}"));
+    let (mods, key) = match k.strip_suffix("--") {
+        Some(m) => (m, "-"),
+        None => match k.rsplit_once('-') {
+            Some((m, key)) => (m, key),
+            None => ("", k),
+        },
+    };
+    if key.is_empty() || key.chars().any(char::is_whitespace) {
+        return Err(bad());
+    }
+    if !mods.is_empty() && !mods.split('-').all(|m| MODIFIERS.contains(&m)) {
+        return Err(bad());
+    }
+    Ok(())
 }
 
 /// Checks and normalizes a prop value.
