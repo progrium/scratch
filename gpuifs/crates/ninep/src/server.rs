@@ -680,8 +680,8 @@ impl Conn {
         if f.path.as_str().is_empty() {
             return err("permission denied");
         }
-        if f.kind != StatKind::Dir {
-            // A node's files go with the node; `rm -r` removes them first.
+        if f.kind != StatKind::Dir && f.path.as_str().starts_with("windows/") {
+            // A node's (or window's) files go with it; `rm -r` removes them first.
             return Rmsg::Remove;
         }
         match self.b.apply(self.sid, Op::Remove { path: f.path }).await {

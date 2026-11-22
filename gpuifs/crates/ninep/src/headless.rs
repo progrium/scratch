@@ -251,7 +251,8 @@ struct TreeThread {
     shared: Arc<Shared>,
     opts: Options,
     requests: HashMap<u64, PendingRequest>,
-    /// Added to real time by `tick SECONDS`.
+    /// Added to real time by `tick SECONDS`. The tree stamps deadlines with
+    /// real time, so a request opened now gets its timeout plus the skew.
     skew: Duration,
     dirty: BTreeSet<String>,
 }
@@ -433,7 +434,7 @@ impl TreeThread {
                 HostCmd::WindowCtl { win, cmd } if cmd.verb == "close" => {
                     // Asking to close, as the close button does: a request.
                     let ev = EventMsg::new(EventKind::Request, "close").win(&win).attr("via", "ctl");
-                    let seq = self.tree.open_request(ev, Answer::verb("close"), REQUEST_TIMEOUT);
+                    let seq = self.tree.open_request(ev, Answer::verb("close"), REQUEST_TIMEOUT + self.skew);
                     self.requests.insert(seq, PendingRequest { win: Some(win), name: "close".into(), drag: None });
                     queue.extend(self.tree.tick(self.now()));
                 }
@@ -550,7 +551,7 @@ impl TreeThread {
                     let drag = ev.attrs.iter().find(|(k, _)| k == "drag").and_then(|(_, v)| v.parse().ok());
                     let verb = default.unwrap_or_else(|| default_answer_verb(&name));
                     let win = prop(&c, "win").map(str::to_string);
-                    let seq = self.tree.open_request(ev, Answer::verb(&verb), REQUEST_TIMEOUT);
+                    let seq = self.tree.open_request(ev, Answer::verb(&verb), REQUEST_TIMEOUT + self.skew);
                     if !node || drag.is_some() {
                         self.requests.insert(seq, PendingRequest { win, name: name.clone(), drag });
                     }

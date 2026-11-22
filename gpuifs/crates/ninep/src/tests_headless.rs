@@ -273,3 +273,38 @@ fn read_after_quit_is_eof_and_walks_still_work() {
         assert!(matches!(cl.walk(4, "nope").await, Rmsg::Error { .. }));
     });
 }
+
+#[test]
+fn injected_quit_waits_for_a_reader() {
+    with_headless(Options::default(), |mut cl, hb| async move {
+        put(&mut cl, "ctl", "window main").await.unwrap();
+        // After the fake clock has moved on, a new request still gets its 5 s.
+        put(&mut cl, "debug/inject", "tick 5").await.unwrap();
+        cl.open(1, "events", OREAD).await;
+        cl.ok(Tmsg::Read { fid: 1, offset: 0, count: 8192 }).await; // resync
+        put(&mut cl, "debug/inject", "event quit via=menu").await.unwrap();
+        put(&mut cl, "debug/inject", "tick 1").await.unwrap();
+        assert!(!hb.is_gone(), "{:?}", hb.log());
+        let Rmsg::Read { data } = cl.ok(Tmsg::Read { fid: 1, offset: 0, count: 8192 }).await else { panic!() };
+        let s = String::from_utf8(data).unwrap();
+        assert!(s.contains("quit "), "{s}");
+        let seq = s.trim().rsplit("seq=").next().unwrap().to_string();
+        put(&mut cl, "ctl", &format!("keep seq={seq}")).await.unwrap();
+        put(&mut cl, "debug/inject", "tick 6").await.unwrap();
+        assert!(!hb.is_gone(), "{:?}", hb.log());
+    });
+}
+
+#[test]
+fn rm_menu_file() {
+    with_headless(Options::default(), |mut cl, _| async move {
+        cl.walk(2, "menus").await;
+        cl.ok(Tmsg::Create { fid: 2, name: "Help".into(), perm: 0o664, mode: OWRITE }).await;
+        cl.ok(Tmsg::Write { fid: 2, offset: 0, data: b"item about label=About\n".to_vec() }).await;
+        cl.ok(Tmsg::Clunk { fid: 2 }).await;
+        assert!(cl.ls("menus").await.iter().any(|d| d.name == "Help"));
+        cl.walk(2, "menus/Help").await;
+        cl.ok(Tmsg::Remove { fid: 2 }).await;
+        assert!(!cl.ls("menus").await.iter().any(|d| d.name == "Help"));
+    });
+}
