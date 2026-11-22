@@ -64,7 +64,7 @@ div root
 - two
 END
 END_DOC
-cat $r/notes/text
+val $r/notes/text
 cat $r/tree
 
 echo '# a document with a bad line changes nothing'

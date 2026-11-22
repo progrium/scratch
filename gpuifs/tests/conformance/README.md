@@ -128,7 +128,9 @@ These are what the goldens assume. Each is in GAPS.md with the reason.
   `  prop=value` (two spaces before each), in the order the properties were
   first set, child lines indented two more spaces, in `order` order.
   Properties at their default aren't printed. A multi-line value is
-  `prop=<<END`, then its lines unindented, then `END`. This makes
+  `prop=<<END`, then its lines unindented, then `END` at the node's indent;
+  the lines are joined with newlines, so a value ending in a newline shows a
+  blank last line (W1's canonical form, `crates/proto/src/doc.rs`). This makes
   `print(parse(x)) == x` hold for DESIGN's own sign-in document.
 - **Computed files** (`type`, `order`, `id`, `bounds`, `title`, `state`,
   `focus`, `tag`, `style`) read back with no trailing newline. `id` and

@@ -29,14 +29,14 @@ textarea|
 # Notes
 
 - one
-- two
+- two|
 div root
   markdown notes  text=<<END
 # Notes
 
 - one
 - two
-END
+  END
 # a document with a bad line changes nothing
 yes
 no
