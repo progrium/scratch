@@ -305,6 +305,12 @@ impl<'a> RenderCx<'a> {
         materialize::element(self, node, div())
     }
 
+    /// As [`RenderCx::element_from`], without the listeners for the `on`
+    /// words in `skip`, for a component that sends those events itself.
+    pub fn element_except(&mut self, node: &NodeView, base: gpui::Div, skip: &[&str]) -> Stateful<gpui::Div> {
+        materialize::element_except(self, node, base, skip)
+    }
+
     /// As [`RenderCx::element`], starting from a `div` you made.
     pub fn element_from(&mut self, node: &NodeView, base: gpui::Div) -> Stateful<gpui::Div> {
         materialize::element(self, node, base)

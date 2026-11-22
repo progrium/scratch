@@ -208,6 +208,18 @@ impl Harness {
         self.settle();
     }
 
+    /// The host's main-thread state, for tests inside the crate.
+    #[allow(dead_code)]
+    pub(crate) fn inner(&self) -> &Rc<Inner> {
+        &self.inner
+    }
+
+    /// Lets the host's 100 ms tick run (request timeouts, clipboard polling).
+    pub fn advance(&mut self, d: std::time::Duration) {
+        self.cx.executor().advance_clock(d);
+        self.settle();
+    }
+
     /// Whether the app has quit (`app gone`).
     pub fn quit_called(&self) -> bool {
         self.inner.quitting.get()

@@ -531,6 +531,10 @@ impl Emitter { pub fn event(&self, name: &str, attrs: &[(&str, &str)]);   // kin
                pub fn mirror(&self, file: &str, value: impl Into<Bytes>); }
 
 pub fn register(reg: &mut ComponentRegistry);   // one per group module; W0 wires all of them
+
+// Additive (W7):
+//   RenderCx::element_except(node, base, skip_on)   // element without the listeners for those `on` words
+//   catalog::canvas::edit_ops(ops, cmd)             // canvas ctl edits, applied by the tree (headless too)
 ```
 
 W5b's additive host API (see `crates/host/src/lib.rs` for docs):

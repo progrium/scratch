@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use futures::channel::{mpsc, oneshot};
-use gpui::{AnyWindowHandle, App, AsyncApp, ClipboardItem, Entity, FocusHandle, ScrollHandle, Window};
+use gpui::{AnyWindowHandle, App, AsyncApp, Entity, FocusHandle, ScrollHandle, Window};
 
 use tree::{Answer, Bytes, EventKind, EventMsg, FsPath, HostCmd, Op, SessionId, Tree, Via};
 
@@ -43,6 +43,8 @@ pub(crate) enum Msg {
         file: String,
         value: Bytes,
     },
+    /// Drag and drop, from `dnd` listeners (W7).
+    Dnd(crate::dnd::DndMsg),
     /// Nothing to apply; the loop runs `tick`.
     Wake,
 }
@@ -51,6 +53,8 @@ pub(crate) enum Msg {
 pub(crate) enum Pending {
     /// A component request: the answer goes to its `verb`.
     Component(String),
+    /// A `drop` request about drag `n` (W7): the answer goes to `dnd`.
+    Drop(u64),
 }
 
 pub(crate) struct WindowEntry {
@@ -78,6 +82,10 @@ pub(crate) struct Inner {
     /// Key bindings that came with GPUI Kit, kept when the keymap is rewritten.
     pub base_bindings: RefCell<Option<Vec<gpui::KeyBinding>>>,
     pub quitting: Cell<bool>,
+    /// Drags in progress and dropped files served under `drags/<n>/files/` (W7).
+    pub dnd: crate::dnd::State,
+    /// The platform clipboard as last mirrored into the tree (W7).
+    pub clipboard: crate::clipboard::State,
 }
 
 impl Inner {
@@ -154,7 +162,7 @@ impl Inner {
             .clone()
     }
 
-    fn publish(&self) {
+    pub(crate) fn publish(&self) {
         let snap = self.tree.borrow().snapshot();
         *self.snapshot.lock().unwrap() = snap;
     }
@@ -205,6 +213,7 @@ pub struct HostBackend {
     snapshot: Arc<Mutex<Arc<tree::Snapshot>>>,
     bus: tree::EventBus,
     next_session: AtomicU32,
+    served: Arc<crate::dnd::Served>,
 }
 
 #[async_trait::async_trait]
@@ -224,6 +233,16 @@ impl ninep::FsBackend for HostBackend {
     }
     fn new_session(&self) -> SessionId {
         SessionId(self.next_session.fetch_add(1, Ordering::Relaxed))
+    }
+    // Dropped platform files, read-only under `drags/<n>/files/` (W7).
+    fn extra_stat(&self, p: &FsPath) -> Option<tree::Stat> {
+        self.served.stat(p)
+    }
+    fn extra_readdir(&self, p: &FsPath) -> Vec<tree::Stat> {
+        self.served.readdir(p)
+    }
+    fn extra_read(&self, p: &FsPath) -> Option<Bytes> {
+        self.served.read(p)
     }
 }
 
@@ -256,12 +275,15 @@ pub(crate) fn install(opts: HostOptions, cx: &mut App) -> (Rc<Inner>, Arc<HostBa
         action_state: Default::default(),
         base_bindings: RefCell::new(None),
         quitting: Cell::new(false),
+        dnd: Default::default(),
+        clipboard: Default::default(),
     });
     let backend = Arc::new(HostBackend {
         tx,
         snapshot,
         bus,
         next_session: AtomicU32::new(1),
+        served: inner.dnd.served.clone(),
     });
     crate::actions::init(&inner, cx);
     crate::theme::init(&inner, cx);
@@ -290,7 +312,10 @@ pub(crate) fn install(opts: HostOptions, cx: &mut App) -> (Rc<Inner>, Arc<HostBa
             if i.quitting.get() {
                 break;
             }
-            cx.update(|cx| tick(&i, cx));
+            cx.update(|cx| {
+                crate::clipboard::poll(&i, cx);
+                tick(&i, cx)
+            });
         }
     })
     .detach();
@@ -365,6 +390,7 @@ pub(crate) fn process(inner: &Rc<Inner>, batch: Vec<Msg>, cx: &mut App) {
                     .borrow_mut()
                     .mirror(&path, &file, value, Via::User);
             }
+            Msg::Dnd(m) => crate::dnd::process(inner, m),
             Msg::Wake => {}
         }
     }
@@ -561,14 +587,7 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
                 v.update(cx, |v, _| v.set_known_focus(Some(rel)));
             }
         }
-        HostCmd::Clipboard => {
-            let text = inner.tree.borrow().root_file("clipboard");
-            if let Some(t) = text {
-                cx.write_to_clipboard(ClipboardItem::new_string(
-                    String::from_utf8_lossy(&t).into_owned(),
-                ));
-            }
-        }
+        HostCmd::Clipboard => crate::clipboard::write(inner, cx),
         HostCmd::ComponentVerb { node, cmd } => {
             component_verb(inner, &node, &cmd, cx);
             if let Some(w) = node.strip_prefix("windows/").and_then(|p| p.split('/').next()) {
@@ -577,7 +596,9 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
         }
         HostCmd::Answer { seq, answer } => {
             let p = inner.pending.borrow_mut().remove(&seq);
-            if let Some(Pending::Component(node)) = p {
+            if let Some(Pending::Drop(n)) = p {
+                crate::dnd::answered(inner, n, &answer);
+            } else if let Some(Pending::Component(node)) = p {
                 let mut cmd = answer.0.clone();
                 if !cmd.props.iter().any(|(k, _)| k == "seq") {
                     cmd.props.push(("seq".to_string(), seq.to_string()));

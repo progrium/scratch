@@ -536,7 +536,10 @@ impl TreeThread {
                         _ => ev.attrs.push((k.clone(), v.clone())),
                     }
                 }
-                let kind = if node {
+                // `drop` (an `on` word any node takes) is a request (DESIGN § Drag and drop).
+                let kind = if node && name == "drop" {
+                    EventKind::Request
+                } else if node {
                     self.spec_kind(&path, &name).unwrap_or(EventKind::Action)
                 } else if matches!(name.as_str(), "close" | "quit") {
                     EventKind::Request
@@ -555,6 +558,13 @@ impl TreeThread {
                     }
                     seq
                 } else {
+                    // As the GUI host does, `/drags/<n>` exists before
+                    // `dragstart`, so the client can write its payload.
+                    if name == "dragstart"
+                        && let Some(n) = ev.attrs.iter().find(|(k, _)| k == "drag").map(|(_, v)| v.clone())
+                    {
+                        self.tree.mirror(&format!("drags/{n}"), "data", Bytes::new(), Via::User);
+                    }
                     ev.kind = kind;
                     self.tree.emit(ev)
                 };

@@ -81,6 +81,17 @@ pub(crate) fn keystroke(k: &Keystroke) -> String {
 /// The element-tier box for a node: id, style words, state styles, group,
 /// `on` listeners, `context`, `tooltip` and `bounds`.
 pub(crate) fn element(rcx: &mut RenderCx, node: &NodeView, base: gpui::Div) -> gpui::Stateful<gpui::Div> {
+    element_except(rcx, node, base, &[])
+}
+
+/// As [`element`], leaving out the listeners for the `on` words in `skip`
+/// (a canvas handles its own pointer events, with `item=`).
+pub(crate) fn element_except(
+    rcx: &mut RenderCx,
+    node: &NodeView,
+    base: gpui::Div,
+    skip: &[&str],
+) -> gpui::Stateful<gpui::Div> {
     let st = rcx.style_of(node);
     let path = node.path().to_string();
     let mut el = base;
@@ -115,7 +126,7 @@ pub(crate) fn element(rcx: &mut RenderCx, node: &NodeView, base: gpui::Div) -> g
 
     let on = node.on_words();
     let em = node.emitter();
-    let wants = |w: &str| on.iter().any(|x| x == w);
+    let wants = |w: &str| !skip.contains(&w) && on.iter().any(|x| x == w);
 
     if wants("key") || wants("focus") || wants("blur") || st.focus.is_some() {
         let fh = rcx.focus_handle(node);
@@ -175,6 +186,8 @@ pub(crate) fn element(rcx: &mut RenderCx, node: &NodeView, base: gpui::Div) -> g
     }
 
     let mut el = el.id(ElementId::Name(path.clone().into()));
+    // W7: `drop` targets, `drag` sources.
+    el = crate::dnd::attach(node, &st, &on, el);
     if let Some(a) = st.active.clone() {
         el = el.active(move |mut s| {
             s.refine(&a);

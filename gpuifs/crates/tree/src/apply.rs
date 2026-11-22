@@ -1208,6 +1208,13 @@ impl Tx<'_> {
                 Ok(())
             }
             _ if spec.verbs.iter().any(|v| v.name == c.verb) => {
+                // W7: canvas `ctl` edits its `ops` list in the tree, so
+                // headless and the host agree on what `cat ops` says.
+                if spec.name == "canvas" && catalog::canvas::is_edit_verb(&c.verb) {
+                    let cur = self.st.node_file(self.reg, node, "ops").unwrap_or_default();
+                    let new = catalog::canvas::edit_ops(cur, c)?;
+                    return self.quietly(|tx| tx.set_file(node, "ops", Bytes::from(new), false));
+                }
                 self.host.push(HostCmd::ComponentVerb {
                     node: node.to_string(),
                     cmd: c.clone(),
