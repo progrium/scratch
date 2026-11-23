@@ -6,12 +6,11 @@
 //!     uitree-headless [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... CMD [ARG...]
 //!     uitree-headless -a ADDR
 //!
-//! It is a renderer like any other: it reaches the core only through
-//! uitcore.h (declared below as externs), on its own owner thread, and
-//! pumps when the core wakes it. What a drawing host would learn from the
-//! platform (a click, a layout, a frame, the clock) it learns from lines
-//! written to `$ui/debug/inject` (ninep/debug.zig), which it applies on
-//! that same thread through the ABI's input calls.
+//! It holds the tree on its own owner thread and pumps when a 9P thread
+//! queues an op. What a drawing host would learn from the platform (a
+//! click, a layout, a frame, the clock) it learns from lines written to
+//! `$ui/debug/inject` (ninep/debug.zig), which it applies on that same
+//! thread through the tree's inputs.
 //!
 //! - `CMD ARG...` runs in h9 with `$ui` mounted and set, in the current
 //!   directory. The exit status is the client's: 0 for an empty exit
@@ -21,36 +20,20 @@
 //! - `-r ROOT` is h9's root: `builtin` (the default) or a 9front root
 //!   directory; `$H9ROOT` sets it too.
 //! - Failed writes are loud: `uitree: write PATH: phrase: detail` on
-//!   standard error (ninep/host.zig).
+//!   standard error (the tree prints them).
 
 const std = @import("std");
 const core = @import("uitcore");
 
 const abi = core.abi;
 const ninep = core.ninep;
+const tree = core.tree;
+const proto = core.proto;
 const debug = ninep.debug;
 const UitStr = abi.UitStr;
-const Core = abi.Core;
+const Tree = tree.Tree;
+const Handle = tree.Handle;
 const Err = ninep.fs.Err;
-
-// The C ABI, as any renderer sees it.
-extern fn uit_create(cfg: ?*const abi.UitConfig, out: ?*?*Core) c_int;
-extern fn uit_destroy(c: *Core) void;
-extern fn uit_shutdown(c: *Core) void;
-extern fn uit_last_error(c: *Core) UitStr;
-extern fn uit_listen(c: *Core, addr: UitStr, dial: ?*UitStr) c_int;
-extern fn uit_run_machine(c: *Core, args: ?*const abi.UitMachineArgs) c_int;
-extern fn uit_pump(c: *Core, out: ?*abi.UitChanges) c_int;
-extern fn uit_window_root(c: *Core, win: UitStr) abi.UitNode;
-extern fn uit_children(c: *Core, node: abi.UitNode, out: ?*?[*]const abi.UitNode) usize;
-extern fn uit_path(c: *Core, node: abi.UitNode) UitStr;
-extern fn uit_emit(c: *Core, node: abi.UitNode, name: UitStr, attrs: ?[*]const abi.UitAttr, n: usize) c_int;
-extern fn uit_mirror(c: *Core, node: abi.UitNode, file: UitStr, value: UitStr) c_int;
-extern fn uit_bounds(c: *Core, node: abi.UitNode, x: f32, y: f32, w: f32, h: f32) c_int;
-extern fn uit_frame_drawn(c: *Core, win: UitStr) c_int;
-extern fn uit_key(c: *Core, win: UitStr, keystroke: UitStr, focused: abi.UitNode) c_int;
-extern fn uit_menu_action(c: *Core, id: UitStr) c_int;
-extern fn uit_system_dark(c: *Core, dark: u32) c_int;
 
 const usage =
     \\usage: uitree-headless [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... CMD [ARG...]
@@ -105,7 +88,8 @@ const Job = struct {
     next: ?*Job = null,
 };
 
-/// The owner thread's state, shared with 9P threads (wake, inject).
+/// The owner thread's state, shared with 9P threads (wake, inject) and
+/// the machine thread (exit).
 const Headless = struct {
     io: std.Io,
     mu: std.Io.Mutex = .init,
@@ -115,8 +99,10 @@ const Headless = struct {
     jobs_tail: ?*Job = null,
     /// The client has exited: inject answers `app gone` from now on.
     finished: bool = false,
-    core: *Core = undefined,
-    clock_ns: u64 = 0,
+    /// The client's exit string, once it has exited.
+    status: ?[]const u8 = null,
+    status_buf: [256]u8 = undefined,
+    t: *Tree = undefined,
 
     fn lock(h: *Headless) void {
         h.mu.lockUncancelable(h.io);
@@ -125,10 +111,23 @@ const Headless = struct {
         h.mu.unlock(h.io);
     }
 
-    /// UitConfig.wake: any thread.
-    fn wake(ctx: ?*anyopaque) callconv(.c) void {
+    /// OpQueue.wake: any thread.
+    fn wake(ctx: ?*anyopaque) void {
         const h: *Headless = @ptrCast(@alignCast(ctx.?));
         h.lock();
+        h.woken = true;
+        h.cond.broadcast(h.io);
+        h.unlock();
+    }
+
+    /// machine.Runner's on_exit: the machine thread.
+    fn onExit(ctx: *anyopaque, status: []const u8) void {
+        const h: *Headless = @ptrCast(@alignCast(ctx));
+        h.lock();
+        const n = @min(status.len, h.status_buf.len);
+        @memcpy(h.status_buf[0..n], status[0..n]);
+        // A status that didn't fit is still not empty.
+        h.status = h.status_buf[0..n];
         h.woken = true;
         h.cond.broadcast(h.io);
         h.unlock();
@@ -149,7 +148,6 @@ const Headless = struct {
         if (job.failed) return error.Failed;
     }
 
-    /// Owner thread: takes every queued job.
     fn takeJobs(h: *Headless) ?*Job {
         const j = h.jobs;
         h.jobs = null;
@@ -168,99 +166,96 @@ const Headless = struct {
         h.unlock();
     }
 
-    /// Runs one job on the owner thread.
-    fn run(h: *Headless, j: *Job) void {
-        h.runInject(j.inj, j.err) catch {
-            j.failed = true;
+    /// A tree input's error as the inject write's.
+    fn treeErr(h: *Headless, err: *Err, e: anyerror) error{ Failed, OutOfMemory } {
+        if (e == error.OutOfMemory) return error.OutOfMemory;
+        const txt = h.t.lastError();
+        if (txt.len > 0) return err.set(txt);
+        if (proto.Code.fromError(e)) |c| return err.set(c.phrase());
+        return err.set("bad value");
+    }
+
+    /// The node at window-relative `path` in window `win`.
+    fn node(h: *Headless, arena: std.mem.Allocator, win: []const u8, path: []const u8, err: *Err) error{ Failed, OutOfMemory }!Handle {
+        const st = h.t.current();
+        const w = st.win(win) orelse return err.print("not found: win/{s}", .{win});
+        return tree.path.resolveNode(st, arena, w.root, path, null) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return err.print("not found: win/{s}/{s}", .{ win, path });
         };
     }
 
-    fn check(h: *Headless, rc: c_int, err: *Err) error{Failed}!void {
-        if (rc >= 0) return;
-        const txt = uit_last_error(h.core).slice();
-        if (txt.len > 0) return err.set(txt);
-        return err.set(switch (rc) {
-            abi.UIT_ENOTFOUND => "not found",
-            abi.UIT_EINUSE => "in use",
-            abi.UIT_EBADVALUE, abi.UIT_EINVAL => "bad value",
-            abi.UIT_ENOTSUP => "unsupported",
-            abi.UIT_EGONE => "app gone",
-            abi.UIT_ENOMEM => "too large",
-            else => "unsupported",
-        });
-    }
-
-    /// A window-relative path to a node handle, walking children by name
-    /// through the ABI as a renderer would. Null: not found.
-    fn lookup(h: *Headless, win: []const u8, path: []const u8) ?abi.UitNode {
-        var at = uit_window_root(h.core, UitStr.of(win));
-        if (at == 0) return null;
-        var it = std.mem.tokenizeScalar(u8, path, '/');
-        while (it.next()) |el| {
-            if (std.mem.eql(u8, el, ".")) continue;
-            var kids: ?[*]const abi.UitNode = null;
-            const n = uit_children(h.core, at, &kids);
-            var found: abi.UitNode = 0;
-            for (if (n > 0) kids.?[0..n] else &[_]abi.UitNode{}) |k| {
-                const p = uit_path(h.core, k).slice();
-                const base = if (std.mem.lastIndexOfScalar(u8, p, '/')) |i| p[i + 1 ..] else p;
-                if (std.mem.eql(u8, base, el)) {
-                    found = k;
-                    break;
-                }
-            }
-            if (found == 0) return null;
-            at = found;
+    /// The default answer to request `name` about node `n`, or null if
+    /// `name` is no request (core.md § Requests).
+    fn requestDefault(h: *Headless, name: []const u8, n: Handle) ?[]const u8 {
+        const eq = std.mem.eql;
+        if (eq(u8, name, "close")) return "close";
+        if (eq(u8, name, "quit")) return "quit";
+        if (eq(u8, name, "open")) return "accept";
+        if (eq(u8, name, "drop")) {
+            const nd = h.t.current().node(n) orelse return "refuse";
+            return if (nd.stored("drop") != null) "accept" else "refuse";
         }
-        return at;
-    }
-
-    fn node(h: *Headless, win: ?[]const u8, path: ?[]const u8, err: *Err) error{Failed}!abi.UitNode {
-        const w = win orelse "main";
-        const p = path orelse ".";
-        return h.lookup(w, p) orelse err.print("not found: {s}", .{p});
+        return null;
     }
 
     fn runInject(h: *Headless, inj: *const debug.Inject, err: *Err) error{ Failed, OutOfMemory }!void {
-        const c = h.core;
+        var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        const t = h.t;
         switch (inj.*) {
             .event => |e| {
-                const n = try h.node(e.win, e.node, err);
-                var attrs: [64]abi.UitAttr = undefined;
-                var k: usize = 0;
-                if (e.key) |key| {
-                    attrs[k] = .{ .name = UitStr.lit("key"), .value = UitStr.of(key) };
-                    k += 1;
+                // `node=` defaults to `.` with `win=`, `-` (the app) without.
+                var n: Handle = 0;
+                if (e.win != null or e.node != null) {
+                    const p = e.node orelse ".";
+                    if (!std.mem.eql(u8, p, "-")) n = try h.node(a, e.win orelse "main", p, err);
                 }
-                for (e.attrs) |a| {
-                    if (k == attrs.len) return err.set("too large");
-                    attrs[k] = .{ .name = UitStr.of(a.key), .value = UitStr.of(a.value) };
-                    k += 1;
+                const ev: tree.EventIn = .{ .name = e.name, .node = n, .key = e.key, .win = e.win, .attrs = e.attrs };
+                if (h.requestDefault(e.name, n)) |def| {
+                    _ = t.request(ev, def) catch |x| return h.treeErr(err, x);
+                } else {
+                    _ = t.emit(ev) catch |x| return h.treeErr(err, x);
                 }
-                try h.check(uit_emit(c, n, UitStr.of(e.name), &attrs, k), err);
             },
             .mirror => |m| {
-                const n = try h.node(m.win, m.node, err);
-                try h.check(uit_mirror(c, n, UitStr.of(m.file), UitStr.of(m.value)), err);
+                const n = try h.node(a, m.win orelse "main", m.node orelse ".", err);
+                t.mirror(n, m.file, m.value) catch |x| return h.treeErr(err, x);
             },
             .bounds => |b| {
-                const n = try h.node(b.win, b.node, err);
-                try h.check(uit_bounds(c, n, b.x, b.y, b.w, b.h), err);
+                const n = try h.node(a, b.win, b.node, err);
+                const r: [4]i64 = .{ @intFromFloat(b.x), @intFromFloat(b.y), @intFromFloat(b.w), @intFromFloat(b.h) };
+                t.setBounds(n, r) catch |x| return h.treeErr(err, x);
             },
-            .frame => |f| try h.check(uit_frame_drawn(c, UitStr.of(f.win orelse "")), err),
-            .tick => |t| {
-                h.clock_ns += t.ns;
-                // The tree's fake clock (W3): batch and request deadlines.
-                if (@hasDecl(Core, "advanceClock")) c.advanceClock(t.ns);
-            },
-            .drag => return err.set("unsupported: drag offers need the transfer layer"),
-            .key => |k| {
-                const rc = uit_key(c, UitStr.of(k.win), UitStr.of(k.stroke), 0);
-                try h.check(rc, err);
-            },
-            .menu => |m| try h.check(uit_menu_action(c, UitStr.of(m.item)), err),
-            .appearance => |a| try h.check(uit_system_dark(c, @intFromBool(a.dark)), err),
+            .frame => |f| t.frameDrawn(f.win) catch |x| return h.treeErr(err, x),
+            .tick => |k| t.advanceClock(k.ns) catch |x| return h.treeErr(err, x),
+            .drag => |d| t.dragData(d.n, d.data) catch |x| return h.treeErr(err, x),
+            .key => |k| _ = t.key(k.win, k.stroke, 0) catch |x| return h.treeErr(err, x),
+            .menu => |m| t.menuAction(m.item) catch |x| return h.treeErr(err, x),
+            .appearance => |ap| t.systemDark(ap.dark) catch |x| return h.treeErr(err, x),
         }
+    }
+
+    /// One pump: queued ops, then inject lines, each published before it
+    /// is answered. The renderer's side (changes) has no one to draw it.
+    fn pump(h: *Headless, q: *tree.OpQueue, jobs: ?*Job, gone: bool) void {
+        _ = ninep.ns.drainPublish(q, h.t);
+        var j = jobs;
+        while (j) |x| : (j = x.next) {
+            if (gone) {
+                x.err.note("app gone");
+                x.failed = true;
+            } else {
+                h.runInject(x.inj, x.err) catch |e| {
+                    if (e == error.OutOfMemory) x.err.note("out of memory");
+                    x.failed = true;
+                };
+            }
+        }
+        h.t.publish() catch {};
+        h.t.clearChanges();
+        h.finishJobs(jobs);
     }
 };
 
@@ -271,6 +266,8 @@ fn fail(comptime fmt: []const u8, args: anytype) u8 {
 
 pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
+    const gpa = std.heap.smp_allocator;
+    const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
     var opts = parseArgs(arena, args) catch {
         std.debug.print(usage, .{});
@@ -278,44 +275,36 @@ pub fn main(init: std.process.Init) !u8 {
     };
     if (opts.root.len == 0) opts.root = init.environ_map.get("H9ROOT") orelse "";
 
-    var h: Headless = .{ .io = init.io };
+    var h: Headless = .{ .io = io };
 
-    // Every type the core has, as the descriptors a renderer would register.
-    var types: std.ArrayList(u8) = .empty;
-    for (core.types.embedded.specs) |s| {
-        try types.appendSlice(arena, s.text);
-        try types.append(arena, '\n');
-    }
-    const cfg: abi.UitConfig = .{
-        .abi_version = abi.abi_version,
-        .types = UitStr.of(types.items),
-        .style_words = UitStr.of(core.types.embedded.style_words),
-        .theme_tokens = UitStr.of(core.types.embedded.theme_tokens),
-        // README.md § The host: light until `appearance` changes it.
-        .system_dark = 0,
-        .wake = Headless.wake,
-        .wake_ctx = &h,
-    };
-    var cp: ?*Core = null;
-    const rc = uit_create(&cfg, &cp);
-    if (rc != abi.UIT_OK) return fail("uit_create: {d}", .{rc});
-    const c = cp.?;
-    h.core = c;
+    var cat = core.types.Catalog.builtin(gpa) catch |e| return fail("types: {t}", .{e});
+    var errw = std.Io.File.stderr().writerStreaming(io, &.{});
+    // README.md § The host: light until `appearance` changes it.
+    const t = Tree.create(gpa, io, &cat, .{
+        .host = "uitree-headless 0.2",
+        .system_dark = false,
+        .stderr = &errw.interface,
+    }) catch |e| return fail("tree: {t}", .{e});
+    h.t = t;
 
-    // /debug/inject, beside the tree.
+    var q: tree.OpQueue = .init(gpa, io);
+    q.wake = Headless.wake;
+    q.wake_ctx = &h;
+    var tfs: ninep.ns.TreeFs = .{ .gpa = gpa, .t = t, .q = &q };
+
+    // The tree prints its own loud lines.
+    ninep.host.Host.loud_fd = null;
+    const host = ninep.host.Host.create(gpa, io, tfs.fs()) catch |e| return fail("serve: {t}", .{e});
     var dbg: debug.Debug = .{ .injector = .{ .ptr = &h, .apply = Headless.apply } };
-    const host = c.getHost() catch |e| return fail("serve: {t}", .{e});
     host.mount("debug", dbg.fs()) catch |e| return fail("serve: {t}", .{e});
 
     for (opts.addrs.items) |addr| {
-        var dial: UitStr = .{};
-        if (uit_listen(c, UitStr.of(addr), &dial) != abi.UIT_OK)
-            return fail("listen {s}: {s}", .{ addr, uit_last_error(c).slice() });
-        std.debug.print("uitree: listening on {s}\n", .{dial.slice()});
+        const dial = host.listen(addr) catch |e| return fail("listen {s}: {t}", .{ addr, e });
+        std.debug.print("uitree: listening on {s}\n", .{dial});
     }
 
-    const running = opts.argv.len > 0;
-    if (running) {
+    var runner: ?*core.machine.Runner = null;
+    if (opts.argv.len > 0) {
         const argv = try arena.alloc(UitStr, opts.argv.len);
         for (opts.argv, argv) |s, *o| o.* = UitStr.of(s);
         const margs: abi.UitMachineArgs = .{
@@ -333,53 +322,36 @@ pub fn main(init: std.process.Init) !u8 {
             .out_fd = -1,
             .err_fd = -1,
         };
-        if (uit_run_machine(c, &margs) != abi.UIT_OK) return fail("{s}: {s}", .{ opts.argv[0], uit_last_error(c).slice() });
+        const sock = host.privatePath() catch |e| return fail("serve: {t}", .{e});
+        runner = core.machine.Runner.start(gpa, &margs, sock, &h, Headless.onExit) catch |e|
+            return fail("{s}: {t}", .{ opts.argv[0], e });
     }
 
-    // The owner loop: pump when woken, apply inject lines, until the
+    // The owner loop: pump when woken or when inject lines wait, until the
     // client exits.
     var status: ?[]const u8 = null;
     while (status == null) {
         h.lock();
-        while (!h.woken and h.jobs == null) h.cond.waitUncancelable(h.io, &h.mu);
+        while (!h.woken and h.jobs == null and h.status == null) h.cond.waitUncancelable(h.io, &h.mu);
         h.woken = false;
         const jobs = h.takeJobs();
+        status = h.status;
         h.unlock();
-
-        var ch: abi.UitChanges = .{};
-        if (uit_pump(c, &ch) == abi.UIT_OK and ch.exited != 0)
-            status = try arena.dupe(u8, ch.exit_status.slice());
-
-        var j = jobs;
-        while (j) |x| : (j = x.next) {
-            if (status != null) {
-                x.err.note("app gone");
-                x.failed = true;
-            } else h.run(x);
-        }
-        h.finishJobs(jobs);
-        // An inject queues input for the next pump: do it now, so the
-        // events are out before the inject write returns.
-        if (jobs != null and status == null) {
-            var ch2: abi.UitChanges = .{};
-            if (uit_pump(c, &ch2) == abi.UIT_OK and ch2.exited != 0)
-                status = try arena.dupe(u8, ch2.exit_status.slice());
-        }
+        h.pump(&q, jobs, false);
     }
 
+    // The client is gone: no more ops or inject lines, readers get EOF.
     h.lock();
     h.finished = true;
     const late = h.takeJobs();
-    var j = late;
-    while (j) |x| : (j = x.next) {
-        x.err.note("app gone");
-        x.failed = true;
-    }
     h.unlock();
-    h.finishJobs(late);
-
-    uit_shutdown(c);
-    uit_destroy(c);
+    q.close();
+    t.appGone();
+    h.pump(&q, late, true);
+    host.destroy();
+    if (runner) |r| r.join();
+    t.destroy();
+    cat.deinit();
     return if (status.?.len == 0) 0 else 1;
 }
 
