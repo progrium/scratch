@@ -215,7 +215,15 @@ const Headless = struct {
                     const p = e.node orelse ".";
                     if (!std.mem.eql(u8, p, "-")) n = try h.node(a, e.win orelse "main", p, err);
                 }
-                const ev: tree.EventIn = .{ .name = e.name, .node = n, .key = e.key, .win = e.win, .attrs = e.attrs };
+                var ev: tree.EventIn = .{ .name = e.name, .node = n, .key = e.key, .win = e.win, .attrs = e.attrs };
+                // On a `key` event, `key=` is the keystroke, an attribute.
+                if (std.mem.eql(u8, e.name, "key")) if (e.key) |k| {
+                    const all = try a.alloc(proto.Attr, e.attrs.len + 1);
+                    all[0] = .{ .key = "key", .value = k };
+                    @memcpy(all[1..], e.attrs);
+                    ev.key = null;
+                    ev.attrs = all;
+                };
                 if (h.requestDefault(e.name, n)) |def| {
                     _ = t.request(ev, def) catch |x| return h.treeErr(err, x);
                 } else {
