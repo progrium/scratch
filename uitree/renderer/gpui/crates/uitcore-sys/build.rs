@@ -122,6 +122,9 @@ fn main() {
             println!("cargo:rustc-link-lib=advapi32");
             println!("cargo:rustc-link-lib=ntdll");
             if h9 {
+                // hyper9's kern C uses POSIX names (strdup, memccpy, read,
+                // write); MSVC's oldnames.lib maps them to _strdup etc.
+                println!("cargo:rustc-link-lib=oldnames");
                 println!("cargo:rustc-link-lib=WinHvPlatform");
             }
         }
