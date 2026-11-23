@@ -1,3 +1,61 @@
-# Added to hyper9's src/web/root.list for the examples (build.sh): the
-# commands they use that h9's browser root leaves out.
+# The root the examples boot (build.sh packs it into dist/h9/root.h9a with
+# hyper9's tools/webroot.zig): what they run and no more, since every byte
+# is downloaded per page. hyper9's own src/web/root.list is a larger demo
+# root, with rio, acme and their font; uitree's examples draw through $ui
+# and use none of those. A path ending in / is an empty directory, such as
+# a mount point.
+
+# Mount points the namespace binds over.
+bin/
+boot/
+dev/
+env/
+fd/
+mnt/
+n/
+net/
+proc/
+root/
+srv/
+tmp/
+usr/glenda/
+
+# rc, its profile and the time zone date reads.
+rc/bin/
+rc/lib/rcmain
+386/bin/rc
+lib/namespace
+adm/timezone/local
+adm/timezone/GMT
+
+# What the examples run (tests/conformance/examples, tour/), and the
+# small commands an example's script is likely to reach for next.
+386/bin/awk
+386/bin/basename
+386/bin/bind
+386/bin/cat
+386/bin/cmp
+386/bin/cp
+386/bin/date
+386/bin/echo
+386/bin/grep
+386/bin/hoc
+386/bin/ls
+386/bin/mkdir
+386/bin/mount
+386/bin/mv
+386/bin/pwd
+386/bin/read
+386/bin/rm
+386/bin/sed
+386/bin/seq
+386/bin/sleep
+386/bin/sort
+386/bin/tail
+386/bin/tee
+386/bin/test
+386/bin/touch
+386/bin/tr
+386/bin/uniq
 386/bin/walk
+386/bin/wc
