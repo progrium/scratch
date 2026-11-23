@@ -95,7 +95,15 @@ pub const Op = union(enum) {
     /// The connection went away: its batch is aborted.
     session_closed: Session,
 
-    pub const FileOp = struct { session: Session = 0, path: []const u8, data: []const u8 };
+    pub const FileOp = struct {
+        session: Session = 0,
+        path: []const u8,
+        data: []const u8,
+        /// The node the file was opened under, or 0. If it was removed
+        /// since (even if the path names a new node now), the write fails
+        /// with `gone` (conformance 23-errors).
+        node: Handle = 0,
+    };
     pub const PathOp = struct { session: Session = 0, path: []const u8 };
 };
 
@@ -328,10 +336,12 @@ pub const Tree = struct {
         const r = switch (op) {
             .write => |f| blk: {
                 tx.session = f.session;
+                if (f.node != 0 and st.node(f.node) == null) break :blk tx.fail(.gone, "{s}", .{f.path});
                 break :blk tx.write(f.path, f.data, false);
             },
             .append => |f| blk: {
                 tx.session = f.session;
+                if (f.node != 0 and st.node(f.node) == null) break :blk tx.fail(.gone, "{s}", .{f.path});
                 break :blk tx.write(f.path, f.data, true);
             },
             .mkdir => |f| blk: {
@@ -800,7 +810,9 @@ pub const Tree = struct {
                 r.drag = std.fmt.parseInt(u64, x.value, 10) catch null;
             };
         }
-        r.seq = try t.emit(ev);
+        // Not asked for: the default applies and no event goes out
+        // (15-requests).
+        if (asked) r.seq = try t.emit(ev);
         if (reader) {
             r.default = try t.gpa.dupe(u8, default);
             errdefer t.gpa.free(r.default);
@@ -2007,6 +2019,9 @@ const Tx = struct {
             // mkdir makes a div first and a type write follows: a parent
             // that takes only certain types still takes the div for now.
             if (at_mkdir and e == error.UnknownType) return;
+            // A type that takes only its slots refuses any other child as
+            // a type it doesn't take (27-descriptors: `child none`).
+            if (e == error.BadValue and pn.ty.child == .none) return tx.fail(.unknown_type, "{s}", .{td.detail()});
             return tx.typesErr(e, &td);
         };
     }
@@ -2018,6 +2033,9 @@ const Tx = struct {
     /// The four node commands, and the type's verbs.
     fn nodeCmd(tx: *Tx, h: Handle, c: Ctl) Error!void {
         const n = tx.node(h);
+        if (n.ty.format("ops")) |f| if (std.mem.eql(u8, f, "ops")) {
+            if (try tx.canvasCmd(h, c)) return;
+        };
         switch (c.kind()) {
             .set => {
                 const p = c.word(0) orelse return tx.fail(.bad_syntax, "set PATH [word ...] [prop=value ...] [: style ...]", .{});
@@ -2061,6 +2079,77 @@ const Tx = struct {
     }
 
     /// A verb from the type's descriptor.
+    /// A canvas's edit verbs on its `ops` by item id (22-canvas): `set`
+    /// (or `update`) ID GEOMETRY... [ATTR=VALUE...], `add KIND ID ...`,
+    /// `del ID...`, `raise ID` (to the top), `lower ID` (to the bottom).
+    /// False when `c` isn't one of them.
+    fn canvasCmd(tx: *Tx, h: Handle, c: Ctl) Error!bool {
+        const L = proto.lines;
+        const eq = std.mem.eql;
+        const v = c.verb;
+        const verbs = [_][]const u8{ "set", "update", "add", "del", "raise", "lower" };
+        if (!state.inList(&verbs, v)) return false;
+        const a = tx.a;
+        var ops: std.ArrayList(L.CanvasOp) = .empty;
+        try ops.appendSlice(a, L.parseLines(L.CanvasOp, a, tx.node(h).value("ops"), null) catch &.{});
+        const find = struct {
+            fn f(list: []const L.CanvasOp, id: []const u8) ?usize {
+                for (list, 0..) |o, i| if (std.mem.eql(u8, o.id, id)) return i;
+                return null;
+            }
+        }.f;
+        if (eq(u8, v, "set") or eq(u8, v, "update")) {
+            const id = c.word(0) orelse return tx.fail(.bad_syntax, "{s} ID GEOMETRY... [ATTR=VALUE...]", .{v});
+            const i = find(ops.items, id) orelse return tx.fail(.not_found, "item {s}", .{id});
+            const old = ops.items[i];
+            var words: std.ArrayList([]const u8) = .empty;
+            try words.append(a, id);
+            const new = c.words[1..];
+            if (old.kind == .path) {
+                if (new.len > 0) {
+                    try words.appendSlice(a, new);
+                } else for (old.path) |seg| try words.append(a, try std.fmt.allocPrint(a, "{f}", .{seg}));
+            } else {
+                // New numbers replace the first ones (`set dot 150 140`
+                // moves a circle and keeps its radius).
+                const k = old.kind.arity();
+                try words.appendSlice(a, new[0..@min(new.len, k)]);
+                if (new.len < k) for (old.geom[new.len..]) |g| try words.append(a, try std.fmt.allocPrint(a, "{d}", .{g}));
+                if (new.len > k) try words.appendSlice(a, new[k..]) else if (old.text) |t| try words.append(a, t);
+            }
+            var attrs: std.ArrayList(Attr) = .empty;
+            for (old.attrs) |x| if (c.attr(x.key) == null) try attrs.append(a, x);
+            try attrs.appendSlice(a, c.attrs);
+            ops.items[i] = L.CanvasOp.fromParts(a, @tagName(old.kind), words.items, attrs.items, tx.d) catch |e| return tx.dataErr(e);
+        } else if (eq(u8, v, "add")) {
+            if (c.words.len < 2) return tx.fail(.bad_syntax, "add KIND ID GEOMETRY... [ATTR=VALUE...]", .{});
+            if (find(ops.items, c.words[1]) != null) return tx.fail(.in_use, "item {s}", .{c.words[1]});
+            try ops.append(a, L.CanvasOp.fromParts(a, c.words[0], c.words[1..], c.attrs, tx.d) catch |e| return tx.dataErr(e));
+        } else if (eq(u8, v, "del")) {
+            if (c.words.len == 0) return tx.fail(.bad_syntax, "del ID...", .{});
+            for (c.words) |id| {
+                const i = find(ops.items, id) orelse return tx.fail(.not_found, "item {s}", .{id});
+                _ = ops.orderedRemove(i);
+            }
+        } else {
+            if (c.words.len != 1) return tx.fail(.bad_syntax, "{s} ID", .{v});
+            const i = find(ops.items, c.words[0]) orelse return tx.fail(.not_found, "item {s}", .{c.words[0]});
+            const o = ops.orderedRemove(i);
+            if (eq(u8, v, "raise")) try ops.append(a, o) else try ops.insert(a, 0, o);
+        }
+        var aw: Writer.Allocating = .init(a);
+        proto.lines.printLines(&aw.writer, ops.items) catch return error.OutOfMemory;
+        tx.quiet += 1;
+        defer tx.quiet -= 1;
+        try tx.writeNodeFile(h, "ops", aw.written());
+        return true;
+    }
+
+    fn dataErr(tx: *Tx, e: Error) Error {
+        if (e == error.BadSyntax) return tx.fail(.bad_value, "{s}", .{tx.d.detail});
+        return e;
+    }
+
     fn typeVerb(tx: *Tx, h: Handle, verb: []const u8, c: Ctl) Error!void {
         const n = tx.node(h);
         if (n.ty.prop("disabled") != null and n.isOn("disabled")) return tx.fail(.disabled, "{s}", .{try tx.relPath(h)});
@@ -2091,13 +2180,28 @@ const Tx = struct {
         try tx.cmd(.{ .tag = .overlay, .win = try tx.a.dupe(u8, w.nameStr()), .node = h, .name = try tx.a.dupe(u8, n.nameStr()), .flag = @intFromBool(open) });
     }
 
+    /// A word `'key=value'` that was quoted: still a prop.
+    fn quotedAttr(w: []const u8) ?Attr {
+        const i = std.mem.indexOfScalar(u8, w, '=') orelse return null;
+        const k = w[0..i];
+        if (k.len == 0 or !std.ascii.isAlphabetic(k[0]) or k[k.len - 1] == '-') return null;
+        for (k) |ch| if (!(std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_')) return null;
+        return .{ .key = k, .value = w[i + 1 ..] };
+    }
+
     /// `set PATH [word ...] [prop=value ...] [: style ...]`: each a file
     /// write. On a window's root, window props go to the window.
     fn setProps(tx: *Tx, h: Handle, bare: []const []const u8, attrs: []const Attr, style: ?[]const []const u8) Error!void {
         const n = tx.node(h);
         const is_root = n.parent == 0;
-        for (bare) |w| try tx.setWord(h, w);
-        for (attrs) |at| {
+        // tokenize drops quotes, so a quoted `'text=a b'` is still a prop
+        // (conformance 04-quoting).
+        var all: std.ArrayList(Attr) = .empty;
+        for (bare) |w| {
+            if (quotedAttr(w)) |at| try all.append(tx.a, at) else try tx.setWord(h, w);
+        }
+        try all.appendSlice(tx.a, attrs);
+        for (all.items) |at| {
             if (is_root) {
                 if (std.mem.eql(u8, at.key, "focus")) {
                     try tx.setFocus(h, at.value);
@@ -2241,6 +2345,12 @@ const Tx = struct {
             },
             else => {},
         }
+        // A text `value` on a type whose children are of set types (an
+        // accordion's open items) names children (13-layout).
+        if (prop.form == .text and value.len > 0 and std.mem.eql(u8, prop.name, "value") and n.ty.child == .types and n.children.items.len > 0) {
+            var ws = std.mem.tokenizeAny(u8, value, " \t\n,");
+            while (ws.next()) |w| if (tx.st.child(h, w) == null) return tx.fail(.not_found, "{s}", .{w});
+        }
         if (value.len > 0 and (std.mem.eql(u8, prop.name, "expanded") or std.mem.eql(u8, prop.name, "value"))) if (n.ty.format("items")) |f| if (std.mem.eql(u8, f, "tree-items")) {
             const items = proto.lines.parseLines(proto.lines.TreeItem, tx.a, n.value("items"), null) catch return;
             if (items.len == 0) return;
@@ -2270,7 +2380,26 @@ const Tx = struct {
         };
     }
 
+    /// A data file that doesn't parse is `bad value` (conformance
+    /// 12-data): it is a value, not a command line.
     fn checkFormat(tx: *Tx, f: []const u8, text: []const u8) Error!void {
+        tx.checkFormatInner(f, text) catch |e| {
+            if (e == error.BadSyntax) return tx.fail(.bad_value, "{s}", .{if (tx.d.detail.len > 0) tx.d.detail else f});
+            return e;
+        };
+        if (std.mem.eql(u8, f, "tree-items")) {
+            // Every parent is an item.
+            const items = try proto.lines.parseLines(proto.lines.TreeItem, tx.a, text, null);
+            for (items) |it| if (it.parent) |par| {
+                const found = for (items) |o| {
+                    if (std.mem.eql(u8, o.id, par)) break true;
+                } else false;
+                if (!found) return tx.fail(.not_found, "parent {s}", .{par});
+            };
+        }
+    }
+
+    fn checkFormatInner(tx: *Tx, f: []const u8, text: []const u8) Error!void {
         const L = proto.lines;
         const eq = std.mem.eql;
         const a = tx.a;

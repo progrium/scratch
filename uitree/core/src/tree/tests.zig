@@ -458,10 +458,11 @@ test "slots and overlays" {
     // text takes no children
     try f.ok(R ++ "/ctl", "new text t");
     try tt.expectEqual(Code.unknown_type, try f.code(R ++ "/t/ctl", "new div x"));
-    // input has only named slots
+    // input has only named slots; another child is a type it doesn't take
+    // (conformance 27-descriptors: `child none`)
     try f.ok(R ++ "/ctl", "new input in");
     try f.ok(R ++ "/in/ctl", "new div prefix");
-    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/in/ctl", "new div other"));
+    try tt.expectEqual(Code.unknown_type, try f.code(R ++ "/in/ctl", "new div other"));
     // form children are fields
     try f.ok(R ++ "/ctl", "new form fm");
     try f.ok(R ++ "/fm/ctl", "new field name label=Name");
@@ -1400,4 +1401,47 @@ test "snapshots: readers keep the version they acquired" {
     th.join();
     new.release();
     try tt.expectEqualStrings("two\n", buf[0..n]);
+}
+
+test "a write to a file whose node went away is gone" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new text a");
+    const a = f.node(R ++ "/a").?;
+    try f.ok(R ++ "/ctl", "delete a\nnew text a");
+    try tt.expectError(error.Gone, f.t.apply(.{ .write = .{ .session = 1, .path = R ++ "/a/text", .data = "x", .node = a } }));
+    try f.t.apply(.{ .write = .{ .session = 1, .path = R ++ "/a/text", .data = "x", .node = f.node(R ++ "/a").? } });
+}
+
+test "conformance fixes: quoting, secret, data, accordion, canvas" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    // 04: a quoted prop=value is still a prop
+    try f.ok(R ++ "/ctl", "new text b 'text=also grouped'");
+    try f.expectRead(R ++ "/b/text", "also grouped\n");
+    // 09: a secret input's value stays out of its document
+    try f.ok(R ++ "/ctl", "new input pass secret");
+    try f.ok(R ++ "/pass/value", "hunter2\n");
+    try f.expectRead(R ++ "/pass/tree", "input pass  secret\n");
+    // 12: a malformed data file is bad value; a missing tree parent not found
+    try f.ok(R ++ "/ctl", "new list l\nnew tree tr");
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/l/items", "\tNameless\n"));
+    try tt.expectEqual(Code.not_found, try f.code(R ++ "/tr/items", "a\tnope\tA\n"));
+    // 13: an accordion's value names its items
+    try f.ok(R ++ "/ctl", "new accordion acc\nnew accordion-item acc/a title=One\nnew accordion-item acc/b title=Two");
+    try f.ok(R ++ "/acc/value", "a b");
+    try tt.expectEqual(Code.not_found, try f.code(R ++ "/acc/value", "a zz"));
+    // 22: canvas edit verbs by item id
+    try f.ok(R ++ "/ctl", "new canvas c");
+    try f.ok(R ++ "/c/ops", "rect bg 0 0 400 300 fill=background\nrect card 20 20 160 90\ncircle dot 140.5 150 4 fill=primary\n");
+    try f.ok(R ++ "/c/ctl", "set dot 150 140");
+    try f.ok(R ++ "/c/ctl", "add circle dot2 10 10 3 fill=accent");
+    try f.ok(R ++ "/c/ctl", "del card");
+    try f.ok(R ++ "/c/ctl", "raise bg");
+    try f.ok(R ++ "/c/ctl", "lower dot2");
+    try f.expectRead(R ++ "/c/ops", "circle dot2 10 10 3 fill=accent\ncircle dot 150 140 4 fill=primary\nrect bg 0 0 400 300 fill=background\n");
+    try tt.expectEqual(Code.not_found, try f.code(R ++ "/c/ctl", "set nope 1 1"));
+    try tt.expectEqual(Code.in_use, try f.code(R ++ "/c/ctl", "add rect dot 0 0 1 1"));
 }

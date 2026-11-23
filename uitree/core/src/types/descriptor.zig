@@ -159,6 +159,14 @@ pub fn parse(arena: std.mem.Allocator, text: []const u8, diag: ?*Diag) ParseErro
     }
     if (!have_type) return fail(diag, 0, "no type line");
 
+    // A `file` line with no prop of its name (icon-view's `items`, web's
+    // `message`) is still a file under the node: a data prop, or bytes.
+    for (files.items) |f| {
+        const have = for (props.items) |q| {
+            if (std.mem.eql(u8, q.name, f.name)) break true;
+        } else false;
+        if (!have) try props.append(arena, .{ .name = f.name, .form = if (std.mem.eql(u8, f.format, "bytes")) .bytes else .data, .file = true });
+    }
     t.props = try props.toOwnedSlice(arena);
     t.words = try words.toOwnedSlice(arena);
     t.verbs = try verbs.toOwnedSlice(arena);

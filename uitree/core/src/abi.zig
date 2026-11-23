@@ -611,10 +611,17 @@ export fn uit_window_of(c: *Core, h: UitNode) UitStr {
 export fn uit_prop(c: *Core, h: UitNode, file: UitStr, out: ?*UitStr) c_int {
     const n = c.node(h) orelse return UIT_EINVAL;
     const name = file.slice();
-    const v: ?[]const u8 = n.stored(name) orelse winProp(c, n, name);
+    const v: ?[]const u8 = n.stored(name) orelse wordProp(n, name) orelse winProp(c, n, name);
     const val = v orelse return 0;
     if (out) |o| o.* = UitStr.of(val);
     return 1;
+}
+
+/// `variant` and `size`: the node's bare word of that kind (`primary`).
+fn wordProp(n: *const treem.state.Node, name: []const u8) ?[]const u8 {
+    const kind: types.WordKind = if (std.mem.eql(u8, name, "variant")) .variant else if (std.mem.eql(u8, name, "size")) .size else return null;
+    for (n.words.items) |w| if (w.kind == kind) return w.name;
+    return null;
 }
 
 /// A window's props read through its root (`title`, `size`, `state`,
@@ -681,10 +688,22 @@ fn styleArg(c: *Core, kind: types.style.ArgKind, x: []const u8) UitStyleArg {
     return .{ .kind = UIT_ARG_TEXT, .text = UitStr.of(x) };
 }
 
-fn buildStyle(c: *Core, text: []const u8) ![]const UitStyleWord {
+/// The node's variant and size words (`primary`, `sm`) first, as
+/// base-state words with no args, then its `style` file's words.
+fn buildStyle(c: *Core, n: *const treem.state.Node) ![]const UitStyleWord {
     const a = c.reads.allocator();
-    const words = try types.style.parse(a, text);
-    const out = try a.alloc(UitStyleWord, words.len);
+    const words = try types.style.parse(a, n.value("style"));
+    var nw: usize = 0;
+    for (n.words.items) |w| if (w.kind != .flag) {
+        nw += 1;
+    };
+    const all = try a.alloc(UitStyleWord, nw + words.len);
+    var i: usize = 0;
+    for (n.words.items) |w| if (w.kind != .flag) {
+        all[i] = .{ .name = UitStr.of(w.name) };
+        i += 1;
+    };
+    const out = all[nw..];
     for (words, out) |w, *o| {
         const kind: types.style.ArgKind = if (c.cat.styleWord(w.name)) |e| e.arg else .length;
         const args = try a.alloc(UitStyleArg, w.args.len);
@@ -704,13 +723,13 @@ fn buildStyle(c: *Core, text: []const u8) ![]const UitStyleWord {
         }
         o.* = .{ .name = UitStr.of(w.name), .state = state, .group = UitStr.of(group), .args = ptrOf(UitStyleArg, args), .n_args = args.len };
     }
-    return out;
+    return all;
 }
 
 export fn uit_style(c: *Core, h: UitNode, out: ?*?[*]const UitStyleWord, n_out: ?*usize) c_int {
     const n = c.node(h) orelse return UIT_EINVAL;
     const ws = c.styles.get(h) orelse blk: {
-        const built = buildStyle(c, n.value("style")) catch |e| return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_EBADVALUE;
+        const built = buildStyle(c, n) catch |e| return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_EBADVALUE;
         c.styles.put(c.gpa, h, built) catch return UIT_ENOMEM;
         break :blk built;
     };
@@ -1004,6 +1023,16 @@ test "a pump applies queued ops and reports what changed" {
     try std.testing.expectEqual(UIT_OK, uit_style(core, kids.?[0], &ws, &nw));
     try std.testing.expectEqual(@as(usize, 1), nw);
     try std.testing.expectEqualStrings("text-3xl", ws.?[0].name.slice());
+    // Variant and size words come first, and read as props.
+    try write(core, "win/main/ctl", "new button go label=Greet primary : w-full");
+    _ = uit_children(core, uit_window_root(core, UitStr.lit("main")), &kids);
+    try std.testing.expectEqual(UIT_OK, uit_style(core, kids.?[1], &ws, &nw));
+    try std.testing.expectEqual(@as(usize, 2), nw);
+    try std.testing.expectEqualStrings("primary", ws.?[0].name.slice());
+    try std.testing.expectEqual(@as(usize, 0), ws.?[0].n_args);
+    try std.testing.expectEqualStrings("w-full", ws.?[1].name.slice());
+    try std.testing.expectEqual(@as(c_int, 1), uit_prop(core, kids.?[1], UitStr.lit("variant"), &v));
+    try std.testing.expectEqualStrings("primary", v.slice());
 }
 
 test "reads stay on the pinned state while input changes the tree" {

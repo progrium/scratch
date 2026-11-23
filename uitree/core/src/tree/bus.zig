@@ -29,7 +29,7 @@ const Handle = state.Handle;
 pub const EventKind = types.EventKind;
 
 /// Queued action events per subscription before `lost` (core.md § Limits).
-pub const action_cap: usize = 4096;
+pub const action_cap: usize = 8192;
 /// `trace` keeps at least this much recent history for a new reader.
 pub const trace_cap_bytes: usize = 1 << 20;
 pub const trace_min_lines: usize = 1000;
