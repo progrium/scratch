@@ -1445,3 +1445,16 @@ test "conformance fixes: quoting, secret, data, accordion, canvas" {
     try tt.expectEqual(Code.not_found, try f.code(R ++ "/c/ctl", "set nope 1 1"));
     try tt.expectEqual(Code.in_use, try f.code(R ++ "/c/ctl", "add rect dot 0 0 1 1"));
 }
+
+test "W6: node menus name actions; ctl help lists a type's verbs" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new context-menu over/cm");
+    try f.ok(R ++ "/over/cm/menu", "item rename label=Rename\n");
+    try f.ok("ctl", "set rename enabled=off");
+    try f.ok(R ++ "/ctl", "new popover over/pop");
+    const help = try f.read(R ++ "/over/pop/ctl");
+    try tt.expect(std.mem.indexOf(u8, help, "open activate\n") != null);
+    try tt.expect(std.mem.indexOf(u8, help, "close activate\n") != null);
+}

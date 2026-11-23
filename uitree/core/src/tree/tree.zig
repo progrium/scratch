@@ -237,6 +237,8 @@ pub const Tree = struct {
     cfg: Config,
     st: *State,
     bus: Bus,
+    /// In `mirror`: changes aren't reported in `changes().props`.
+    mirroring: bool = false,
     shared: Shared = .{},
     batches: std.ArrayList(Batch) = .empty,
     requests: std.ArrayList(Request) = .empty,
@@ -562,6 +564,8 @@ pub const Tree = struct {
     }
 
     fn addProp(t: *Tree, h: Handle, file: []const u8) Error!void {
+        // The renderer's own mirrors aren't reported back to it.
+        if (t.mirroring) return;
         for (t.log.props.items) |p| if (p.node == h and std.mem.eql(u8, p.file, file)) return;
         try t.log.props.append(t.log.arena.allocator(), .{ .node = h, .file = file });
     }
@@ -878,6 +882,8 @@ pub const Tree = struct {
     /// and `title`.
     pub fn mirror(t: *Tree, h: Handle, file: []const u8, value: []const u8) Error!void {
         const n = t.st.node(h) orelse return t.setErr(.not_found, "node");
+        t.mirroring = true;
+        defer t.mirroring = false;
         if (n.parent == 0 and pathm.windowFile(file) != null) {
             return t.mutate(struct {
                 fn f(tx: *Tx, x: struct { Handle, []const u8, []const u8 }) Error!void {
@@ -1662,7 +1668,14 @@ const Tx = struct {
             for (ls) |l| if (l.kind == .item and std.mem.eql(u8, l.id, id)) return true;
         }
         var it = tx.st.nodes.valueIterator();
-        while (it.next()) |n| if (n.*.stored("tag")) |tg| if (std.mem.eql(u8, tg, id)) return true;
+        while (it.next()) |n| {
+            if (n.*.stored("tag")) |tg| if (std.mem.eql(u8, tg, id)) return true;
+            // A node's own menu (context-menu, dropdown-button).
+            if (n.*.ty.format("menu")) |f| if (std.mem.eql(u8, f, "menu")) {
+                const ls = proto.lines.parseMenu(tx.a, n.*.value("menu"), null) catch continue;
+                for (ls) |l| if (l.kind == .item and std.mem.eql(u8, l.id, id)) return true;
+            };
+        }
         return false;
     }
 

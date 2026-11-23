@@ -1048,7 +1048,8 @@ test "reads stay on the pinned state while input changes the tree" {
     try std.testing.expectEqual(@as(c_int, 0), uit_prop(core, in, UitStr.lit("value"), &v));
     var ch: UitChanges = .{};
     try std.testing.expectEqual(UIT_OK, uit_pump(core, &ch));
-    try std.testing.expectEqual(@as(usize, 1), ch.n_props);
+    // The renderer's own mirror isn't reported back to it.
+    try std.testing.expectEqual(@as(usize, 0), ch.n_props);
     try std.testing.expectEqual(@as(c_int, 1), uit_prop(core, in, UitStr.lit("value"), &v));
     try std.testing.expectEqualStrings("typed", v.slice());
     // order leaves d out: not drawn
