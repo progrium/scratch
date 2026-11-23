@@ -38,14 +38,29 @@ pub(crate) fn set_menus(inner: &Rc<Inner>, cx: &mut App) {
         let core = inner.core.borrow();
         core.menu_bar().into_iter().map(|n| (n.clone(), core.menu(&n))).collect()
     };
-    let menus: Vec<Menu> = menus
-        .into_iter()
-        .map(|(name, items)| {
-            let mut i = 0;
-            Menu::new(name).items(build_items(inner, &items, &mut i, 0))
-        })
-        .collect();
-    cx.set_menus(menus);
+    let build = |inner: &Inner| -> Vec<Menu> {
+        menus
+            .iter()
+            .map(|(name, items)| {
+                let mut i = 0;
+                Menu::new(name.clone()).items(build_items(inner, items, &mut i, 0))
+            })
+            .collect()
+    };
+    // In the browser there's no platform menu bar to set: GPUI Kit's
+    // AppMenuBar draws the same menus at the top of the window
+    // (window.rs), and its items dispatch the same ClientAction.
+    #[cfg(target_family = "wasm")]
+    {
+        let owned = build(inner).into_iter().map(|m| m.owned()).collect();
+        gpui_component::GlobalState::global_mut(cx).set_app_menus(owned);
+        let bar = inner.menu_bar.borrow_mut().get_or_insert_with(|| gpui_component::menu::AppMenuBar::new(cx)).clone();
+        bar.update(cx, |b, cx| b.reload(cx));
+        for w in cx.windows() {
+            let _ = w.update(cx, |_, window, _| window.refresh());
+        }
+    }
+    cx.set_menus(build(inner));
 }
 
 /// Items at `depth` from `items[*i..]`, consuming deeper ones into submenus.

@@ -18,7 +18,7 @@
 // `platform()` makes the three and binds them to an instance;
 // `instantiate` does both for a module the page instantiates itself.
 
-import { parseRoot, wasiImports } from './h9/wasi-mem.js';
+import { parseRoot, putNode, wasiImports } from './h9/wasi-mem.js';
 
 export const haveJSPI = typeof WebAssembly.Suspending === 'function' && typeof WebAssembly.promising === 'function';
 
@@ -221,12 +221,21 @@ export function platform({ log = console.error, onWake = () => {}, onOutput = nu
   };
 
   const write = (fd, data) => (config.onOutput ? config.onOutput(fd, data) : config.log(dec.decode(data)));
-  const wasi = wasiImports({ memory, root: parseRoot(enc.encode('h9root1\n')), args, env, write });
+  const root = parseRoot(enc.encode('h9root1\n'));
+  const wasi = wasiImports({ memory, root, args, env, write });
   wasi.proc_exit = (code) => { throw new Error(`exit ${code}`); };
 
   return {
     config,
     memory,
+    /**
+     * Puts a file in the core's own WASI file system (not the app's
+     * machine): what the core opens by path, such as a drop's `file=`
+     * host paths (uit_drag). `path` is absolute; directories are made.
+     */
+    putFile(path, bytes, mode = 0o644) {
+      putNode(root, path, 0o100000 | mode, typeof bytes === 'string' ? enc.encode(bytes) : bytes);
+    },
     /**
      * A `$ui` connection of the page's own, beside the app's (tests,
      * probe.js): the core accepts it as one of the machine's, so it is
@@ -422,7 +431,7 @@ export class Core {
 /**
  * Runs an app in h9's browser host, in a Worker of its own, with `$ui` at
  * /mnt/ui served by `core` (uit_run_machine). `files` are put in the root
- * ({ path: text }), `argv` is h9's.
+ * ({ path: text or bytes }), `argv` is h9's.
  */
 export function runApp(core, { argv, env = [], ...app }) {
   core.m.platform.config.app = app;
