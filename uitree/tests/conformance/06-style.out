@@ -1,0 +1,36 @@
+ok
+# style/words has every portable word (missing ones are printed)
+checked
+# each word form
+ok
+ok
+ok
+ok
+ok
+ok
+ok
+# a write replaces the words
+ok
+h-flex gap=8 p=12 rounded-lg bg=muted hover:bg=accent
+|
+# an unknown word, named in the detail
+unknown style word
+names flexx
+# one bad word and nothing changes
+unknown style word
+h-flex gap=8 p=12 rounded-lg bg=muted hover:bg=accent
+|
+# bad values
+bad value
+bad value
+bad value
+bad value
+unknown style word
+h-flex gap=8 p=12 rounded-lg bg=muted hover:bg=accent
+|
+# : on new is checked the same way
+unknown style word
+no
+# an empty write clears the style
+|
+exit=0

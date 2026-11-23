@@ -1,0 +1,72 @@
+#!/bin/rc
+# 07-theme: core.md § Style (Theme). tokens lines, pref and mode, the theme
+# event, named themes and theme load.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+t=$k/theme
+
+echo '# the theme directory'
+exists $t/tokens $t/name $t/pref $t/mode
+echo '# tokens has every portable token (missing ones are printed)'
+awk 'NR == FNR { have[$1] = 1; next }
+	{ for(i = 1; i <= NF; i++) if(!($i in have)) print "missing", $i }' $t/tokens - <<'END'
+background foreground muted muted-foreground primary
+primary-foreground accent accent-foreground border ring danger success
+warning radius
+END
+echo checked
+echo '# writing one line changes one token'
+w $t/tokens 'primary #0b5cff'
+grep '^primary ' $t/tokens
+w $t/tokens 'radius 6'
+grep '^radius ' $t/tokens
+echo '# several lines in one write'
+w $t/tokens 'primary #112233
+accent #445566'
+grep '^(primary|accent) ' $t/tokens | sort
+echo '# an unknown token and a bad color: refused, reported, and nothing changes'
+{
+	echo 'no-such-token #ffffff' >$t/tokens >[2]/dev/null
+	echo 'primary blue' >$t/tokens >[2]/dev/null
+	echo 'accent #000000
+primary blue' >$t/tokens >[2]/dev/null
+	evs
+} <[3]$k/events
+grep '^(primary|accent) ' $t/tokens | sort
+
+echo '# the preference starts at system; headless reports a light system'
+val $t/pref $t/mode
+echo '# pref and mode, and the theme event that follows the mode in effect'
+{
+	w $t/pref dark
+	val $t/mode
+	evs
+} <[3]$k/events
+{
+	w $t/mode light
+	val $t/pref
+	w $t/mode system
+	val $t/pref $t/mode
+	w $t/mode sepia
+	w $t/pref sepia
+	evs
+} <[3]$k/events
+echo '# the system changes while pref is system'
+{
+	inj appearance 'mode=dark'
+	val $t/mode
+	evs
+} <[3]$k/events
+echo '# and while pref is light, nothing changes'
+w $t/pref light
+{
+	inj appearance 'mode=light'
+	inj appearance 'mode=dark'
+	val $t/mode
+	evs
+} <[3]$k/events
+
+echo '# a theme name the host does not have'
+w $t/name 'No Such Theme'
+echo '# theme load with a missing file'
+w $k/ctl theme load /nonexistent/theme.json

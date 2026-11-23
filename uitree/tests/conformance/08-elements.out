@@ -1,0 +1,74 @@
+# every core profile type, and each listed in types/
+ok
+ok
+ok
+ok
+ok
+ok
+ok
+ok
+div
+|
+text
+|
+styled-text
+|
+img
+|
+svg
+|
+icon
+|
+scroll
+|
+spacer
+|
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+# a type not in types/, and names are case-sensitive
+unknown type
+names widget
+unknown type
+# a prop another type has
+not found
+no
+# text is a file of its own; a write drops one trailing newline and a read adds it
+yes
+Hello
+|
+Bye
+|
+|
+# a multi-line value keeps its inner newlines
+one
+two
+|
+# on: the element events a node sends
+ok
+ok
+click
+|
+bad value
+click
+|
+# on= at creation
+ok
+# core.md's clickable card
+ok
+ok
+ok
+div list
+  div card1  tag=open:42  on=click  : v-flex gap=4 p=12 rounded-md border-1 border-color=border hover:bg=accent
+    text title  text='Quarterly report'  : text-sm font-semibold
+# a click carries the tag as its key, and an untagged node takes its nearest tagged ancestor's
+resync - -
+click open:42 list/card1 win=main
+click open:42 list/card1/title win=main
+click - list win=main
+exit=0

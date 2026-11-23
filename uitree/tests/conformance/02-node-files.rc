@@ -1,0 +1,66 @@
+#!/bin/rc
+# 02-node-files: core.md § Node files and § Paths. The files every node
+# has, what reading and writing each does, and @name.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+
+w $r/ctl new div card 'tag=open:42' : v-flex 'gap=4'
+c=$r/card
+echo '# every node has these files'
+exists $c/type $c/style $c/order $c/tag $c/ctl $c/events $c/tree $c/bounds $c/on
+echo '# type, style, tag'
+val $c/type $c/style $c/tag
+echo '# order lists children; new appends'
+w $c/ctl new text a 'text=A'
+w $c/ctl new text b 'text=B'
+w $c/ctl new text c 'text=C'
+val $c/order
+echo '# order reorders; a child not listed stays in the tree, undrawn'
+w $c/order c a
+val $c/order
+exists $c/a $c/b $c/c
+echo '# order naming a child that does not exist'
+w $c/order a b nope
+val $c/order
+echo '# tag'
+w $c/tag open:43
+val $c/tag
+echo '# on'
+w $c/on click
+val $c/on
+echo '# ctl reads as help: one verb [class] line per verb, the core four included'
+grep -c '^(set|new|delete|tree)( |$)' $c/ctl
+echo '# bounds are x y w h from the last layout'
+inj bounds 'win=main' 'node=card' 'value=''10 20 300 40'''
+val $c/bounds
+echo '# type is writable until the next frame'
+mkdir $c/late
+w $c/late/type text
+val $c/late/type
+echo '# and fixed after it'
+inj frame 'win=main'
+w $c/late/type div
+val $c/late/type
+echo '# set PATH writes props; set never creates'
+w $r/ctl set card/a 'text=AA'
+val $c/a/text
+w $r/ctl set card/zz 'text=no'
+exists $c/zz
+echo '# a path on the app ctl starts with the window'
+w $k/ctl set win/main/card/b 'text=BB'
+val $c/b/text
+echo '# @name is the unique descendant with that name'
+wq $r/ctl 'new div x
+new text x/total text=1
+new div y
+new text y/sub text=2'
+w $r/ctl set @sub 'text=3'
+val $r/y/sub/text
+w $k/ctl set win/main/@sub 'text=4'
+val $r/y/sub/text
+echo '# two nodes named total: @total is ambiguous, never picked'
+wq $r/ctl new text y/total 'text=5'
+wn $r/ctl total set @total 'text=6'
+val $r/x/total/text $r/y/total/text

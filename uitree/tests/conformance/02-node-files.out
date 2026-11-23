@@ -1,0 +1,81 @@
+ok
+# every node has these files
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+# type, style, tag
+div
+|
+v-flex gap=4
+|
+open:42
+|
+# order lists children; new appends
+ok
+ok
+ok
+a b c
+|
+# order reorders; a child not listed stays in the tree, undrawn
+ok
+c a
+|
+yes
+yes
+yes
+# order naming a child that does not exist
+not found
+c a
+|
+# tag
+ok
+open:43
+|
+# on
+ok
+click
+|
+# ctl reads as help: one verb [class] line per verb, the core four included
+4
+# bounds are x y w h from the last layout
+10 20 300 40
+|
+# type is writable until the next frame
+ok
+text
+|
+# and fixed after it
+type is fixed
+text
+|
+# set PATH writes props; set never creates
+ok
+AA
+|
+not found
+no
+# a path on the app ctl starts with the window
+ok
+BB
+|
+# @name is the unique descendant with that name
+ok
+3
+|
+ok
+4
+|
+# two nodes named total: @total is ambiguous, never picked
+in use
+names total
+1
+|
+5
+|
+exit=0

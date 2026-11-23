@@ -1,0 +1,56 @@
+#!/bin/rc
+# 06-style: core.md § Style. style/words lists the portable words, every
+# word form, unknown words and bad values, and writes that never half-apply.
+# Only portable words are used, so any host passes this.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+w $r/ctl new div card
+s=$r/card/style
+
+echo '# style/words has every portable word (missing ones are printed)'
+awk 'NR == FNR { have[$1] = 1; next }
+	{ for(i = 1; i <= NF; i++) { n = $i; sub(/=$/, "", n); if(!(n in have)) print "missing", n } }' $k/style/words - <<'END'
+flex flex-row flex-col v-flex h-flex flex-1 flex-wrap flex-none
+items-start items-center items-end items-stretch items-baseline
+justify-start justify-center justify-end justify-between
+gap= p= px= py= pt= pb= pl= pr= m= mx= my=
+w= h= min-w= min-h= max-w= max-h= size-full w-full h-full
+absolute relative top= left= right= bottom=
+overflow-hidden overflow-y-scroll overflow-x-scroll
+bg= text-color= border-1 border-color= rounded-sm rounded-md rounded-lg
+text-xs text-sm text-base text-lg text-xl font-semibold font-bold
+text-left text-center text-right truncate
+END
+echo checked
+
+echo '# each word form'
+w $s flex-col items-center size-full rounded-md overflow-y-scroll
+w $s 'w=240' 'gap=12' 'p=16'
+w $s 'w=50%' 'px=1.5rem' 'mx=-4'
+w $s 'bg=primary' 'text-color=muted-foreground' 'border-color=border'
+w $s 'bg=#1e1e2e' 'border-color=#1e1e2e80'
+w $s 'hover:bg=accent' 'active:bg=muted' 'focus:border-color=ring' 'disabled:text-color=muted-foreground'
+w $s absolute 'left=40' 'top=12'
+echo '# a write replaces the words'
+w $s 'h-flex gap=8 p=12 rounded-lg bg=muted hover:bg=accent'
+val $s
+echo '# an unknown word, named in the detail'
+wn $s flexx flexx
+echo '# one bad word and nothing changes'
+w $s 'v-flex flexx p=4'
+val $s
+echo '# bad values'
+w $s 'w=wide'
+w $s 'bg=#12'
+w $s 'bg=no-such-token'
+w $s 'flex-col=3'
+w $s 'sideways:bg=accent'
+val $s
+echo '# : on new is checked the same way'
+w $r/ctl new div bad : flexx
+exists $r/bad
+echo '# an empty write clears the style'
+echo -n >$s
+val $s

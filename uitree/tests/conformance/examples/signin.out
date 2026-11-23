@@ -1,0 +1,18 @@
+-- window main Sign in
+div root  : v-flex size-full p=24 gap=16 bg=background
+  text title  text='Sign in'  : text-xl font-semibold
+  form f  tag=login
+    field user  required  label=Email
+      input in  placeholder=you@example.com
+    field pass  required  label=Password
+      input in  secret
+    field go
+      button submit  primary  label='Sign in'  : w-full
+  link help  label='Forgot password?'  href=https://example.com/reset
+-- overlay main/hi
+dialog hi  keyboard  overlay-closable  title=Welcome  width=320
+  div footer  : h-flex justify-end
+    button ok  primary  label=Continue  tag=ok
+-- menu/bar
+-- keys
+-- stderr

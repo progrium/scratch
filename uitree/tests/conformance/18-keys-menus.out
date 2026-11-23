@@ -1,0 +1,48 @@
+# core.md's keys
+cmd-s            save
+cmd-shift-p      palette
+escape           dismiss   context=editor
+# a bad keystroke: refused whole, reported, and the old keys stay
+resync - -
+error - keys code=bad-value
+3
+# a node's context file
+editor
+|
+ok
+viewer
+|
+# a key binding comes as action ID PATH via=key, PATH the focused node
+resync - -
+action save src via=key win=main
+action dismiss src via=key win=main
+# a context binding applies only while focus is inside that context
+resync - -
+action palette other via=key win=main
+# menu/bar and a menu file in core.md's grammar
+yes
+item new    label=New      key=cmd-n
+item open   label=Open…    key=cmd-o
+sep
+sub recent  label='Open Recent'
+  item a    label=a.txt
+sub share   label=Share    menu=share
+item quit   label=Quit     key=cmd-q   enabled=off
+file
+|
+# choosing an item sends action ID - via=menu
+resync - -
+action new - via=menu
+action a - via=menu
+# an unknown role is refused; an item with an ID and a role is fine
+resync - -
+error - menu/edit code=bad-value
+item - role=undo
+item quit role=quit
+# set ID enabled= check= on the app ctl
+ok
+ok
+ok
+bad value
+not found
+exit=0

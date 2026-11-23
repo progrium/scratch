@@ -1,0 +1,60 @@
+#!/bin/rc
+# 11-overlays: core.md § Overlays and components.md § Profiles (overlay).
+# over/ and its ctl, open and close, an alert dialog's confirm and cancel,
+# a dialog's footer slot, anchors, and a user close with no one asking.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile overlay
+mainwin
+wn=$k/win/main
+o=$wn/over
+
+echo '# overlays live in over/, nowhere else'
+w $wn/ctl new dialog d
+w $o/ctl new div d
+exists $wn/d $o/d
+echo '# made on the window ctl with an over/ path'
+w $wn/ctl 'new alert-dialog over/confirm-del title=''Delete 3 files?'' description=''This cannot be undone.'' confirm=Delete cancel=Keep variant=danger tag=del'
+cat $o/confirm-del/tree
+names $o
+echo '# confirm and cancel carry the tag'
+w $o/confirm-del/ctl open
+{
+	inj event confirm 'win=main' 'node=over/confirm-del'
+	evs 'win=main'
+} <[3]$wn/events
+w $o/confirm-del/ctl open
+{
+	inj event cancel 'win=main' 'node=over/confirm-del'
+	evs 'win=main'
+} <[3]$wn/events
+echo '# a bad variant'
+w $o/ctl 'new alert-dialog x variant=sideways'
+exists $o/x
+
+echo '# made on over/ctl, with a footer slot'
+w $o/ctl 'new dialog about title=About width=420 modal'
+w $o/about/ctl 'new text body text=''uitree 0.2''
+new div footer : h-flex justify-end'
+w $o/about/footer/ctl new button ok 'label=OK' 'tag=about-ok'
+cat $o/about/tree
+w $o/about/ctl open
+w $o/about/ctl close
+w $o/about/ctl wobble
+
+echo '# a popover bound to an anchor node'
+w $wn/ctl new button more 'label=More'
+w $o/ctl 'new popover pop anchor=more placement=bottom-start'
+w $o/ctl 'new popover pop2 anchor=nope'
+exists $o/pop $o/pop2
+echo '# a tooltip, a sheet and a context menu'
+w $o/ctl 'new tooltip tip anchor=more'
+w $o/ctl 'new sheet details title=Details'
+w $o/ctl 'new context-menu cm anchor=more'
+echo 'item copy label=Copy
+sep
+item paste label=Paste' >$o/cm/menu
+cat $o/cm/menu
+echo '# delete removes an overlay'
+w $wn/ctl delete over/tip
+exists $o/tip
