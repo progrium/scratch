@@ -1,0 +1,54 @@
+#!/bin/sh
+# run-examples: run each ported example client's tree-building phase on
+# uitree-headless and compare what it built with examples/NAME.out.
+#
+#	tests/conformance/run-examples [-u] [NAME...]
+#
+# With -u, writes examples/NAME.out instead: review that diff by hand,
+# since a golden recorded from a buggy host is worse than none. The host's
+# `uitree: ` error lines are appended to the output, so a write the host
+# refused shows up as a diff. UITREE_HEADLESS as for run.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here"
+update=0
+while getopts u o; do
+	case $o in
+	u) update=1 ;;
+	*) sed -n '5p' "$0" >&2; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+host=${UITREE_HEADLESS:-../../core/zig-out/bin/uitree-headless}
+
+# name | directory | command
+list() {
+	cat <<'END'
+hello|examples/rc|hello.rc
+counter|examples/rc|counter.rc
+confirm|examples/rc|confirm.rc Delete?
+signin|examples/rc|signin.rc
+csvview|examples/awk|awk -f csvview.awk planets.csv
+END
+}
+
+mkdir -p out/examples
+fail=0
+list | {
+while IFS='|' read -r name dir cmd; do
+	[ $# -gt 0 ] && ! echo " $* " | grep -q " $name " && continue
+	out=out/examples/$name.out
+	# shellcheck disable=SC2086
+	"$host" rc tree-phase.rc "$dir" $cmd >"$out" 2>"$out.stderr"
+	grep '^uitree: ' "$out.stderr" >>"$out"
+	golden=examples/$name.out
+	if [ $update -eq 1 ]; then
+		cp "$out" "$golden"; echo "updated $name"
+	elif diff -u "$golden" "$out" >"$out.diff"; then
+		echo "pass $name"
+	else
+		echo "FAIL $name"; sed 's/^/	/' "$out.diff"; fail=1
+	fi
+done
+exit $fail
+}

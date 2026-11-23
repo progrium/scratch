@@ -1,0 +1,31 @@
+#!/bin/rc
+# 28-feedback: components.md § Profiles (feedback). progress values,
+# badge, alert, empty, kbd, tag and spinner.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile feedback
+mainwin
+r=$k/win/main
+
+echo '# every feedback type'
+for(t in progress spinner badge alert empty kbd tag)
+	w $r/ctl new $t f-$t
+echo '# progress takes 0 to 100, or empty for indeterminate'
+w $r/f-progress/value 40
+val $r/f-progress/value
+w $r/f-progress/value 140
+w $r/f-progress/value half
+val $r/f-progress/value
+echo -n >$r/f-progress/value
+val $r/f-progress/value
+echo '# badge, kbd, alert'
+w $r/ctl set f-badge 'count=3'
+w $r/ctl set f-badge 'count=lots'
+w $r/ctl set f-kbd 'key=cmd-shift-p'
+w $r/ctl set f-alert 'title=Saved' 'text=''All changes saved.'''
+cat $r/f-alert/tree
+echo '# a tag''s close is an action'
+{
+	inj event close 'win=main' 'node=f-tag'
+	evs 'win=main'
+} <[3]$r/events

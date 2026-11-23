@@ -1,0 +1,40 @@
+#!/bin/rc
+# 20-batches: core.md § Batches. begin, commit and abort on the app ctl;
+# reads see writes inside a batch; abort discards; no batch; the 2 second
+# timeout. What a window draws meanwhile is a renderer test, not this one;
+# the trace line for the timeout is in 25-trace.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+
+echo '# commit or abort with no begin'
+w $k/ctl commit
+w $k/ctl abort
+echo '# reads see writes inside a batch'
+w $k/ctl begin
+w $r/ctl new text a 'text=inside'
+val $r/a/text
+w $k/ctl commit
+val $r/a/text
+echo '# abort throws the batch away'
+w $k/ctl begin
+w $r/ctl new text b 'text=''gone soon'''
+w $r/a/text changed
+exists $r/b
+val $r/a/text
+w $k/ctl abort
+exists $r/b
+val $r/a/text
+echo '# begin inside a batch'
+w $k/ctl begin
+w $k/ctl begin
+w $k/ctl abort
+echo '# a batch left open is committed after 2 seconds'
+w $k/ctl begin
+w $r/ctl new text c 'text=late'
+inj tick 1
+w $r/ctl new text d 'text=later'
+inj tick 1
+w $k/ctl commit
+exists $r/c $r/d

@@ -1,0 +1,43 @@
+#!/bin/rc
+# 13-layout: components.md § Profiles (layout). grid, resizable and its
+# panels, separator, group-box, accordion and collapsible: child rules,
+# values and their events.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile layout
+mainwin
+wn=$k/win/main
+r=$wn
+
+echo '# every layout type'
+w $r/ctl new grid g 'cols=2'
+w $r/ctl new separator sep
+w $r/ctl new group-box gb 'title=Options'
+w $r/gb/ctl new text t 'text=inside'
+echo '# a resizable takes only panel children'
+w $r/ctl new resizable rz
+w $r/rz/ctl 'new panel left size=240 min=120
+new panel right'
+w $r/rz/ctl new div notpanel
+names $r/rz | grep -c '^(left|right)$'
+echo '# accordion: value lists the open items'
+w $r/ctl new accordion acc 'multiple=on'
+w $r/acc/ctl 'new accordion-item a title=One
+new accordion-item b title=Two'
+w $r/acc/value a b
+val $r/acc/value
+w $r/acc/value a zz
+val $r/acc/value
+w $r/acc/ctl new div notitem
+echo '# a user toggle is a change'
+{
+	inj mirror 'win=main' 'node=acc' 'file=value' 'value=b'
+	inj event change 'win=main' 'node=acc' 'value=b'
+	evs 'win=main'
+} <[3]$wn/events
+val $r/acc/value
+echo '# collapsible'
+w $r/ctl new collapsible c
+w $r/c/ctl 'new text trigger text=More
+new text content text=Hidden'
+cat $r/c/tree

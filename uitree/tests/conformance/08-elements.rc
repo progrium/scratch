@@ -1,0 +1,58 @@
+#!/bin/rc
+# 08-elements: components.md § Profiles (core) and core.md § Making an
+# element send events. Each core type, the text file's newline rule, on,
+# tag routing and its inheritance.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+
+echo '# every core profile type, and each listed in types/'
+for(t in div text styled-text img svg icon scroll spacer)
+	w $r/ctl new $t e-$t
+for(t in div text styled-text img svg icon scroll spacer)
+	val $r/e-$t/type
+for(t in div text styled-text img svg icon scroll spacer)
+	exists $k/types/$t/spec
+echo '# a type not in types/, and names are case-sensitive'
+wn $r/ctl widget new widget x
+w $r/ctl new Div x
+echo '# a prop another type has'
+w $r/ctl new text t2 'src=@logo'
+exists $r/t2
+echo '# text is a file of its own; a write drops one trailing newline and a read adds it'
+exists $r/e-text/text
+echo Hello >$r/e-text/text
+val $r/e-text/text
+echo -n Bye >$r/e-text/text
+val $r/e-text/text
+echo -n >$r/e-text/text
+val $r/e-text/text
+echo '# a multi-line value keeps its inner newlines'
+echo 'one
+two' >$r/e-text/text
+val $r/e-text/text
+
+echo '# on: the element events a node sends'
+w $r/e-div/on click hover mouse-down mouse-up move scroll key focus blur drop drag
+w $r/e-div/on click
+val $r/e-div/on
+w $r/e-div/on clack
+val $r/e-div/on
+echo '# on= at creation'
+w $r/ctl new div e3 'on=click'
+
+echo '# core.md''s clickable card'
+n=$r/list
+w $r/ctl new div list
+w $n/ctl 'new div card1 tag=open:42 on=click : v-flex gap=4 p=12 rounded-md border-1 border-color=border hover:bg=accent'
+w $n/card1/ctl 'new text title : text-sm font-semibold'
+echo 'Quarterly report' >$n/card1/title/text
+cat $n/tree
+echo '# a click carries the tag as its key, and an untagged node takes its nearest tagged ancestor''s'
+{
+	inj event click 'win=main' 'node=list/card1'
+	inj event click 'win=main' 'node=list/card1/title'
+	inj event click 'win=main' 'node=list'
+	evs 'win=main'
+} <[3]$k/win/main/events

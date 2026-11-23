@@ -1,0 +1,69 @@
+#!/bin/rc
+# 12-data: components.md § Data file formats and § Profiles (data). list
+# items with groups and separators, table columns and rows, tree items,
+# description lists, refusal of a malformed file, and data events.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile data
+mainwin
+wn=$k/win/main
+r=$wn
+
+echo '# list items: groups, separators, icon= and disabled'
+w $r/ctl new list l
+echo '# Fruit
+apple|Apple|icon=apple
+pear|Pear|disabled
+-
+# Veg
+leek|Leek' | tr '|' '	' >$r/l/items
+cat $r/l/items
+echo '# a malformed items file is refused whole, reported, and the old one stays'
+{
+	echo '|Nameless' | tr '|' '	' >$r/l/items
+	evs 'win=main'
+} <[3]$wn/events
+cat $r/l/items | count
+
+echo '# a table'
+t=$r/files
+w $r/ctl new table files
+echo 'name|Name|280|sort
+size|Size|90|sort|align=right
+mod|Modified|160|sort|fixed' | tr '|' '	' >$t/columns
+echo '1|a.txt|12|Nov 21 10:00
+2|b.txt|300|Nov 21 11:00' | tr '|' '	' >$t/rows
+cat $t/columns $t/rows
+echo '# a column with a bad width or align'
+{
+	echo 'name|Name|wide' | tr '|' '	' >$t/columns
+	echo 'name|Name|280|align=middle' | tr '|' '	' >$t/columns
+	evs 'win=main'
+} <[3]$wn/events
+cat $t/columns | count
+echo '# select is a state event, sort an action'
+{
+	inj event select 'win=main' 'node=files' 'row=1'
+	inj event select 'win=main' 'node=files' 'row=2'
+	inj event sort 'win=main' 'node=files' 'col=size' 'dir=desc'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# tree items: id parent label, parent - for a root'
+w $r/ctl new tree tr
+echo 'src|-|src|icon=folder
+main|src|main.rs
+docs|-|docs' | tr '|' '	' >$r/tr/items
+cat $r/tr/items
+echo '# a parent that is not there'
+{
+	echo 'a|nope|A' | tr '|' '	' >$r/tr/items
+	evs 'win=main'
+} <[3]$wn/events
+cat $r/tr/items | count
+
+echo '# description-list items: label value'
+w $r/ctl new description-list dl
+echo 'Name|uitree
+Version|0.2' | tr '|' '	' >$r/dl/items
+cat $r/dl/items

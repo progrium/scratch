@@ -1,0 +1,78 @@
+# window with every prop
+ok
+Main window
+|
+# the name is taken
+in use
+# bad prop values
+bad value
+bad value
+bad value
+bad value
+no
+no
+no
+no
+# a prop windows do not have
+not found
+no
+# a dialog, and a window with no title bar
+ok
+ok
+ask
+main
+tip
+# title by set . and by file
+ok
+Renamed
+|
+ok
+By file
+|
+# size and pos by set .
+ok
+ok
+ok
+bad value
+# inner is the content size, w h
+1024 768
+|
+# a window is hidden until its root has content or it gets show
+hidden
+|
+hidden
+|
+ok
+normal
+|
+ok
+normal
+|
+ok
+# the state verb, read back; state events coalesce, so a slow reader sees the newest
+ok
+max
+|
+ok
+ok
+bad value
+normal
+|
+resync - -
+state - . value=normal via=ctl win=main
+error - ctl code=bad-value win=main
+# a change the user made carries via=user
+resync - -
+state - . value=min via=user win=main
+# notify
+ok
+ok
+bad value
+# a verb windows do not take
+unknown command
+# close, with nobody asking to answer, closes at once
+ok
+# destroy closes now
+ok
+main
+exit=0

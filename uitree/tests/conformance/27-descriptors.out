@@ -1,0 +1,6 @@
+# types/ is a directory per type, each with a spec and a version
+# every descriptor
+# a profile in version has every type of components.md's table
+# a type not in types/ is refused
+# checked; failures: 0
+exit=0

@@ -1,0 +1,47 @@
+#!/bin/rc
+# 24-limits: core.md § Limits. Every minimum a host must accept: a 64 KiB
+# ctl write, a 1 MiB text property, node depth 64, 4,096 queued action
+# events, and events read at any read size. A host may allow more, so
+# nothing here expects too large.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+
+echo '# a ctl write of 64 KiB, which the kernel may split into several 9P writes'
+x=`{awk 'BEGIN { for(i = 0; i < 65000; i++) printf "x" }'}
+w $r/ctl new text big 'text='^$x
+wc -c $r/big/text | awk '{ print $1 }'
+
+echo '# a text property of 1 MiB, written by cat in pieces'
+awk 'BEGIN { for(i = 0; i < 1048576; i++) printf "y" }' >/tmp/mib
+cat /tmp/mib >$r/big/text
+wc -c $r/big/text | awk '{ print $1 }'
+
+echo '# node depth: the window root, 62 levels below it, and a leaf make 64'
+p=$r
+d=1
+while(! ~ $d 63) {
+	mkdir $p/n
+	p=$p/n
+	d=`{echo $d | awk '{ print $1 + 1 }'}
+}
+exists $p
+w $p/ctl new text leaf 'text=deep'
+val $p/leaf/text
+
+echo '# 4,096 action events queue unread, none lost'
+awk 'BEGIN { for(i = 0; i < 4096; i++) print "event click win=main node=." }' >/tmp/clicks
+{
+	cat /tmp/clicks >$inject
+	evs 'win=main' >/tmp/ev
+} <[3]$k/win/main/events
+grep -c '^click - \. win=main$' /tmp/ev
+grep -c '^lost' /tmp/ev
+
+echo '# events takes reads of any size: read(1) reads one byte at a time'
+{
+	inj event click 'win=main' 'node=.'
+	read <[0=3]
+	read <[0=3]
+} <[3]$k/win/main/events
