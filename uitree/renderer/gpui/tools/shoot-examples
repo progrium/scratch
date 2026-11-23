@@ -8,7 +8,9 @@
 # (run-examples checks what they build; this checks they draw). Needs a
 # release build (cargo build --release -p uitree), Xvfb, ImageMagick's
 # import, and $H9ROOT naming a 9front root (README.md). OUTDIR defaults
-# to examples/screenshots/ci. Exit 1 if an example exits before it is shot
+# to examples/screenshots/ci. GPUI needs Vulkan: on a machine with no GPU
+# install Mesa's lavapipe (mesa-vulkan-drivers) or point VK_ICD_FILENAMES
+# at its lvp_icd.json. Exit 1 if an example exits before it is shot
 # or a screenshot is blank.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
