@@ -47,9 +47,12 @@ pub fn build(b: *std.Build) void {
     core.addOptions("build_options", opts);
 
     // libuitcore.a: the core as one static library for renderers in other
-    // languages. Rust links its own compiler builtins, so bundle ours.
+    // languages. Bundle our compiler builtins (Rust links its own too).
     const lib = b.addLibrary(.{ .name = "uitcore", .linkage = .static, .root_module = core });
-    lib.bundle_compiler_rt = true;
+    // Not for MSVC: link.exe rejects Zig's compiler_rt object (LNK1143, no
+    // symbol for a COMDAT section), and Rust's compiler-builtins covers what
+    // the core needs there (__divti3, SPIKE.md).
+    lib.bundle_compiler_rt = target.result.abi != .msvc;
     b.installArtifact(lib);
     b.installFile("include/uitcore.h", "include/uitcore.h");
 
