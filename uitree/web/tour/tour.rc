@@ -1,0 +1,3 @@
+#!/bin/rc
+# tour.rc: every feature the examples use, in one window (work in progress).
+. ./lib.rc

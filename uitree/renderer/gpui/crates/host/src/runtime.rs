@@ -423,6 +423,12 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
     Ok(inner)
 }
 
+/// In the browser: where GPUI Kit's icons are fetched from, as
+/// `{WEB_ASSETS}/assets/icons/NAME.svg` (uitree/web/build.sh copies them).
+/// An absolute URL: the fetch has no page to resolve a relative one against.
+#[cfg(target_family = "wasm")]
+pub static WEB_ASSETS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// Starts GPUI and the core on this (main) thread and runs the app in h9;
 /// returns the exit code when the app quits.
 pub fn run(opts: Options) -> i32 {
@@ -430,7 +436,8 @@ pub fn run(opts: Options) -> i32 {
     // icons fetched on demand. run returns at once there; the page's event
     // loop runs the app, and uit_run_machine starts it in h9's Worker.
     #[cfg(target_family = "wasm")]
-    let app = gpui_kit::platform::single_threaded_web().with_assets(gpui_kit::assets::AllAssets::default());
+    let app = gpui_kit::platform::single_threaded_web()
+        .with_assets(gpui_kit::assets::AllAssets::new(WEB_ASSETS.get().cloned().unwrap_or_default()));
     #[cfg(not(target_family = "wasm"))]
     let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     let launch = move |cx: &mut App| {

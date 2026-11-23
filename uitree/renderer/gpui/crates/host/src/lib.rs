@@ -69,6 +69,8 @@ pub mod testing;
 mod tests;
 
 pub use runtime::run;
+#[cfg(target_family = "wasm")]
+pub use runtime::WEB_ASSETS;
 pub use spec::Spec;
 pub use styling::ParsedStyle;
 

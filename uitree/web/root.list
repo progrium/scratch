@@ -1,0 +1,3 @@
+# Added to hyper9's src/web/root.list for the examples (build.sh): the
+# commands they use that h9's browser root leaves out.
+386/bin/walk

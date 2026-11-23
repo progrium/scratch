@@ -18,14 +18,17 @@ import { bind } from './uitcore-imports.js';
 const base = 256 << 20;
 const page = 65536;
 
-export async function startGpui({ argv, title, files = [], log = console.error, onOutput = () => {}, onExit = () => {} }) {
+/**
+ * Starts the GPUI renderer on the page's canvas with the app `argv` (h9's)
+ * and its `files` ({ path: text }, put in h9's root).
+ */
+export async function startGpui({ argv, title, files = {}, log = console.error, onOutput = () => {}, onExit = () => {} }) {
   const t = { start: performance.now() };
-  const [wasm, coreBytes, ...texts] = await Promise.all([
+  const [wasm, coreBytes] = await Promise.all([
     init({ module_or_path: new URL('gpui/uitree_web_bg.wasm', import.meta.url) }),
     fetch(new URL('uitcore-shared.wasm', import.meta.url)).then((r) => r.arrayBuffer()),
-    ...files.map((f) => fetch(new URL(`apps/${f}`, import.meta.url)).then((r) => r.text())),
   ]);
-  const appFiles = Object.fromEntries(files.map((f, i) => [`app/${f}`, texts[i]]));
+  const appFiles = files;
   t.renderer = performance.now();
   const memory = wasm.memory;
   if (memory.buffer.byteLength > base) throw new Error(`the renderer's memory is ${memory.buffer.byteLength} bytes, past the core's base`);
@@ -55,7 +58,7 @@ export async function startGpui({ argv, title, files = [], log = console.error, 
       return 0;
     },
   });
-  start(argv, title ?? null);
+  start(argv, title ?? null, new URL('.', import.meta.url).href.replace(/\/$/, ''));
   t.started = performance.now();
   return { timings: t, memory, core: m };
 }
