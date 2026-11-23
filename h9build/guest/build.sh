@@ -104,6 +104,28 @@ runtime_path() {
 	export PATH="$bins$PATH"
 }
 
+# Hex's OTP builds link crypto against Ubuntu's libcrypto, which has SM4
+# (EVP_sm4_cbc), and Wolfi's leaves it out, so the crypto NIF doesn't load and
+# Mix can't fetch Hex over TLS. When that's so, give it Ubuntu 24.04's
+# libcrypto where crypto.so's RUNPATH looks first, /usr/lib/TRIPLET, in the
+# runtime layer. Nothing else looks there.
+ubuntu_libcrypto() {
+	"$1/bin/erl" -noshell -eval 'try crypto:info_lib() of _ -> halt(0) catch _:_ -> halt(1) end' 2>/dev/null && return 0
+	case $(uname -m) in
+	x86_64) a=amd64 t=x86_64 u=https://archive.ubuntu.com/ubuntu ;;
+	aarch64) a=arm64 t=aarch64 u=https://ports.ubuntu.com/ubuntu-ports ;;
+	*) return 0 ;;
+	esac
+	f=$(curl -fsSL "$u/dists/noble-updates/main/binary-$a/Packages.gz" | gzip -dc |
+		awk '/^Package: /{p=$2} p=="libssl3t64" && /^Filename: /{print $2}' | head -1)
+	[ -n "$f" ] || { log "  no Ubuntu libssl3t64 found; erlang's crypto won't load"; return 0; }
+	log "  erlang's crypto with Ubuntu's libcrypto ($(basename "$f"))"
+	x=$(mktemp -d)
+	(cd "$x" && curl -fsSL "$u/$f" -o p.deb && ar x p.deb && zstd -dc data.tar.zst | tar -xf - "./usr/lib/$t-linux-gnu/libcrypto.so.3") &&
+		mkdir -p "/usr/lib/$t-linux-gnu" && cp "$x/usr/lib/$t-linux-gnu/libcrypto.so.3" "/usr/lib/$t-linux-gnu/"
+	rm -rf "$x"
+}
+
 # Erlang from Hex's prebuilt OTP (builds.hex.pm, for Ubuntu 24.04) rather
 # than mise's, which builds it from source with kerl on Linux: minutes
 # natively, and longer than h9build waits under h9. It goes where mise would
@@ -118,6 +140,7 @@ prebuilt_erlang() {
 	mkdir -p "$d"
 	if curl -fsSL "https://builds.hex.pm/builds/otp/$a/ubuntu-24.04/OTP-$v.tar.gz" | tar -xzf - -C "$d" --strip-components=1 &&
 		(cd "$d" && ./Install -minimal "$d" >/dev/null); then
+		ubuntu_libcrypto "$d"
 		return 0
 	fi
 	log "  no prebuilt erlang $v; mise builds it"
@@ -180,6 +203,7 @@ EOF
 				copy "$(echo "$c" | jq -r .src)" "$(echo "$c" | jq -r .dest)"
 			elif echo "$c" | jq -e 'has("name")' >/dev/null; then
 				f=$(echo "$c" | jq -r .path)
+				case $f in /*) ;; *) f=/app/$f ;; esac
 				mkdir -p "$(dirname "$f")"
 				echo "$step" | jq -r --arg a "$(echo "$c" | jq -r .name)" '.assets[$a]' >"$f"
 			fi
@@ -198,6 +222,11 @@ done <"$W/steps.txt"
 # the steps made, less the builder's own directories.
 {
 	jq -r '.deploy.variables // {} | to_entries[] | "\(.key)=\(.value)"' "$P"
+	# h9 has no inotify, which .NET's FileSystemWatcher needs: ASP.NET's
+	# configuration watches its JSON files, so have it poll instead.
+	if jq -e '.deploy.variables.DOTNET_ROOT' "$P" >/dev/null; then
+		echo DOTNET_USE_POLLING_FILE_WATCHER=1
+	fi
 	echo "H9BUILD_START=$(jq -r '.deploy.startCommand // "sh"' "$P")"
 	keep=
 	IFS=:

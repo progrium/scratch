@@ -35,7 +35,7 @@ BASE_PACKAGES="wolfi-baselayout glibc ld-linux libgcc libstdc++ libssl3 zlib ca-
 # and the usual headers, which runtimes mise builds from source and native
 # packages (node-gyp, gems, cgo) need, and jq and git, which the guest
 # scripts and package managers use.
-BUILDER_PACKAGES="$BASE_PACKAGES jq git curl unzip zip xz rsync build-base cmake autoconf automake libtool pkgconf perl
+BUILDER_PACKAGES="$BASE_PACKAGES jq git curl unzip zip xz zstd rsync build-base cmake autoconf automake libtool pkgconf perl
 	openssl-dev zlib-dev bzip2-dev xz-dev zstd-dev readline-dev sqlite-dev ncurses-dev libxml2-dev icu-dev libffi-dev yaml-dev gmp-dev
 	${H9BUILD_BUILD_PACKAGES:-}"
 
@@ -199,11 +199,15 @@ name=$(basename "$src")
 # Build machines get more memory than h9's default of 1 GB: compilers and
 # package managers' parallel workers need it.
 memory=${H9BUILD_MEMORY:-4G}
+# Planning needs only outbound connections. The build steps may need to
+# listen too, as Mix does on 127.0.0.1 for its lock, and h9 allows that only
+# with --net enable.
+net=outbound
 guest() {
 	h9run "$out" --memory "$memory" --dir "$builder:#L" --dir "$tools:#L/h9build/tools" \
 		--dir "$here/guest:#L/h9build/guest" --dir "$src:#L/h9build/src/$name" --env "H9BUILD_SRC=/h9build/src/$name" \
 		--dir "$(dirname "$railpack"):#L/h9build/railpack" \
-		--net outbound --env HOME=/root --env "H9BUILD_RAILPACK=/h9build/railpack/$(basename "$railpack")" \
+		--net "$net" --env HOME=/root --env "H9BUILD_RAILPACK=/h9build/railpack/$(basename "$railpack")" \
 		--env "H9BUILD_RUBY_COMPILE=${H9BUILD_RUBY_COMPILE:-}" "$@"
 }
 
@@ -228,8 +232,10 @@ base=$(root base $BASE_PACKAGES $(wolfi "$out/apt-runtime.txt"))
 # The layers, each built as the up layer over the builder root and the layers
 # below it, from the plan's steps for it. Each is built in LAYER.tmp and
 # moved into place when its steps succeed, so a failed step leaves no layer.
+# The keys chain from the builder root and build.sh, which carries the steps out.
+net=enable
 lower=
-key=$(basename "$builder")
+key=$(printf '%s %s\n' "$(basename "$builder")" "$(sha <"$here/guest/build.sh")" | sha)
 for l in runtime deps app; do
 	key=$(printf '%s %s\n' "$key" "$(awk -v l="$l" '$1 == l { print $2 }' "$out/keys.txt")" | sha)
 	d=$out/layers/$l
@@ -278,21 +284,54 @@ done
 rm -rf "$a"
 mv "$k" "$a"
 
+# What the build deploys from the deps layer, when it's small (Rust's
+# Cargo.lock, beside a 400 MB target the plan excludes), is copied into the
+# app layer, so the run needn't stack deps for it. A node_modules or a venv
+# is left in deps, which the run stacks.
+d=$out/layers/deps
+small=
+x=$out/layers/deps.small
+rm -rf "$x"
+if [ -d "$d" ] && awk '$1 == "app"' "$out/deploy.txt" | {
+	mkdir -p "$x"
+	while read -r _ p rest; do
+		[ -e "$d$p" ] || continue
+		set -- --exclude '.wh.*'
+		for e in $rest; do set -- "$@" --exclude ".$e"; done
+		(cd "$d" && tar -cf - "$@" ".$p") | (cd "$x" && tar -xf -) || exit 1
+	done
+	[ "$(du -sk "$x" | cut -f1)" -lt 1024 ]
+}; then
+	cp -Rpn "$x/." "$a/"
+	small=yes
+fi
+rm -rf "$x"
+
 # The layers the run stacks, in order: each one that holds something the plan
 # deploys. The runtime only when the plan deploys from a packages step (a Go
 # binary doesn't need its toolchain), and deps when the plan deploys a path
 # it holds (node_modules, a venv, gems), from it or from the build over it.
 has() { # LAYER WHICH: whether LAYER holds a path the plan deploys from WHICH layers
 	awk -v w="$2" '$1 ~ w { print $2 }' "$out/deploy.txt" | while read -r p; do
-		if [ -e "$out/layers/$1$p" ]; then
+		# -L too: a link into the layer's own root (dotnet's 6.0 -> ./6.0.428
+		# -> /mise/dotnet-root) doesn't resolve from the host.
+		if [ -e "$out/layers/$1$p" ] || [ -L "$out/layers/$1$p" ]; then
 			echo yes
 			break
 		fi
 	done
 }
+runtime=$(has runtime '^runtime$')
+# Libraries a packages step put in the system's /usr/lib for a runtime
+# (Ubuntu's libcrypto, for Hex's Erlang) go with the app when the runtime
+# layer doesn't: a Mix release carries Erlang, and its crypto, out of it.
+if [ -z "$runtime" ] && [ -d "$out/layers/runtime/usr/lib" ] && [ -n "$(ls -A "$a")" ]; then
+	mkdir -p "$a/usr"
+	cp -a "$out/layers/runtime/usr/lib" "$a/usr/"
+fi
 {
-	if [ -n "$(has runtime '^runtime$')" ]; then echo runtime; fi
-	if [ -n "$(has deps '^(deps|app)$')" ]; then echo deps; fi
+	if [ -n "$runtime" ]; then echo runtime; fi
+	if [ -n "$(has deps "$([ -n "$small" ] && echo '^deps$' || echo '^(deps|app)$')")" ]; then echo deps; fi
 	if [ -n "$(ls -A "$a")" ]; then echo app; fi
 } >"$out/layers.txt"
 

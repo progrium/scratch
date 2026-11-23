@@ -82,7 +82,10 @@ shared by every app and live in the cache: *base*, which apps run on (about
    less their excludes, with a whiteout for an exclude a layer below holds
    (Rust's `target`). The run stacks the runtime layer only when the plan
    deploys from a packages step (a Go binary doesn't need its toolchain), and
-   the deps layer only when it holds a path the plan deploys.
+   the deps layer only when it holds a path the plan deploys. When what the
+   app deploys from the deps layer is small (Rust's `Cargo.lock`, Go's
+   `go.sum`), it's copied into the app layer instead, so the run doesn't
+   stack hundreds of MB of `target` for it.
 8. **Run.** `run` stacks the layers read-only over the base root, with the
    plan's variables and start command.
 
@@ -103,25 +106,14 @@ downloads in the cache; *rebuilt* is a second build with nothing changed.
 | `ruby-latest` (Ruby 4) | 100 s | 3 s | runtime 420 MB, deps 3.5 MB (gems), app 32 KB | prints its test's expected output |
 | `cpp-cmake` | 40 s | 4 s | app 268 KB | prints its test's expected output |
 | `gleam` (Erlang from Hex) | 25 s | 3 s | runtime 204 MB (Erlang and Gleam), app 328 KB | prints its test's expected output |
+| `elixir-latest` (a Mix release) | 50 s | 4 s | app 67 MB (the release carries Erlang) | prints its test's expected output |
+| `rust-rocket` | 4.5 min | 3 s | app 5.2 MB (no runtime, and not the deps layer's 480 MB of `target` and cargo registry) | "Rocket has launched" |
+| `zig` | 4.5 min | 2 s | app 3.9 MB | prints its test's expected output |
+| `dotnet-cli` (.NET 6) | 40 s | 2 s | runtime 498 MB, app 180 KB | prints its test's expected output |
+| `dotnet-api` (ASP.NET 8) | 90 s | 3 s | runtime 569 MB, app 4 MB | serves `/WeatherForecast` |
 
 What doesn't build yet, and why:
 
-- **Rust:** rustup's downloads fail inside h9 with "Input/output error"
-  (`os error 5`): `lseek(SEEK_END)` fails on its `<hash>.partial` files,
-  whose names are long
-  ([progrium/hyper9#255](https://github.com/progrium/hyper9/issues/255)).
-- **Zig:** `zig build` (0.17) aborts with "reached unreachable code", even
-  with `--memory 8G`: h9's `mremap` answers `EFAULT` where Linux answers
-  `ENOMEM` or grows the mapping
-  ([progrium/hyper9#256](https://github.com/progrium/hyper9/issues/256)).
-- **.NET:** `dotnet restore` hangs, with 4 GB too, its threads all waiting.
-  An h9 bug not yet narrowed down.
-- **Elixir:** mise builds Erlang from source with kerl, which takes minutes
-  natively and didn't finish in h9, so h9build installs Hex's prebuilt OTP
-  for Ubuntu 24.04 (builds.hex.pm) where mise would have, and mise takes it
-  as installed. Erlang runs, but its `crypto` NIF doesn't load against
-  Wolfi's OpenSSL, which leaves out SM4 (`EVP_sm4_cbc`), so Mix can't fetch
-  Hex over TLS. Gleam fetches its packages itself, so it builds and runs.
 - **Ruby, older versions:** h9build has mise use its precompiled Ruby
   (`MISE_RUBY_COMPILE=false`), which mise has for recent versions only.
   `ruby-sinatra` pins 3.1.2, which would be built from source by ruby-build,
@@ -134,6 +126,17 @@ Also seen: uv's bytecode compiling (`UV_COMPILE_BYTECODE=1`, which Railpack's
 Python plans set) now and then panics with "failed to wake I/O driver: Bad
 file descriptor", or hangs, in h9. A rebuild usually gets past it.
 
+Erlang comes from Hex's prebuilt OTP for Ubuntu 24.04 (builds.hex.pm), put
+where mise would install it, so mise takes it as installed and installs
+Elixir or Gleam over it. mise would build Erlang from source with kerl,
+which takes minutes natively and didn't finish in h9. Hex's `crypto` NIF is
+linked against Ubuntu's libcrypto, which has SM4 (`EVP_sm4_cbc`), and Wolfi's
+leaves SM4 out, so the NIF wouldn't load and Mix couldn't fetch Hex over TLS.
+h9build gives it Ubuntu 24.04's libcrypto in `/usr/lib/x86_64-linux-gnu`, the
+first place the NIF's RUNPATH looks and a place nothing else does. That's in
+the runtime layer, and it goes into the app layer when the run doesn't stack
+the runtime, as with a Mix release, which carries Erlang and its `crypto`.
+
 The venv is in the deps layer, and its `python` is an absolute link into the
 runtime layer (`/mise/installs/python/...`): that resolves because h9 follows
 a Linux program's links from its root
@@ -143,7 +146,15 @@ h9build needs an h9 with up layers
 ([upper-layers](https://github.com/progrium/hyper9/blob/main/design/upper-layers.md)),
 including [progrium/hyper9#254](https://github.com/progrium/hyper9/pull/254), which
 makes a working directory from below a layer see what's changed in it since: the
-build steps run in `/app`, which is usually below.
+build steps run in `/app`, which is usually below. Rust, Zig, and .NET need
+the Linux fixes these examples turned up:
+
+| Fix | Needed by |
+| --- | --- |
+| [#257](https://github.com/progrium/hyper9/pull/257): `lseek(SEEK_END)` on long names, `mremap` over joined mappings | rustup's downloads; `zig build` |
+| [#258](https://github.com/progrium/hyper9/pull/258): `sched_getparam` | MSBuild, which `dotnet restore` hung in |
+| [#263](https://github.com/progrium/hyper9/pull/263): edge-triggered epoll sees a host socket's next data | NuGet's downloads through a proxy |
+| [#264](https://github.com/progrium/hyper9/pull/264): a signal breaks a pipe read waiting behind another; `getsockname` before `listen` | cargo's jobserver; Kestrel (`dotnet-api`) |
 
 Not tried yet: arm64 and macOS.
 
@@ -158,9 +169,12 @@ Sigstore calls that mise makes to check what it downloads. That breaks
 
 What it leaves out, for now:
 
-- **A tighter sandbox.** The build machines have outbound network, and can
-  write only the output directory. `--net-allow` for the registries a plan
-  uses would close that further.
+- **A tighter sandbox.** The build machines can write only the output
+  directory, but they have the network with `--net enable`, because Mix
+  listens on 127.0.0.1 for its lock and `--net outbound` refuses any listen.
+  An h9 mode for outbound connections plus loopback listens would fit
+  better, and `--net-allow` for the registries a plan uses would close it
+  further.
 - **Pruning dev dependencies.** Railpack's plans keep them unless told
   otherwise (`RAILPACK_PRUNE_DEPS`).
 - **Caching the source.** The app layer's key hashes every source file, so
@@ -175,6 +189,9 @@ What it leaves out, for now:
 - **mise's shims** are links to the mise binary, which only the builder has,
   and would run every command through mise. h9build puts the runtimes' own
   bin directories on `PATH` instead, and keeps the shims in `/tmp`.
+- **inotify**, which h9 doesn't have, is how .NET watches its config
+  files, and ASP.NET fails to start without it. The run sets
+  `DOTNET_USE_POLLING_FILE_WATCHER=1` for a .NET plan, so it polls instead.
 - **Package manager caches** are pointed at the output's `cache/`
   (`npm_config_cache`, `UV_CACHE_DIR`, `GOMODCACHE`, ...), over the plan's own
   cache directories. Left where the plan puts them, they'd land in the layers.
