@@ -123,6 +123,8 @@ pub const CmdTag = enum(u32) {
     answer = 12,
     redraw = 13,
     theme_load = 14,
+    /// An `asset/NAME` was written or removed: re-read it with uit_asset.
+    assets = 15,
 };
 
 /// A command for the renderer (uitcore.h's UitHostCmd). Which fields are
@@ -237,6 +239,11 @@ pub const Tree = struct {
     cfg: Config,
     st: *State,
     bus: Bus,
+    /// In `mirror`: changes aren't reported in `changes().props`.
+    mirroring: bool = false,
+    /// Actions `set ID enabled=off` turned off: their bindings send
+    /// nothing (core.md § Keys, actions and menus).
+    disabled: std.StringHashMapUnmanaged(void) = .empty,
     shared: Shared = .{},
     batches: std.ArrayList(Batch) = .empty,
     requests: std.ArrayList(Request) = .empty,
@@ -288,6 +295,9 @@ pub const Tree = struct {
     /// Frees the tree. Every snapshot must be released and every stream
     /// closed first.
     pub fn destroy(t: *Tree) void {
+        var it = t.disabled.keyIterator();
+        while (it.next()) |k| t.gpa.free(k.*);
+        t.disabled.deinit(t.gpa);
         t.destroyParts();
         t.gpa.destroy(t);
     }
@@ -434,7 +444,10 @@ pub const Tree = struct {
         };
         for (tx.trace.items) |l| t.traceLine(l);
         try t.diff(old, t.st, false);
-        for (tx.cmds.items) |c| try t.pushCmd(c);
+        for (tx.cmds.items) |c| {
+            if (c.tag == .set_action and c.flag != -1) try t.setEnabled(c.name, c.flag == 1);
+            try t.pushCmd(c);
+        }
         if (ended) |f| try t.batchEnded(f);
         for (tx.events.items) |ev| {
             if (ev.request) |dflt| {
@@ -561,7 +574,19 @@ pub const Tree = struct {
         try t.log.dirty.append(a, try a.dupe(u8, w));
     }
 
+    fn setEnabled(t: *Tree, id: []const u8, on: bool) Error!void {
+        if (on) {
+            if (t.disabled.fetchRemove(id)) |kv| t.gpa.free(kv.key);
+        } else if (!t.disabled.contains(id)) {
+            const k = try t.gpa.dupe(u8, id);
+            errdefer t.gpa.free(k);
+            try t.disabled.put(t.gpa, k, {});
+        }
+    }
+
     fn addProp(t: *Tree, h: Handle, file: []const u8) Error!void {
+        // The renderer's own mirrors aren't reported back to it.
+        if (t.mirroring) return;
         for (t.log.props.items) |p| if (p.node == h and std.mem.eql(u8, p.file, file)) return;
         try t.log.props.append(t.log.arena.allocator(), .{ .node = h, .file = file });
     }
@@ -742,8 +767,9 @@ pub const Tree = struct {
         if (win_name) |w| try attrs.append(a, .{ .key = "win", .value = w });
         var via_at: ?Attr = null;
         for (ev.attrs) |x| {
-            // `key=` given as an attribute is the routing word.
-            if (std.mem.eql(u8, x.key, "key")) {
+            // `key=` given as an attribute is the routing word, except on
+            // a `key` event, where it is the keystroke.
+            if (std.mem.eql(u8, x.key, "key") and !std.mem.eql(u8, ev.name, "key")) {
                 route = x.value;
             } else if (std.mem.eql(u8, x.key, "via")) {
                 via_at = x;
@@ -878,6 +904,8 @@ pub const Tree = struct {
     /// and `title`.
     pub fn mirror(t: *Tree, h: Handle, file: []const u8, value: []const u8) Error!void {
         const n = t.st.node(h) orelse return t.setErr(.not_found, "node");
+        t.mirroring = true;
+        defer t.mirroring = false;
         if (n.parent == 0 and pathm.windowFile(file) != null) {
             return t.mutate(struct {
                 fn f(tx: *Tx, x: struct { Handle, []const u8, []const u8 }) Error!void {
@@ -996,12 +1024,15 @@ pub const Tree = struct {
             }
         }
         const b = best orelse return false;
+        // A disabled action's binding is taken but sends nothing.
+        if (t.disabled.contains(b.action)) return true;
         _ = try t.emit(.{ .name = "action", .node = at, .key = b.action, .via = "key", .kind = .action });
         return true;
     }
 
     /// A menu item was chosen: `action ID - via=menu`.
     pub fn menuAction(t: *Tree, id: []const u8) Error!void {
+        if (t.disabled.contains(id)) return;
         _ = try t.emit(.{ .name = "action", .key = id, .via = "menu", .kind = .action });
     }
 
@@ -1355,6 +1386,7 @@ const Tx = struct {
                     if (std.mem.eql(u8, m.name.bytes, name)) break i;
                 } else return tx.fail(.not_found, "{s}", .{p});
                 const m = tx.st.assets.orderedRemove(i);
+                try tx.cmd(.{ .tag = .assets, .name = try tx.a.dupe(u8, name) });
                 m.name.unref(tx.gpa());
                 m.val.unref(tx.gpa());
                 return tx.log("remove path={s}", .{p});
@@ -1445,6 +1477,7 @@ const Tx = struct {
         if (!state.validName(name)) return tx.fail(.bad_value, "asset name: {s}", .{name});
         if (data.len > proto.limits.data_file) return tx.fail(.too_large, "asset/{s}", .{name});
         try tx.logWrite(try std.fmt.allocPrint(tx.a, "asset/{s}", .{name}), data, false);
+        try tx.cmd(.{ .tag = .assets, .name = try tx.a.dupe(u8, name) });
         const val = try tx.blob(data);
         for (tx.st.assets.items) |*m| if (std.mem.eql(u8, m.name.bytes, name)) {
             m.val.unref(tx.gpa());
@@ -1662,7 +1695,14 @@ const Tx = struct {
             for (ls) |l| if (l.kind == .item and std.mem.eql(u8, l.id, id)) return true;
         }
         var it = tx.st.nodes.valueIterator();
-        while (it.next()) |n| if (n.*.stored("tag")) |tg| if (std.mem.eql(u8, tg, id)) return true;
+        while (it.next()) |n| {
+            if (n.*.stored("tag")) |tg| if (std.mem.eql(u8, tg, id)) return true;
+            // A node's own menu (context-menu, dropdown-button).
+            if (n.*.ty.format("menu")) |f| if (std.mem.eql(u8, f, "menu")) {
+                const ls = proto.lines.parseMenu(tx.a, n.*.value("menu"), null) catch continue;
+                for (ls) |l| if (l.kind == .item and std.mem.eql(u8, l.id, id)) return true;
+            };
+        }
         return false;
     }
 
