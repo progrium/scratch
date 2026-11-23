@@ -1,0 +1,24 @@
+#!/bin/rc
+# 26-lifecycle: core.md § Commands (quit) and § Subscriptions, and the
+# headless host's exit status (README.md § The host). quit on the app ctl
+# ends every subscription with end of file, later access fails with app
+# gone, and the host exits with the client's status: this client exits
+# 'failed' on purpose, so uitree-headless must exit 1.
+# needs: W2 W3 W4
+. ./lib.rc
+mainwin
+
+echo '# a blocked events read ends at quit'
+{
+	{
+		w $k/ctl quit
+		cat <[0=3] >/tmp/rest
+		echo eof
+	} <[3]$k/events
+	cat <[0=3] >/tmp/rest2
+	echo eof
+} <[3]$k/win/main/events
+echo '# later access fails with app gone'
+rd $k/version
+w $k/ctl window again
+exit failed

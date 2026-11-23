@@ -1,0 +1,47 @@
+# overlays live in over/, nowhere else
+unknown type
+unknown type
+no
+no
+# made on the window ctl with an over/ path
+ok
+alert-dialog confirm-del  title='Delete 3 files?'  description='This cannot be undone.'  confirm=Delete  cancel=Keep  variant=danger  tag=del
+confirm-del
+# confirm and cancel carry the tag
+ok
+resync - -
+confirm del over/confirm-del win=main
+ok
+resync - -
+cancel del over/confirm-del win=main
+# a bad variant
+bad value
+no
+# made on over/ctl, with a footer slot
+ok
+ok
+ok
+dialog about  modal  title=About  width=420
+  text body  text='uitree 0.2'
+  div footer  : h-flex justify-end
+    button ok  label=OK  tag=about-ok
+ok
+ok
+unknown command
+# a popover bound to an anchor node
+ok
+ok
+not found
+yes
+no
+# a tooltip, a sheet and a context menu
+ok
+ok
+ok
+item copy label=Copy
+sep
+item paste label=Paste
+# delete removes an overlay
+ok
+no
+exit=0

@@ -1,0 +1,56 @@
+#!/bin/rc
+# tree-phase.rc: run one example's tree-building phase headless and print
+# what it built. run-examples runs it from this directory:
+#
+#	uitree-headless rc tree-phase.rc examples/rc hello.rc [arg...]
+#	uitree-headless rc tree-phase.rc examples/awk awk -f csvview.awk planets.csv
+#
+# The first argument is the directory to run in; the rest is the command
+# (an .rc file name alone means rc NAME). The example runs in the
+# background; once its windows' trees stop changing (two reads half a
+# second apart agree, for up to 15 seconds) this prints each window's title
+# and tree, its overlays, the menus, the key bindings and anything the
+# example wrote to standard error, which in the tree-building phase means a
+# write the host refused. Then it quits the app, as a user would.
+. ./lib.rc
+
+dir=$1
+shift
+cmd=($*)
+if(~ $#cmd 1 && ~ $cmd *.rc) cmd=(rc $cmd)
+
+fn snap {
+	for(win in `{ls -p $k/win}) {
+		echo '-- window' $win `{cat $k/win/$win/title}
+		cat $k/win/$win/tree
+		for(ov in `{ls -p $k/win/$win/over}) if(test -d $k/win/$win/over/$ov) {
+			echo '-- overlay' $win/$ov
+			cat $k/win/$win/over/$ov/tree
+		}
+	}
+}
+
+@{ cd $dir; $cmd >/tmp/ex.out >[2]/tmp/ex.err } &
+
+i=0
+stable=()
+while(~ $#stable 0 && ! ~ $i 30) {
+	sleep 0.5
+	snap >/tmp/snap.new >[2]/dev/null
+	if(test -s /tmp/snap.new && cmp -s /tmp/snap.new /tmp/snap.old) stable=1
+	cp /tmp/snap.new /tmp/snap.old
+	i=`{echo $i | awk '{ print $1 + 1 }'}
+}
+if(~ $#stable 0) echo '-- not stable after 15 seconds'
+cat /tmp/snap.new
+echo '-- menu/bar'
+cat $k/menu/bar
+for(m in `{ls -p $k/menu}) if(! ~ $m bar) {
+	echo '-- menu' $m
+	cat $k/menu/$m
+}
+echo '-- keys'
+cat $k/keys
+echo '-- stderr'
+cat /tmp/ex.err
+echo quit >$k/ctl

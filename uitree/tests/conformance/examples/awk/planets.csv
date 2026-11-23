@@ -1,0 +1,11 @@
+Planet,Type,Mass (Earth=1),Radius (km),Moons,Day (hours),Year (days)
+Mercury,Terrestrial,0.055,2440,0,4222.6,88
+Venus,Terrestrial,0.815,6052,0,2802,224.7
+Earth,Terrestrial,1,6371,1,24,365.2
+Mars,Terrestrial,0.107,3390,2,24.7,687
+Jupiter,Gas giant,317.8,69911,95,9.9,4331
+Saturn,Gas giant,95.2,58232,146,10.7,10747
+Uranus,Ice giant,14.5,25362,28,17.2,30589
+Neptune,Ice giant,17.1,24622,16,16.1,59800
+Pluto,Dwarf,0.0022,1188,5,153.3,90560
+Ceres,Dwarf,0.00016,470,0,9.1,1682

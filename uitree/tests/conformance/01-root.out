@@ -1,0 +1,56 @@
+# the app directory has every core file
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+# version: the protocol name and spec version, then kind value lines
+uitree 1.0
+1
+1
+1
+1
+# main exists from the start, hidden
+main
+hidden
+|
+# the window verb takes main once
+ok
+main
+# a window is its root node: node files and window files in one directory
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+div
+|
+Root test
+|
+|
+# over/ starts empty
+# a new window's root is an empty div
+ok
+main
+two
+div
+|
+|
+|
+exit=0
