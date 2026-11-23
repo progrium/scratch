@@ -139,7 +139,19 @@ pub(crate) fn start(host: &Rc<Host>, n: usize, cx: &mut App) {
     let path = dial.trim_start_matches("unix!").to_string();
     let text = tree_ctl(n);
     let t_write = Instant::now();
-    let writer = std::thread::spawn(move || write_ctl(&path, &text));
+    // One ctl write per 48 KiB of lines, under 0.2's write limit.
+    let writer = std::thread::spawn(move || {
+        let mut chunk = String::new();
+        for line in text.lines() {
+            if chunk.len() + line.len() + 1 > 48 << 10 {
+                write_ctl(&path, &chunk)?;
+                chunk.clear();
+            }
+            chunk.push_str(line);
+            chunk.push('\n');
+        }
+        write_ctl(&path, &chunk)
+    });
     let h = host.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
         // The pump loop applies the write; wait for the writer's ack.

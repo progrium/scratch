@@ -162,9 +162,7 @@ fn key_events_and_focus_file(cx: &mut TestAppContext) {
     h.keys("main", "a");
     let lines = h.events(&mut ev);
     assert!(lines.iter().any(|l| l.starts_with("focus ")), "{lines:?}");
-    // The host sends `key=a`; the core currently takes a `key=` attribute
-    // as the routing word, so the key lands in word 2 (asked of W3).
-    assert!(lines.iter().any(|l| l.starts_with("key ") && (l.contains("key=a") || l.starts_with("key a "))), "{lines:?}");
+    assert!(lines.iter().any(|l| l.starts_with("key - k win=main") && l.contains(" key=a")), "{lines:?}");
 }
 
 #[gpui::test]
