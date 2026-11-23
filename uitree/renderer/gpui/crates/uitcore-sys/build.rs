@@ -82,12 +82,29 @@ fn main() {
                 .filter(|p| p.extension().is_some_and(|x| x == "o"))
                 .collect();
             members.sort();
+            // Zig writes members with mode 0, which ar keeps: make them readable.
+            #[cfg(unix)]
+            for m in &members {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(m, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
             assert!(!members.is_empty(), "uitcore-sys: no objects in {}", src.display());
             let out = dir.join(name);
             let _ = std::fs::remove_file(&out);
             let st = Command::new("libtool").args(["-static", "-o"]).arg(&out).args(&members).status()
                 .unwrap_or_else(|e| panic!("uitcore-sys: running libtool: {e}"));
             assert!(st.success(), "uitcore-sys: libtool -static failed for {name}");
+            if name == "libuitcore.a" {
+                let o = Command::new("nm").arg("-g").arg(&out).output().expect("uitcore-sys: running nm");
+                let syms = String::from_utf8_lossy(&o.stdout);
+                assert!(
+                    syms.contains(" T _uit_abi_version"),
+                    "uitcore-sys: {} has no _uit_abi_version after re-archiving; members {:?}; nm: {}",
+                    out.display(),
+                    members,
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
         }
         dir
     } else {
