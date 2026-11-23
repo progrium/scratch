@@ -1,35 +1,56 @@
 #!/bin/sh
-# roots.sh ARCH REPO PACKAGES...: run by h9build in the Alpine bootstrap root.
-# Installs Wolfi packages with Alpine's apk into a root in the guest's memory
-# and writes it to root.tar in the cwd.
+# roots.sh ARCH REPO PACKAGES...: run by h9build in the Alpine bootstrap root,
+# with the new root's directory as an up layer at /r. Installs Wolfi packages
+# into it with Alpine's apk.
 #
-# The root is built in /tmp, an overlay in memory, rather than in a host
-# directory: apk makes symlinks before their targets exist, which h9 can't do
-# in a host tree yet. --no-scripts because apk runs scripts in a chroot.
+# A package can be a list of alternatives, a|b|c: the first that the
+# repository has is installed, and none is a warning, not an error. That's
+# how Railpack's Debian package names are tried against Wolfi's.
+#
+# --no-scripts because apk runs scripts in a chroot, which h9 doesn't have;
+# h9build makes busybox's applet links itself afterwards.
 set -eu
 arch=$1 repo=$2
 shift 2
-r=/tmp/root
-mkdir -p "$r/etc/apk/keys"
+r=/r
+# Alpine's apk keeps its database in /lib/apk, which would make /lib a
+# directory that wolfi-baselayout's lib -> usr/lib link can't replace. glibc's
+# loader is found through that link on arm64 (/lib/ld-linux-aarch64.so.1), so
+# make it first: the database then lands in /usr/lib/apk, where Wolfi's own
+# apk keeps it.
+mkdir -p "$r/etc/apk/keys" "$r/usr/lib"
+[ -e "$r/lib" ] || ln -s usr/lib "$r/lib"
 cp /mnt/term/cwd/wolfi-signing.rsa.pub "$r/etc/apk/keys/"
-apk --root "$r" --initdb --no-scripts --no-cache --arch "$arch" \
-	--repository "$repo" --keys-dir "$r/etc/apk/keys" add "$@" |
-	grep -v '^(' || true
-apk --root "$r" info -e "$@" >/dev/null || { echo "roots.sh: some packages didn't install" >&2; exit 1; }
-# Alpine's apk keeps its database in /lib/apk, so /lib is a directory and
-# wolfi-baselayout's lib -> usr/lib link couldn't replace it. glibc's loader
-# is found through it on arm64 (/lib/ld-linux-aarch64.so.1): move the
-# database where Wolfi's own apk keeps it, and make the link.
-if [ -d "$r/lib" ] && [ ! -L "$r/lib" ]; then
-	mkdir -p "$r/usr/lib"
-	for f in "$r"/lib/* "$r"/lib/.[!.]*; do
-		[ -e "$f" ] || [ -L "$f" ] || continue
-		mv "$f" "$r/usr/lib/"
-	done
-	rmdir "$r/lib"
-	ln -s usr/lib "$r/lib"
-fi
-# The link apk made to rename over /lib, left behind when that failed.
-rm -f "$r"/.apk.*
+apk() { command apk --root "$r" --no-cache --arch "$arch" --repository "$repo" --keys-dir "$r/etc/apk/keys" "$@"; }
+apk --initdb --no-scripts add wolfi-baselayout >/dev/null
+set -- "$@" ""
+pkgs=
+for p in "$@"; do
+	[ -n "$p" ] || continue
+	case $p in
+	*'|'*)
+		pick=
+		IFS='|'
+		for a in $p; do
+			if apk add --simulate "$a" >/dev/null 2>&1; then
+				pick=$a
+				break
+			fi
+		done
+		unset IFS
+		if [ -z "$pick" ]; then
+			echo "roots.sh: no Wolfi package for ${p%%|*} (tried ${p})" >&2
+			continue
+		fi
+		pkgs="$pkgs $pick"
+		;;
+	*) pkgs="$pkgs $p" ;;
+	esac
+done
+# shellcheck disable=SC2086
+apk add --no-scripts $pkgs | grep -v '^(' || true
+# shellcheck disable=SC2086
+apk info -e $pkgs >/dev/null || { echo "roots.sh: some packages didn't install" >&2; exit 1; }
 # shadow files are 0640 root: the guest can't read them, and nothing needs them.
-cd "$r" && tar --exclude ./etc/shadow --exclude ./etc/gshadow -cf /mnt/term/cwd/root.tar .
+rm -f "$r/etc/shadow" "$r/etc/gshadow"
+echo "$pkgs" >"$r/etc/h9build-packages"

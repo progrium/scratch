@@ -1,23 +1,96 @@
 #!/bin/sh
 # plan.sh: run by h9build in the builder root. Railpack reads the source at
-# /h9build/src and writes its build plan to plan.json in the cwd.
+# $H9BUILD_SRC (/h9build/src/NAME) and writes its build plan to plan.json in
+# the cwd, and this script reads the plan into plain text that h9build's host
+# side, which has no jq, acts on:
+#
+#   steps.txt        INDEX LAYER NAME: the layer each step builds in
+#   keys.txt         LAYER KEY: a hash of each layer's steps and the files they read
+#   deploy.txt       LAYER PATH [EXCLUDE...]: what the run takes from each layer
+#   apt-build.txt    Debian packages the plan installs to build
+#   apt-runtime.txt  Debian packages the plan installs to run
+#
+# The layers, in order: runtime (the packages:* steps: mise's runtimes),
+# deps (install*), and app (the rest, the build). A step never builds in a
+# layer below an earlier step's, so a plan that goes back to an install step
+# after its build builds it in the app layer.
 #
 # Railpack resolves versions with the mise it pins, which it keeps in
 # /tmp/railpack/mise and downloads if it isn't there. h9build keeps that
 # binary in its tools between runs, so put it back first, and save it after.
 set -eu
 W=/mnt/term/cwd
+P=$W/plan.json
 mkdir -p /tmp/railpack/mise "$W/cache/mise-bin"
 for m in /h9build/tools/mise-*; do [ -e "$m" ] && cp "$m" /tmp/railpack/mise/; done
-/h9build/tools/railpack plan --out "$W/plan.json" /h9build/src
+"$H9BUILD_RAILPACK" plan --out "$P" "$H9BUILD_SRC"
 for m in /tmp/railpack/mise/mise-*; do
 	[ -e "/h9build/tools/$(basename "$m")" ] || cp "$m" "$W/cache/mise-bin/"
 done
 # A provider that fails (a version it can't resolve, say) still writes a plan,
 # with no steps: show Railpack's own account of why.
-if ! jq -e '(.steps // []) | length > 0' "$W/plan.json" >/dev/null; then
+if ! jq -e '(.steps // []) | length > 0' "$P" >/dev/null; then
 	echo "h9build: Railpack made no build steps:" >&2
-	/h9build/tools/railpack info --format json /h9build/src | jq -r '.logs[]? | "  \(.Level): \(.Msg)"' >&2
+	"$H9BUILD_RAILPACK" info --format json "$H9BUILD_SRC" | jq -r '.logs[]? | "  \(.Level): \(.Msg)"' >&2
 	exit 1
 fi
-jq -r '"h9build: plan: \([.steps[].name] | join(", ")); start: \(.deploy.startCommand // "none")"' "$W/plan.json" >&2
+jq -r '"h9build: plan: \([.steps[].name] | join(", ")); start: \(.deploy.startCommand // "none")"' "$P" >&2
+
+jq -r '
+	def rank: if startswith("packages:") then 0 elif startswith("install") then 1 else 2 end;
+	reduce (.steps | to_entries[] | select(.value.name | startswith("packages:apt:") | not)) as $s
+		({max: 0, out: []};
+		 ([.max, ($s.value.name | rank)] | max) as $r
+		 | .max = $r
+		 | .out += ["\($s.key) \(["runtime", "deps", "app"][$r]) \($s.value.name)"])
+	| .out[]' "$P" >"$W/steps.txt"
+
+# The Debian packages an apt step installs, from its command.
+apt() {
+	jq -r --arg p "$1" '[.steps[] | select(.name | startswith($p)) | .commands[]?.cmd // empty
+		| capture("install -y (?<p>[^\u0027;&]*)").p | split(" ")[] | select(. != "")] | unique | .[]' "$P"
+}
+apt packages:apt:build >"$W/apt-build.txt"
+apt packages:apt:runtime >"$W/apt-runtime.txt"
+
+# What the run takes from each layer: each deploy input's paths, made
+# absolute (they're relative to /app), with its excludes.
+jq -r --rawfile steps "$W/steps.txt" '
+	($steps | split("\n") | map(select(. != "") | split(" ") | {(.[2]): .[1]}) | add) as $layer
+	| def abs: if . == "." or . == "./" or . == "/app" then "/app"
+		elif startswith("/") then rtrimstr("/.") | rtrimstr("/")
+		else "/app/" + (rtrimstr("/.") | rtrimstr("/")) end;
+	.deploy.inputs[]? | select(.step and $layer[.step]) | . as $i
+	| .include[]? | "\($layer[$i.step]) \(abs) \([$i.exclude[]? | abs] | join(" "))"' "$P" >"$W/deploy.txt"
+
+# Each layer's key: its steps as the plan has them, and the contents of the
+# source files they copy in (and for the app layer, the deploy). h9build chains them, so a layer's key changes
+# with the ones below it.
+hashfiles() {
+	(
+		cd "$H9BUILD_SRC"
+		# shellcheck disable=SC2086
+		for f in $1; do [ -e "$f" ] && find "$f" -type f -exec sha256sum {} +; done
+	) | awk -v ex="$excl" '
+		BEGIN { n = split(ex, e) }
+		{
+			p = $2
+			sub(/^\.\//, "", p)
+			for (i = 1; i <= n; i++) if (p == e[i] || index(p, e[i] "/") == 1) next
+			print
+		}' | sort -k2
+}
+excl=$(jq -r '.exclude // [] | .[]' "$P")
+for l in runtime deps app; do
+	{
+		for i in $(awk -v l="$l" '$2 == l { print $1 }' "$W/steps.txt"); do
+			step=$(jq -c ".steps[$i]" "$P")
+			echo "$step"
+			for s in $(echo "$step" | jq -r '(.commands[]? | .src // empty), (.inputs[]? | select(.local == true) | .include[]?)'); do
+				hashfiles "$s"
+			done
+		done
+		# The app layer is pruned to what the plan deploys.
+		[ "$l" = app ] && jq -c .deploy "$P"
+	} | sha256sum | cut -c1-16 | sed "s/^/$l /"
+done >"$W/keys.txt"

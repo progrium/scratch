@@ -5,29 +5,39 @@
 #
 # Railpack detects the app and writes a plan, mise installs the runtimes the
 # plan names, the plan's install and build commands run as written, and Wolfi
-# packages make the base root. Every one of those steps runs inside h9; the
-# host only needs h9, curl, tar, and a POSIX shell. The result is OUT/layers
-# (runtime, deps, app) and OUT/run, which runs the app on h9 from them, over
-# the shared base root in the cache.
+# packages make the roots. Every one of those steps runs inside h9; the host
+# only needs h9, curl, tar, and a POSIX shell. The result is OUT/layers
+# (runtime, deps, app), each an OCI layer that h9 wrote as an up layer, and
+# OUT/run, which runs the app on h9 from them over the base root in the cache.
 #
 # Environment:
 #   H9             the h9 binary (default: h9 on PATH)
 #   H9_FLAGS       extra flags for every h9 run, such as --backend native
 #   H9BUILD_CACHE  the cache (default: ${XDG_CACHE_HOME:-~/.cache}/h9build)
 #   H9BUILD_BASE_PACKAGES  more Wolfi packages for the base root
+#   H9BUILD_BUILD_PACKAGES more Wolfi packages for the builder root
+#   H9BUILD_RAILPACK  a Railpack binary to use instead of the release
+#   H9BUILD_MEMORY  guest memory for the build machines (default 4G)
+#   H9BUILD_RUBY_COMPILE=1  build Ruby from source rather than use mise's precompiled one
 #   HTTPS_PROXY, SSL_CERT_FILE  passed into the guest when set
 set -eu
 
 ALPINE_VERSION=3.22.2
 RAILPACK_VERSION=0.43.0
 WOLFI_REPO=https://packages.wolfi.dev/os
-# The base root every app runs on: glibc, its loader, the C++ runtime most
-# prebuilt runtimes link against, certificates, time zones, busybox for
-# /bin/sh (start commands and npm scripts run through it), and bash, which
-# some of mise's runtimes use for their wrappers (node's npm).
-BASE_PACKAGES="wolfi-baselayout glibc ld-linux libgcc libstdc++ ca-certificates-bundle tzdata busybox bash ${H9BUILD_BASE_PACKAGES:-}"
-# The builder adds what the guest scripts and package managers use.
-BUILDER_PACKAGES="$BASE_PACKAGES jq git"
+# The base root every app runs on, as Railpack's runtime image: glibc, its
+# loader, the C++ runtime most prebuilt runtimes link against, OpenSSL and
+# zlib, certificates, time zones, busybox for /bin/sh (start commands and npm
+# scripts run through it), and bash, which some of mise's runtimes use for
+# their wrappers (node's npm).
+BASE_PACKAGES="wolfi-baselayout glibc ld-linux libgcc libstdc++ libssl3 zlib ca-certificates-bundle tzdata busybox bash ${H9BUILD_BASE_PACKAGES:-}"
+# The builder adds what Railpack's builder image has for building: compilers
+# and the usual headers, which runtimes mise builds from source and native
+# packages (node-gyp, gems, cgo) need, and jq and git, which the guest
+# scripts and package managers use.
+BUILDER_PACKAGES="$BASE_PACKAGES jq git curl unzip zip xz rsync build-base cmake autoconf automake libtool pkgconf perl
+	openssl-dev zlib-dev bzip2-dev xz-dev zstd-dev readline-dev sqlite-dev ncurses-dev libxml2-dev icu-dev libffi-dev yaml-dev gmp-dev
+	${H9BUILD_BUILD_PACKAGES:-}"
 
 usage() { echo "usage: h9build [-o OUT] APPDIR" >&2; exit 2; }
 log() { echo "h9build: $*" >&2; }
@@ -88,8 +98,8 @@ fetch() {
 }
 
 # The bootstrap: Alpine's minirootfs, whose apk installs Wolfi packages into
-# a root in the guest's memory, and Railpack. Both are static or self-contained,
-# so nothing here depends on the host's OS.
+# a root, and Railpack. Both are static or self-contained, so nothing here
+# depends on the host's OS.
 boot=$cache/bootstrap/alpine-$ALPINE_VERSION-$arch
 if [ ! -d "$boot/etc" ]; then
 	fetch "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/$arch/alpine-minirootfs-$ALPINE_VERSION-$arch.tar.gz" "$cache/dl/alpine-$ALPINE_VERSION-$arch.tgz"
@@ -97,6 +107,7 @@ if [ ! -d "$boot/etc" ]; then
 	tar -xzf "$cache/dl/alpine-$ALPINE_VERSION-$arch.tgz" -C "$boot.tmp"
 	mv "$boot.tmp" "$boot"
 fi
+mkdir -p "$boot/r"
 fetch "$WOLFI_REPO/wolfi-signing.rsa.pub" "$cache/bootstrap/wolfi-signing.rsa.pub"
 tools=$cache/tools
 if [ ! -x "$tools/railpack" ]; then
@@ -104,49 +115,96 @@ if [ ! -x "$tools/railpack" ]; then
 	mkdir -p "$tools"
 	tar -xzf "$cache/dl/railpack-$RAILPACK_VERSION-$rparch.tgz" -C "$tools" railpack
 fi
+railpack=$tools/railpack
+if [ -n "${H9BUILD_RAILPACK:-}" ]; then
+	[ -x "$H9BUILD_RAILPACK" ] || die "$H9BUILD_RAILPACK: not executable"
+	railpack=$(cd "$(dirname "$H9BUILD_RAILPACK")" && pwd)/$(basename "$H9BUILD_RAILPACK")
+fi
 
 # root NAME PACKAGES...: a Wolfi root with those packages, made once per
-# package set; prints its directory.
+# package set; prints its directory. apk writes it in place, as the up layer
+# over an empty directory of the Alpine root.
 root() {
 	name=$1
 	shift
 	key=$(echo "$arch $WOLFI_REPO $*" | sha)
 	dir=$cache/roots/$name-$key
 	if [ ! -d "$dir/usr" ]; then
-		log "making the $name root ($*)"
+		log "making the $name root"
 		work=$cache/roots/.work-$name-$key
-		mkdir -p "$work"
+		rm -rf "$work" "$dir.tmp"
+		mkdir -p "$work" "$dir.tmp"
 		cp "$cache/bootstrap/wolfi-signing.rsa.pub" "$here/guest/roots.sh" "$work/"
-		h9run "$work" --dir "$boot:#L" --net outbound \
+		h9run "$work" --dir "$boot:#L" --dir "$dir.tmp:#L/r:up" --net outbound \
 			/bin/sh /mnt/term/cwd/roots.sh "$arch" "$WOLFI_REPO" "$@" >&2
-		mkdir -p "$dir.tmp"
-		tar -xf "$work/root.tar" -C "$dir.tmp"
-		# apk's scripts can't run (they chroot), so do busybox's install
-		# here: a link for each applet that no package provides.
+		# apk's scripts can't run, so do busybox's install here: a link
+		# for each applet that no package provides.
 		for a in $(h9run "$work" --dir "$dir.tmp:#L" /usr/bin/busybox --list); do
 			[ -e "$dir.tmp/usr/bin/$a" ] || [ -L "$dir.tmp/usr/bin/$a" ] || ln -s busybox "$dir.tmp/usr/bin/$a"
 		done
-		# Mount points: binds need their destination to exist, and stack
-		# members rooted below the top need their parent.
-		mkdir -p "$dir.tmp/app" "$dir.tmp/mise" "$dir.tmp/h9build/src" "$dir.tmp/h9build/tools" "$dir.tmp/h9build/guest"
+		# /app, where the run starts, and mount points for the guest
+		# scripts' trees: stack members rooted below the top need their
+		# parent.
+		mkdir -p "$dir.tmp/app" "$dir.tmp/h9build/src" "$dir.tmp/h9build/tools" "$dir.tmp/h9build/guest" "$dir.tmp/h9build/railpack"
 		rm -rf "$work"
 		mv "$dir.tmp" "$dir"
 	fi
 	echo "$dir"
 }
 
-base=$(root base $BASE_PACKAGES)
+# wolfi FILE: the Wolfi packages for the Debian packages FILE names, as
+# alternatives for roots.sh: a name of our own for the common ones, else the
+# Debian name, without its version or its lib prefix (libfoo-dev is often
+# foo-dev in Wolfi).
+wolfi() {
+	while read -r p; do
+		case $p in
+		build-essential) echo build-base ;;
+		pkg-config) echo pkgconf ;;
+		libssl-dev) echo openssl-dev ;;
+		zlib1g-dev) echo zlib-dev ;;
+		zlib1g) echo zlib ;;
+		libjemalloc2) echo jemalloc ;;
+		libatomic1) echo libatomic ;;
+		libyaml-0-2) echo yaml ;;
+		libpq5) echo libpq ;;
+		libpq-dev) echo 'libpq-dev|postgresql-dev' ;;
+		libsqlite3-dev) echo sqlite-dev ;;
+		libsqlite3-0) echo sqlite-libs ;;
+		libvips-dev) echo vips-dev ;;
+		libvips42 | libvips) echo vips ;;
+		libmagickwand-dev) echo imagemagick-dev ;;
+		default-libmysqlclient-dev) echo 'mariadb-connector-c-dev|mariadb-dev' ;;
+		libncurses*-dev) echo ncurses-dev ;;
+		*-dev)
+			b=${p%-dev}
+			echo "$p|${b#lib}-dev|$(echo "$b" | sed 's/[0-9.-]*$//')-dev|$(echo "${b#lib}" | sed 's/[0-9.-]*$//')-dev"
+			;;
+		*) echo "$p|$(echo "$p" | sed 's/[0-9.-]*$//')|$(echo "${p#lib}" | sed 's/[0-9.-]*$//')" ;;
+		esac
+	done <"$1"
+}
+
 builder=$(root builder $BUILDER_PACKAGES)
 
-# The output, from scratch each time; the per-app caches survive.
-mkdir -p "$out"
-rm -rf "$out/layers" "$out/layers.txt" "$out/plan.json" "$out/env" "$out/run"
-mkdir -p "$out/layers/runtime/mise" "$out/layers/app/app" "$out/layers/deps" "$out/cache"
+# The output. The layers and their keys stay between builds, so a layer
+# whose inputs haven't changed is used again; the per-app caches stay too.
+mkdir -p "$out/layers" "$out/cache"
+rm -f "$out/plan.json" "$out/env" "$out/run" "$out/layers.txt" "$out"/*.txt
+rm -rf "$out/layers"/*.tmp "$out/layers"/*.keep
 
+# The source is at /h9build/src/NAME in the guest, under its own name, as
+# Railpack names some things after the app's directory (a CMake binary).
+name=$(basename "$src")
+# Build machines get more memory than h9's default of 1 GB: compilers and
+# package managers' parallel workers need it.
+memory=${H9BUILD_MEMORY:-4G}
 guest() {
-	h9run "$out" --dir "$builder:#L" --dir "$tools:#L/h9build/tools" \
-		--dir "$here/guest:#L/h9build/guest" --dir "$src:#L/h9build/src" \
-		--net outbound --env HOME=/root "$@"
+	h9run "$out" --memory "$memory" --dir "$builder:#L" --dir "$tools:#L/h9build/tools" \
+		--dir "$here/guest:#L/h9build/guest" --dir "$src:#L/h9build/src/$name" --env "H9BUILD_SRC=/h9build/src/$name" \
+		--dir "$(dirname "$railpack"):#L/h9build/railpack" \
+		--net outbound --env HOME=/root --env "H9BUILD_RAILPACK=/h9build/railpack/$(basename "$railpack")" \
+		--env "H9BUILD_RUBY_COMPILE=${H9BUILD_RUBY_COMPILE:-}" "$@"
 }
 
 log "planning"
@@ -157,11 +215,86 @@ for m in "$out"/cache/mise-bin/mise-*; do
 	[ -e "$tools/$(basename "$m")" ] || mv "$m" "$tools/"
 done
 
-log "building"
-# Plain binds of host directories, not stack members, so renames across
-# directories in them are the host's; c allows creates in them.
-guest --bind /mnt/term/cwd/layers/runtime/mise:#L/mise:c --bind /mnt/term/cwd/layers/app/app:#L/app:c \
-	/bin/sh /h9build/guest/build.sh
+# The plan's apt packages, as Wolfi packages in the roots: the build ones in
+# the builder, and the runtime ones in the base root the app runs on.
+if [ -s "$out/apt-build.txt" ]; then
+	log "build packages: $(tr '\n' ' ' <"$out/apt-build.txt")"
+	# shellcheck disable=SC2046
+	builder=$(root builder $BUILDER_PACKAGES $(wolfi "$out/apt-build.txt"))
+fi
+# shellcheck disable=SC2046
+base=$(root base $BASE_PACKAGES $(wolfi "$out/apt-runtime.txt"))
+
+# The layers, each built as the up layer over the builder root and the layers
+# below it, from the plan's steps for it. Each is built in LAYER.tmp and
+# moved into place when its steps succeed, so a failed step leaves no layer.
+lower=
+key=$(basename "$builder")
+for l in runtime deps app; do
+	key=$(printf '%s %s\n' "$key" "$(awk -v l="$l" '$1 == l { print $2 }' "$out/keys.txt")" | sha)
+	d=$out/layers/$l
+	if [ -d "$d" ] && [ "$(cat "$d.key" 2>/dev/null)" = "$key" ]; then
+		log "layer $l: unchanged"
+	else
+		rm -rf "$d" "$d.key"
+		mkdir -p "$d.tmp"
+		if grep -q " $l " "$out/steps.txt"; then
+			log "layer $l"
+			# shellcheck disable=SC2086
+			guest $lower --dir "$d.tmp:#L:up" --tmp '#L/tmp' /bin/sh /h9build/guest/build.sh "$l"
+		fi
+		mv "$d.tmp" "$d"
+		echo "$key" >"$d.key"
+	fi
+	lower="$lower --dir $d:#L"
+done
+# shellcheck disable=SC2086
+guest $lower --tmp '#L/tmp' /bin/sh /h9build/guest/build.sh env
+
+# Prune the app layer to what the plan deploys from it: the paths it takes
+# from the build, less their excludes. An exclude that a layer below holds is
+# whited out, so it doesn't show through. The deps and runtime layers aren't
+# pruned, as they're the next build's lowers.
+a=$out/layers/app
+k=$a.keep
+mkdir -p "$k"
+awk '$1 == "app" { print $2 }' "$out/deploy.txt" | sort -u | while read -r p; do
+	[ -e "$a$p" ] || [ -L "$a$p" ] || continue
+	mkdir -p "$k$(dirname "$p")"
+	mv "$a$p" "$k$p"
+done
+awk '$1 == "app" { for (i = 3; i <= NF; i++) print $i }' "$out/deploy.txt" | sort -u | while read -r e; do
+	# An exclude that another input takes is kept.
+	awk -v e="$e" '$1 != "runtime" && ($2 == e || index($2, e "/") == 1) { f = 1 } END { exit !f }' "$out/deploy.txt" && continue
+	rm -rf "$k$e"
+	for l in deps runtime; do
+		if [ -e "$out/layers/$l$e" ]; then
+			mkdir -p "$k$(dirname "$e")"
+			: >"$k$(dirname "$e")/.wh.$(basename "$e")"
+			break
+		fi
+	done
+done
+rm -rf "$a"
+mv "$k" "$a"
+
+# The layers the run stacks, in order: each one that holds something the plan
+# deploys. The runtime only when the plan deploys from a packages step (a Go
+# binary doesn't need its toolchain), and deps when the plan deploys a path
+# it holds (node_modules, a venv, gems), from it or from the build over it.
+has() { # LAYER WHICH: whether LAYER holds a path the plan deploys from WHICH layers
+	awk -v w="$2" '$1 ~ w { print $2 }' "$out/deploy.txt" | while read -r p; do
+		if [ -e "$out/layers/$1$p" ]; then
+			echo yes
+			break
+		fi
+	done
+}
+{
+	if [ -n "$(has runtime '^runtime$')" ]; then echo runtime; fi
+	if [ -n "$(has deps '^(deps|app)$')" ]; then echo deps; fi
+	if [ -n "$(ls -A "$a")" ]; then echo app; fi
+} >"$out/layers.txt"
 
 # OUT/run: the app on h9, from the layers, over the base root. The start
 # command comes from the plan, in $H9BUILD_START; arguments replace it.
@@ -175,7 +308,7 @@ q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 	while IFS= read -r l; do printf ' --dir "$here/layers/%s:#L"' "$l"; done <"$out/layers.txt"
 	printf ' --net enable --env HOME=/root'
 	while IFS= read -r kv; do printf ' --env %s' "$(q "$kv")"; done <"$out/env"
-	printf ' /bin/sh -c %s sh "$@"\n' "$(q 'cd /app && if [ $# -gt 0 ]; then exec "$@"; fi; exec sh -c "$H9BUILD_START"')"
+	printf ' /bin/sh -c %s sh "$@"\n' "$(q 'cd /app 2>/dev/null; if [ $# -gt 0 ]; then exec "$@"; fi; exec sh -c "$H9BUILD_START"')"
 } >"$out/run"
 chmod +x "$out/run"
 
