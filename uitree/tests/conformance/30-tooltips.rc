@@ -1,5 +1,5 @@
 #!/bin/rc
-# 29-tooltips: core.md § Node files and § Overlays (tooltips), and
+# 30-tooltips: core.md § Node files and § Overlays (tooltips), and
 # components.md § Tooltips. The `tooltip` file every node has, in `new`,
 # `set` and documents, and the `tooltip` overlay's props and verbs. The
 # host opens either on hover with no round trip, so neither sends events.

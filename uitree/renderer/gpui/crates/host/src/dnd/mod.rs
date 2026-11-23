@@ -1,18 +1,21 @@
 //! Drag and drop (transfer layer), on `uit_drag`.
 //!
-//! **Receiving.** A node with a non-empty `drop` file accepts drags whose
-//! type it lists (`files`, `text`, `uri`, or a client word such as `note`);
-//! an empty `drop` with `drop` in `on` accepts any type. While an accepted
-//! drag hovers, the node's `hover:` and `drop-over:` style words apply in
-//! GPUI with no round trip. A drop goes to the core as `UIT_DRAG_DROP`
-//! with `type=`, and for platform files `files=` (the host paths, one
-//! attribute per file); the core makes `/drags/N`, serves the files and
-//! sends the `drop` request. Its answer comes back as `UIT_CMD_ANSWER`.
+//! **Receiving.** A node with a non-empty `drop` file accepts drags offering
+//! a type it lists (`file`, `text`, `uri`, or a client type such as
+//! `x.notes.card`); an empty `drop` with `drop` in `on` accepts any type.
+//! While an accepted drag hovers, the node's `hover:` and `drop-over:`
+//! style words apply in GPUI with no round trip. A drop goes to the core
+//! as `UIT_DRAG_DROP`. Files from the platform go as `file=` attributes,
+//! one host path each: the core turns each into a read-only file handle
+//! (`$ui/file/ID`) and an item of the offer's `file` list, so the client
+//! gets the bytes and never the path (transfer.md: bytes cross, paths
+//! don't). The core sends the `drop` request; its answer comes back as
+//! `UIT_CMD_ANSWER`.
 //!
-//! **Starting a drag.** A node with `drag` in `on` and a `drag-type` file
-//! starts a GPUI drag when pressed and moved: `UIT_DRAG_START` returns the
-//! drag's number, and `UIT_DRAG_END` (with `result=dropped|cancelled`)
-//! ends it. The core sends `dragstart` and `dragend`.
+//! **Starting a drag.** A node with `drag` in `on` and a `drag-types` file
+//! starts a GPUI drag when pressed and moved: `UIT_DRAG_START` makes the
+//! offer and sends `dragstart`, and `UIT_DRAG_END` (with
+//! `result=dropped|cancelled`) sends `dragend` and ends it.
 //!
 //! Drags out of the window to the platform are not offered in v1.
 
@@ -32,8 +35,8 @@ use crate::{NodeView, ParsedStyle};
 pub struct DragValue {
     /// The core's number for the drag, set when it starts.
     n: Cell<u64>,
-    /// The source's `drag-type`.
-    ty: String,
+    /// The source's `drag-types`, richest first.
+    types: Vec<String>,
     source: Node,
     /// Whether a target took it.
     dropped: Rc<Cell<bool>>,
@@ -44,8 +47,19 @@ fn accepts(node: &NodeView) -> Vec<String> {
     node.text("drop").unwrap_or_default().split_whitespace().map(str::to_string).collect()
 }
 
-fn accepted(list: &[String], any: bool, ty: &str) -> bool {
-    any || list.iter().any(|w| w == ty)
+fn accepted(list: &[String], any: bool, offered: &[&str]) -> bool {
+    any || offered.iter().any(|ty| list.iter().any(|w| w == ty))
+}
+
+/// The words of a node's `drag-types` file.
+fn drag_types(node: &NodeView) -> Vec<String> {
+    node.text("drag-types").unwrap_or_default().split_whitespace().map(str::to_string).collect()
+}
+
+/// `UIT_DRAG_DROP` attributes for files dropped from the platform: one
+/// `file=PATH` each. The core keeps the paths to itself.
+pub(crate) fn file_attrs(paths: &[std::path::PathBuf]) -> Vec<(String, String)> {
+    paths.iter().map(|p| ("file".to_string(), p.to_string_lossy().into_owned())).collect()
 }
 
 
@@ -73,9 +87,10 @@ pub(crate) fn attach(node: &NodeView, st: &ParsedStyle, on: &[String], mut el: g
             let list = list.clone();
             el = el.can_drop(move |v, _, _| {
                 if let Some(d) = v.downcast_ref::<DragValue>() {
-                    accepted(&list, any, &d.ty)
+                    let offered: Vec<&str> = d.types.iter().map(String::as_str).collect();
+                    accepted(&list, any, &offered)
                 } else if v.downcast_ref::<ExternalPaths>().is_some() {
-                    accepted(&list, any, "files")
+                    accepted(&list, any, &["file"])
                 } else {
                     false
                 }
@@ -96,24 +111,23 @@ pub(crate) fn attach(node: &NodeView, st: &ParsedStyle, on: &[String], mut el: g
             let host = node.host.clone();
             el = el.on_drop::<DragValue>(move |d, window, _| {
                 d.dropped.set(true);
-                drop_at(&host, target, d.n.get(), window.mouse_position(), &[("type", &d.ty)]);
+                drop_at(&host, target, d.n.get(), window.mouse_position(), &[]);
             });
         }
         {
             let host = node.host.clone();
             el = el.on_drop::<ExternalPaths>(move |p, window, _| {
-                let files: Vec<String> = p.paths().iter().map(|f| f.to_string_lossy().into_owned()).collect();
-                let mut attrs: Vec<(&str, &str)> = vec![("type", "files")];
-                attrs.extend(files.iter().map(|f| ("file", f.as_str())));
+                let owned = file_attrs(p.paths());
+                let attrs: Vec<(&str, &str)> = owned.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
                 drop_at(&host, target, 0, window.mouse_position(), &attrs);
             });
         }
     }
 
-    let ty = node.text("drag-type").map(|t| t.trim().to_string()).unwrap_or_default();
-    if on.iter().any(|w| w == "drag") && !ty.is_empty() {
-        let label: SharedString = node.text("label").or_else(|| node.text("text")).filter(|s| !s.is_empty()).unwrap_or_else(|| ty.clone()).into();
-        let value = DragValue { n: Cell::new(0), ty, source: node.node(), dropped: Rc::new(Cell::new(false)) };
+    let types = drag_types(node);
+    if on.iter().any(|w| w == "drag") && !types.is_empty() {
+        let label: SharedString = node.text("label").or_else(|| node.text("text")).filter(|s| !s.is_empty()).unwrap_or_else(|| types[0].clone()).into();
+        let value = DragValue { n: Cell::new(0), types, source: node.node(), dropped: Rc::new(Cell::new(false)) };
         let host = node.host.clone();
         el = el.on_drag(value, move |v, _offset, window, cx| {
             let pos = window.mouse_position();
@@ -121,7 +135,7 @@ pub(crate) fn attach(node: &NodeView, st: &ParsedStyle, on: &[String], mut el: g
                 .core
                 .try_borrow()
                 .ok()
-                .and_then(|c| c.drag(DragKind::Start, 0, v.source, f32::from(pos.x), f32::from(pos.y), &[("type", &v.ty)]).ok())
+                .and_then(|c| c.drag(DragKind::Start, 0, v.source, f32::from(pos.x), f32::from(pos.y), &[]).ok())
                 .unwrap_or(0);
             v.n.set(n);
             let label = label.clone();

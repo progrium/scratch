@@ -42,6 +42,7 @@ $ui/drag/7/
     types          the offered types, richest first
     data/TYPE      the bytes of one representation, fetched on open
     item/N/file    for type file: one line, file/ID, naming item N's handle
+                   (N from 0, in the order of data/file)
 ```
 
 The client reads what it wants, then answers `accept seq=301 [op=copy|move]`
@@ -91,7 +92,8 @@ $ui/file/ID/
 - **IDs are opaque words.** Every reference to a handle is the path
   `file/ID`, written on one line in an offer's `item/N/file`.
 - **Lifetime.** A handle lives until the client writes `release` to its
-  `ctl` or the app quits. A `gone - file/ID` event follows a file the
+  `ctl` or the app quits. A refused drop (by `refuse` or with no answer)
+  releases the handles its offer made. A `gone - file/ID` event follows a file the
   host can no longer reach, and `change - file/ID` a change made outside
   the app (where the platform reports it; a state event).
 - **Access.** Handles from drops are read-only. `access=rw` on a picker,

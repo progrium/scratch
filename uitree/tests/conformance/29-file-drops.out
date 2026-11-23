@@ -1,0 +1,67 @@
+ok
+# a drop of two files: the offer lists them, each item names a handle
+resync - -
+drop bin box drag=20 pt=5,5 types=file via=user win=main
+file
+file name=a.txt size=11
+file name='b c.csv' size=3
+0
+1
+file/ID
+# the client reads the bytes, then accepts
+ctl
+data
+events
+info
+name
+a.txt
+|
+b c.csv
+|
+size=11 mtime=0
+hello world
+ok
+# the drag goes, the handles stay
+no
+yes
+yes
+x,y
+# a dropped file is read-only, and the client never sees a path
+permission denied
+0
+# file/ lists the live handles; release ends one
+ID
+ok
+no
+yes
+ok
+no
+# a host file and a host directory: bytes and dir/ come from the host
+file name=report.csv size=26
+file name=drop dir
+ok
+name,qty
+bolts,40
+nuts,12
+size=26 mtime=T
+size=0 mtime=T dir
+ctl
+dir
+events
+info
+name
+report.csv
+sub
+a note
+no
+no
+ok
+ok
+# a refused drop releases its handles
+ok
+no
+no
+# so does a drop nobody answers
+no
+no
+exit=0

@@ -10,6 +10,8 @@
 //! frame [win=W]
 //! tick SECONDS
 //! drag n=N type=TYPE data=TEXT
+//! drag n=N type=file name=NAME data=BYTES    (a file item, held in memory)
+//! drag n=N type=file path=HOST-PATH          (a file item from the host)
 //! key win=W stroke=KEYS
 //! menu item=ID
 //! appearance mode=light|dark
@@ -51,7 +53,9 @@ pub const Inject = union(enum) {
     },
     frame: struct { win: ?[]const u8 = null },
     tick: struct { ns: u64 },
-    drag: struct { n: u64, type: []const u8, data: []const u8 },
+    /// One representation of drag N's offer, or for `type=file` one file
+    /// item: `name=` with `data=` held in memory, or `path=` a host file.
+    drag: struct { n: u64, type: []const u8, data: []const u8, name: ?[]const u8 = null, path: ?[]const u8 = null },
     key: struct { win: []const u8, stroke: []const u8 },
     menu: struct { item: []const u8 },
     appearance: struct { dark: bool },
@@ -115,10 +119,16 @@ pub fn parse(arena: Allocator, line: []const u8, err: *Err) fsmod.Error!Inject {
     }
     if (std.mem.eql(u8, verb, "drag")) {
         const ns = c.attr("n") orelse return err.set("bad syntax: drag needs n=");
+        const ty = c.attr("type") orelse return err.set("bad syntax: drag needs type=");
+        const name = c.attr("name");
+        const path = c.attr("path");
+        if (std.mem.eql(u8, ty, "file") and name == null and path == null) return err.set("bad syntax: drag type=file needs name= or path=");
         return .{ .drag = .{
             .n = std.fmt.parseInt(u64, ns, 10) catch return err.print("bad value: {s}", .{ns}),
-            .type = c.attr("type") orelse return err.set("bad syntax: drag needs type="),
+            .type = ty,
             .data = c.attr("data") orelse "",
+            .name = name,
+            .path = path,
         } };
     }
     if (std.mem.eql(u8, verb, "key")) {
@@ -237,7 +247,10 @@ test "parse inject lines" {
     try t.expectEqualStrings("a b", m.mirror.value);
 
     try t.expect((try parse(a, "appearance mode=dark", &err)).appearance.dark);
-    try t.expectEqual(@as(u64, 3), (try parse(a, "drag n=3 type=text/plain data=hi", &err)).drag.n);
+    try t.expectEqual(@as(u64, 3), (try parse(a, "drag n=3 type=text data=hi", &err)).drag.n);
+    try t.expectEqualStrings("a.txt", (try parse(a, "drag n=3 type=file name=a.txt data=hi", &err)).drag.name.?);
+    try t.expectEqualStrings("/tmp/x", (try parse(a, "drag n=3 type=file path=/tmp/x", &err)).drag.path.?);
+    try t.expectError(error.Failed, parse(a, "drag n=3 type=file data=hi", &err));
     try t.expectEqualStrings("cmd-s", (try parse(a, "key win=main stroke=cmd-s", &err)).key.stroke);
     try t.expectEqualStrings("save", (try parse(a, "menu item=save", &err)).menu.item);
     _ = try parse(a, "frame", &err);

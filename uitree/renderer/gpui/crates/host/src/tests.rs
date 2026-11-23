@@ -269,3 +269,40 @@ fn scroll_origin_round_trips(cx: &mut TestAppContext) {
     let o = h.read(&format!("{M}/sc/origin")).unwrap_or_default();
     assert_eq!(o.trim(), "0 30");
 }
+
+/// transfer.md § Host files: a file dropped from the platform reaches the
+/// client as a read-only handle serving its bytes, never as a host path.
+#[gpui::test]
+fn platform_file_drop_offers_a_handle_not_a_path(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("uitree-drop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("report.csv");
+    std::fs::write(&file, "a,b\n1,2\n").unwrap();
+    let path = file.to_string_lossy().into_owned();
+
+    let mut h = window(cx);
+    h.ctl(M, "new div bin tag=bin : w=200 h=100 drop-over:bg=accent");
+    h.write(&format!("{M}/bin/drop"), "file");
+    let mut ev = h.subscribe(&format!("{M}/events"));
+    h.drop_files(&format!("{M}/bin"), &[file.clone()]);
+    let lines = h.events(&mut ev);
+    let drop = lines.iter().find(|l| l.starts_with("drop bin bin ")).unwrap_or_else(|| panic!("{lines:?}"));
+    assert!(drop.contains(" types=file"), "{drop}");
+    assert!(!lines.iter().any(|l| l.contains(&path)), "a host path reached the client: {lines:?}");
+    let n = drop.split_whitespace().find_map(|w| w.strip_prefix("drag=")).unwrap().to_string();
+    let seq = drop.split_whitespace().find_map(|w| w.strip_prefix("seq=")).unwrap().to_string();
+
+    assert_eq!(h.read(&format!("drag/{n}/types")).as_deref(), Some("file"));
+    assert_eq!(h.read(&format!("drag/{n}/data/file")).as_deref(), Some("file name=report.csv size=8"));
+    let handle = h.read(&format!("drag/{n}/item/0/file")).unwrap().trim().to_string();
+    assert!(handle.starts_with("file/"), "{handle}");
+    h.write(&format!("{M}/bin/ctl"), &format!("accept seq={seq}"));
+    assert_eq!(h.read(&format!("drag/{n}/types")), None);
+    // The handle outlives the drag; its bytes come from the host file.
+    assert_eq!(h.read(&format!("{handle}/name")).as_deref(), Some("report.csv"));
+    assert_eq!(h.read(&format!("{handle}/data")).as_deref(), Some("a,b\n1,2\n"));
+    assert!(h.try_write(&format!("{handle}/data"), "x").is_err(), "a dropped file is read-only");
+    h.write(&format!("{handle}/ctl"), "release");
+    assert_eq!(h.read(&format!("{handle}/name")), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}

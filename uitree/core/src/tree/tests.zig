@@ -431,7 +431,7 @@ test "node files and computed reads" {
     try tt.expectEqual(tree.Kind.events, (try snap.stat(f.a(), b ++ "/events")).kind);
     try tt.expectEqual(tree.Kind.readonly, (try snap.stat(f.a(), b ++ "/bounds")).kind);
     try tt.expectEqual(tree.Kind.dir, (try snap.stat(f.a(), b)).kind);
-    try tt.expectEqualStrings("version ctl events trace keys clip menu theme asset types style win", try listNames(&f, ""));
+    try tt.expectEqualStrings("version ctl events trace keys clip clipdata file menu theme asset types style win", try listNames(&f, ""));
     try tt.expectEqualStrings("type order ctl events tree bounds style tag on context tooltip drop drag-types title bounds inner state focus over ok", try listNames(&f, R));
     try tt.expectEqualStrings("main", try listNames(&f, "win"));
     // 0.2: over/ lists only its overlays.
@@ -815,28 +815,105 @@ test "request times out to default" {
     try tt.expectEqual(Code.app_gone, try f.code("ctl", try std.fmt.allocPrint(f.a(), "keep seq={d}", .{seq})));
 }
 
-test "drop request and drag data" {
+test "a host's drop: typed offer, file items as handles, accept keeps them" {
     var f: Fx = undefined;
     try f.app();
     defer f.deinit();
     try f.ok(R ++ "/ctl", "new div notes");
-    try f.ok(R ++ "/notes/drop", "files text\n");
-    try f.t.dragData(7, "/drag/7/files/a.txt\n");
-    try f.expectRead("drag/7/data", "/drag/7/files/a.txt\n");
+    try f.ok(R ++ "/notes/drop", "file text\n");
+    const id = try f.t.files.addMem("a.txt", "hello");
+    const n = try f.t.dragFile(0, id);
+    _ = try f.t.dragData(n, "text", "a.txt");
+    const d = try std.fmt.allocPrint(f.a(), "drag/{d}", .{n});
+    try f.expectRead(try std.fmt.allocPrint(f.a(), "{s}/types", .{d}), "file\ntext\n");
+    try f.expectRead(try std.fmt.allocPrint(f.a(), "{s}/data/file", .{d}), "file name=a.txt size=5\n");
+    try f.expectRead(try std.fmt.allocPrint(f.a(), "{s}/item/0/file", .{d}), try std.fmt.allocPrint(f.a(), "file/{d}\n", .{id}));
+    try tt.expectEqualStrings("file,text", try f.t.dragTypes(f.a(), n));
+    // A host's offer is read-only.
+    try tt.expectEqual(Code.permission_denied, try f.code(try std.fmt.allocPrint(f.a(), "{s}/data/text", .{d}), "x"));
     const s = try f.sub(.app);
     defer s.close();
     const seq = try f.t.request(.{ .name = "drop", .node = f.node(R ++ "/notes").?, .attrs = &.{
-        .{ .key = "type", .value = "files" },
-        .{ .key = "drag", .value = "7" },
-        .{ .key = "pt", .value = "40,212" },
+        .{ .key = "drag", .value = try std.fmt.allocPrint(f.a(), "{d}", .{n}) },
+        .{ .key = "types", .value = "file,text" },
     } }, "refuse");
-    try f.ok(R ++ "/notes/ctl", try std.fmt.allocPrint(f.a(), "accept seq={d}", .{seq}));
-    try tt.expect(!try f.exists("drag/7/data"));
-    // A client-started drag: the client writes the payload.
-    try f.t.dragData(8, "");
-    try f.ok("drag/8/data", "note:42");
-    try tt.expectEqualStrings("note:42", f.t.current().drag(8).?.val.bytes);
-    try tt.expectEqual(Code.not_found, try f.code("drag/9/data", "x"));
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/notes/ctl", try std.fmt.allocPrint(f.a(), "accept seq={d} op=steal", .{seq})));
+    try f.ok(R ++ "/notes/ctl", try std.fmt.allocPrint(f.a(), "accept seq={d} op=move", .{seq}));
+    try tt.expect(!try f.exists(d));
+    // The handle outlives the drag.
+    const h = f.t.files.get(id).?;
+    h.unref(tt.allocator);
+    // A host's drag has no source to tell the op.
+    try tt.expect(f.t.takeDragOp(n) == null);
+}
+
+test "a refused drop releases its handles, by answer or by timeout" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new div notes");
+    try f.ok(R ++ "/notes/drop", "file\n");
+    const s = try f.sub(.app);
+    defer s.close();
+    const id1 = try f.t.files.addMem("a", "1");
+    const n1 = try f.t.dragFile(0, id1);
+    const seq = try f.t.request(.{ .name = "drop", .node = f.node(R ++ "/notes").?, .attrs = &.{
+        .{ .key = "drag", .value = try std.fmt.allocPrint(f.a(), "{d}", .{n1}) },
+    } }, "refuse");
+    try f.ok(R ++ "/notes/ctl", try std.fmt.allocPrint(f.a(), "refuse seq={d}", .{seq}));
+    try tt.expect(f.t.files.get(id1) == null);
+    const id2 = try f.t.files.addMem("b", "2");
+    const n2 = try f.t.dragFile(0, id2);
+    try tt.expect(n2 != n1);
+    _ = try f.t.request(.{ .name = "drop", .node = f.node(R ++ "/notes").?, .attrs = &.{
+        .{ .key = "drag", .value = try std.fmt.allocPrint(f.a(), "{d}", .{n2}) },
+    } }, "refuse");
+    try f.t.advanceClock(tree.request_timeout_ns * 2);
+    try tt.expect(f.t.files.get(id2) == null);
+    try tt.expect(!try f.exists(try std.fmt.allocPrint(f.a(), "drag/{d}", .{n2})));
+}
+
+test "a client drag: drag-types are offered, the source writes the bytes" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new div card");
+    try f.ok(R ++ "/card/drag-types", "x.note text\n");
+    const n = try f.t.dragStart(0, f.node(R ++ "/card").?);
+    const d = try std.fmt.allocPrint(f.a(), "drag/{d}", .{n});
+    try f.expectRead(try std.fmt.allocPrint(f.a(), "{s}/types", .{d}), "x.note\ntext\n");
+    try f.ok(try std.fmt.allocPrint(f.a(), "{s}/data/x.note", .{d}), "note:42");
+    try f.expectRead(try std.fmt.allocPrint(f.a(), "{s}/data/x.note", .{d}), "note:42");
+    try tt.expectEqual(Code.not_found, try f.code(try std.fmt.allocPrint(f.a(), "{s}/data/Bad", .{d}), "x"));
+    try tt.expectEqual(Code.not_found, try f.code("drag/999/data/text", "x"));
+    try f.ok(R ++ "/ctl", "new div bin");
+    try f.ok(R ++ "/bin/drop", "x.note\n");
+    const s = try f.sub(.app);
+    defer s.close();
+    const seq = try f.t.request(.{ .name = "drop", .node = f.node(R ++ "/bin").?, .attrs = &.{
+        .{ .key = "drag", .value = try std.fmt.allocPrint(f.a(), "{d}", .{n}) },
+    } }, "refuse");
+    try f.ok(R ++ "/bin/ctl", try std.fmt.allocPrint(f.a(), "accept seq={d} op=move", .{seq}));
+    try tt.expectEqualStrings("move", f.t.takeDragOp(n).?);
+    try tt.expect(f.t.takeDragOp(n) == null);
+    try f.t.dragDone(n);
+    try tt.expect(!try f.exists(d));
+}
+
+test "typed clipboard: copy lines make one clipboard, clip reads text" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("ctl", "copy text=hello\ncopy x.card='card id=42'\n");
+    try f.expectRead("clipdata/types", "text\nx.card\ngen 1\n");
+    try f.expectRead("clipdata/x.card", "card id=42");
+    try f.expectRead("clip", "hello");
+    try f.ok("clipdata/file", "file name=a.txt size=1\nfile name='b c' dir\n");
+    try f.expectRead("clipdata/types", "file\ngen 2\n");
+    try f.expectRead("clip", "a.txt\nb c\n");
+    try f.ok("clip", "plain");
+    try f.expectRead("clipdata/types", "text\ngen 3\n");
+    try tt.expectEqual(Code.bad_syntax, try f.code("ctl", "copy\n"));
 }
 
 // ---------------------------------------------------------------- batches

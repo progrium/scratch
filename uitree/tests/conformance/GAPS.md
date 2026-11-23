@@ -132,6 +132,21 @@ layer's Open questions. Carried-over items from uitreefs's GAPS.md that
     one is `status-bar`, a host extra), so 10 tests no slot names, and 27
     checks slots from whatever descriptors say.
 
+## Transfer
+
+29c. **Item numbers.** transfer.md names `item/N/file` without saying
+    where N starts. *Assumed:* 0, in `data/file` order. 29.
+29d. **A refused drop's handles.** A handle "lives until the client writes
+    `release` ... or the app quits", but a client that refuses a drop never
+    learns its handles. *Assumed:* a refused drop (answered or by timeout)
+    releases the handles it made; an accepted one leaves them to the
+    client. **(spec PR)** 29.
+29e. **`via=` on a drop.** Requests carry `via=user` like other user
+    events (15), so the drop golden in 16 does too.
+29f. **Handle `events`.** Only `gone - file/ID`, sent once a read finds the
+    host file gone, then end of file at release. `change` needs a platform
+    file watcher, which no host has yet.
+
 ## Against hyper9 and h9
 
 29. **The 9front kernel rewrites failed walks** to `file does not

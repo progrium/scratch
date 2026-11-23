@@ -1,0 +1,104 @@
+#!/bin/rc
+# 29-file-drops: transfer.md § Host files. Files dropped from the
+# platform reach the client as file handles under $ui/file/ID/, named in
+# the offer's item/N/file, never as host paths: name, info, data (bytes,
+# read-only), dir/ for a directory, ctl release. A refused drop releases
+# its handles. The headless host makes a file item with /debug/inject
+# drag type=file: name= and data= held in memory, or path= a host file
+# (fixtures/drop, relative to the directory the suite runs in).
+# needs: W3 W4
+. ./lib.rc
+need layer transfer
+mainwin
+wn=$k/win/main
+r=$wn
+wq $r/ctl new div box 'tag=bin'
+w $r/box/drop file
+
+# hid FILE: the handle an item names, file/ID.
+fn hid {
+	cat $1
+}
+# norm: handle IDs aren't fixed, so file/ID reads as file/ID.
+fn norm {
+	sed 's,file/[0-9]+,file/ID,g'
+}
+
+echo '# a drop of two files: the offer lists them, each item names a handle'
+{
+	inj drag 'n=20' 'type=file' 'name=a.txt' 'data=''hello world'''
+	inj drag 'n=20' 'type=file' 'name=''b c.csv''' 'data=x,y'
+	inj event drop 'win=main' 'node=box' 'drag=20' 'types=file' 'pt=5,5'
+	evraw 'win=main' >/tmp/ev
+	evnorm </tmp/ev
+	cat $k/drag/20/types
+	cat $k/drag/20/data/file
+	names $k/drag/20/item
+	hid $k/drag/20/item/0/file | norm
+	a=`{hid $k/drag/20/item/0/file}
+	b=`{hid $k/drag/20/item/1/file}
+	echo '# the client reads the bytes, then accepts'
+	names $k/$a
+	val $k/$a/name $k/$b/name
+	cat $k/$a/info
+	cat $k/$a/data
+	echo
+	s=`{seqof drop}
+	w $r/box/ctl accept 'seq='^$s
+	echo '# the drag goes, the handles stay'
+	exists $k/drag/20 $k/$a $k/$b
+	cat $k/$b/data
+	echo
+} <[3]$wn/events
+echo '# a dropped file is read-only, and the client never sees a path'
+w $k/$a/data overwrite
+grep -c / $k/$a/name
+echo '# file/ lists the live handles; release ends one'
+names $k/file | sed 's/[0-9]+/ID/' | sort -u
+w $k/$a/ctl release
+exists $k/$a $k/$b
+w $k/$b/ctl release
+exists $k/$b
+names $k/file
+
+echo '# a host file and a host directory: bytes and dir/ come from the host'
+{
+	inj drag 'n=21' 'type=file' 'path=fixtures/drop/report.csv'
+	inj drag 'n=21' 'type=file' 'path=fixtures/drop'
+	inj event drop 'win=main' 'node=box' 'drag=21' 'types=file' 'pt=5,5'
+	evraw 'win=main' >/tmp/ev
+	cat $k/drag/21/data/file
+	f=`{hid $k/drag/21/item/0/file}
+	d=`{hid $k/drag/21/item/1/file}
+	s=`{seqof drop}
+	w $r/box/ctl accept 'seq='^$s
+} <[3]$wn/events
+cat $k/$f/data
+sed 's/mtime=[0-9]+/mtime=T/' $k/$f/info $k/$d/info
+names $k/$d
+names $k/$d/dir
+cat $k/$d/dir/sub/note.txt
+exists $k/$d/data $k/$d/dir/nope
+w $k/$d/ctl release
+w $k/$f/ctl release
+
+echo '# a refused drop releases its handles'
+{
+	inj drag 'n=22' 'type=file' 'name=gone.txt' 'data=x'
+	inj event drop 'win=main' 'node=box' 'drag=22' 'types=file' 'pt=5,5'
+	evraw 'win=main' >/tmp/ev
+	g=`{hid $k/drag/22/item/0/file}
+	s=`{seqof drop}
+	w $r/box/ctl refuse 'seq='^$s
+	exists $k/drag/22 $k/$g
+} <[3]$wn/events
+echo '# so does a drop nobody answers'
+{
+	inj drag 'n=23' 'type=file' 'name=late.txt' 'data=x'
+	inj event drop 'win=main' 'node=box' 'drag=23' 'types=file' 'pt=5,5'
+	evraw 'win=main' >/tmp/ev
+	g=`{hid $k/drag/23/item/0/file}
+	inj tick 5
+	exists $k/drag/23 $k/$g
+} <[3]$wn/events
+names $k/file

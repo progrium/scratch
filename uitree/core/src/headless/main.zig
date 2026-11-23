@@ -195,10 +195,8 @@ const Headless = struct {
         if (eq(u8, name, "close")) return "close";
         if (eq(u8, name, "quit")) return "quit";
         if (eq(u8, name, "open")) return "accept";
-        if (eq(u8, name, "drop")) {
-            const nd = h.t.current().node(n) orelse return "refuse";
-            return if (nd.stored("drop") != null) "accept" else "refuse";
-        }
+        // transfer.md: "With no answer, the drop is refused."
+        if (eq(u8, name, "drop")) return "refuse";
         return null;
     }
 
@@ -224,11 +222,22 @@ const Headless = struct {
                     ev.key = null;
                     ev.attrs = all;
                 };
+                // A drag the user starts from a client node: drag/N is
+                // made first, so the client can write its offer.
+                const dn: ?u64 = for (e.attrs) |x| {
+                    if (std.mem.eql(u8, x.key, "drag")) break std.fmt.parseInt(u64, x.value, 10) catch null;
+                } else null;
+                if (std.mem.eql(u8, e.name, "dragstart")) if (dn) |d| {
+                    _ = t.dragStart(d, n) catch |x| return h.treeErr(err, x);
+                };
                 if (h.requestDefault(e.name, n)) |def| {
                     _ = t.request(ev, def) catch |x| return h.treeErr(err, x);
                 } else {
                     _ = t.emit(ev) catch |x| return h.treeErr(err, x);
                 }
+                if (std.mem.eql(u8, e.name, "dragend")) if (dn) |d| {
+                    t.dragDone(d) catch |x| return h.treeErr(err, x);
+                };
             },
             .mirror => |m| {
                 const n = try h.node(a, m.win orelse "main", m.node orelse ".", err);
@@ -241,7 +250,23 @@ const Headless = struct {
             },
             .frame => |f| t.frameDrawn(f.win) catch |x| return h.treeErr(err, x),
             .tick => |k| t.advanceClock(k.ns) catch |x| return h.treeErr(err, x),
-            .drag => |d| t.dragData(d.n, d.data) catch |x| return h.treeErr(err, x),
+            .drag => |d| {
+                if (std.mem.eql(u8, d.type, "file")) {
+                    const id = if (d.path) |p|
+                        t.files.addHost(p) catch |x| return switch (x) {
+                            error.OutOfMemory => error.OutOfMemory,
+                            else => err.print("not found: {s}", .{p}),
+                        }
+                    else
+                        t.files.addMem(d.name.?, d.data) catch |x| return switch (x) {
+                            error.OutOfMemory => error.OutOfMemory,
+                            else => err.print("bad value: name={s}", .{d.name.?}),
+                        };
+                    _ = t.dragFile(d.n, id) catch |x| return h.treeErr(err, x);
+                } else {
+                    _ = t.dragData(d.n, d.type, d.data) catch |x| return h.treeErr(err, x);
+                }
+            },
             .key => |k| _ = t.key(k.win, k.stroke, 0) catch |x| return h.treeErr(err, x),
             .menu => |m| t.menuAction(m.item) catch |x| return h.treeErr(err, x),
             .appearance => |ap| t.systemDark(ap.dark) catch |x| return h.treeErr(err, x),
