@@ -1,0 +1,6 @@
+# On macOS, `cargo run` and `cargo test` sign each binary with hyper9's
+# h9.entitlements before running it (tools/sign --run), so h9 can use
+# Hypervisor.framework. A plain `cargo build` doesn't run anything: call
+# tools/sign on the binary afterwards (CI and the release build do).
+[target.'cfg(target_os = "macos")']
+runner = ["tools/sign", "--run"]

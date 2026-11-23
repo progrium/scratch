@@ -1,24 +1,90 @@
 name: uitree-core
 
+# The core job: Linux, no GPU. zig build test, then the 0.2 conformance
+# suite and the example clients' tree-building phase on uitree-headless
+# with apps in h9, and the terminal renderer's tests. The Zig pin is
+# uitree/core/build.zig.zon's minimum_zig_version (uitree/tools/zig-pin);
+# the pin job fails if renderer/tui or the hyper9 submodule disagree.
+
 on:
   push:
-    branches: [uitree]
+    branches: [uitree, main]
     paths: ["uitree/**", ".github/workflows/uitree-core.yml"]
   pull_request:
-    branches: [uitree]
+    branches: [uitree, main]
     paths: ["uitree/**", ".github/workflows/uitree-core.yml"]
+  workflow_dispatch:
 
 jobs:
+  pin:
+    name: zig pin
+    runs-on: ubuntu-latest
+    outputs:
+      zig: ${{ steps.pin.outputs.zig }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - id: pin
+        run: echo "zig=$(uitree/tools/zig-pin)" >>"$GITHUB_OUTPUT"
+      - run: uitree/tools/zig-pin check
+
   core:
     name: core (Linux, no GPU)
+    needs: pin
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: uitree/core
+    env:
+      H9ROOT: ${{ github.workspace }}/uitree/third_party/hyper9/.local/9front/root-amd64
     steps:
       - uses: actions/checkout@v4
         with: { submodules: true }
       - uses: mlugg/setup-zig@v2
-        with: { version: 0.16.0 }
-      - run: zig build test --summary all
-      - run: zig build
+        with: { version: "${{ needs.pin.outputs.zig }}" }
+      - name: zig build test
+        working-directory: uitree/core
+        run: zig build test --summary all
+      - name: zig build -Dh9=true
+        working-directory: uitree/core
+        run: zig build -Dh9=true
+      # h9 uses KVM when it can open it, else its native backend; either runs
+      # the suite. Hosted runners have /dev/kvm, but only root can open it.
+      - name: Let the runner open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/cache@v4
+        id: root
+        with:
+          path: uitree/third_party/hyper9/.local/9front/root-amd64
+          key: uitree-root-amd64-${{ hashFiles('uitree/third_party/hyper9/scripts/pins.sh', 'uitree/third_party/hyper9/tools/isoroot.zig') }}
+      - name: 9front amd64 root from the ISO
+        if: steps.root.outputs.cache-hit != 'true'
+        working-directory: uitree/third_party/hyper9
+        run: |
+          scripts/fetch.sh isoamd64
+          . scripts/pins.sh
+          zig build isoroot -- ".local/9front/9front-$NINEFRONT_RELEASE.amd64.iso" .local/9front/root-amd64
+          rm -f .local/9front/*.iso
+      - name: conformance
+        working-directory: uitree/tests/conformance
+        run: ./run -t 120
+      - name: example clients (tree-building phase)
+        working-directory: uitree/tests/conformance
+        run: ./run-examples
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-out
+          path: uitree/tests/conformance/out/
+
+  tui:
+    name: terminal renderer (Linux)
+    needs: pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: mlugg/setup-zig@v2
+        with: { version: "${{ needs.pin.outputs.zig }}" }
+      - working-directory: uitree/renderer/tui
+        run: zig build test --summary all

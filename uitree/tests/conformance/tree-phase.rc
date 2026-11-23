@@ -21,7 +21,10 @@ if(~ $#cmd 1 && ~ $cmd *.rc) cmd=(rc $cmd)
 
 fn snap {
 	for(win in `{ls -p $k/win}) {
-		echo '-- window' $win `{cat $k/win/$win/title}
+		# A child named title shadows the window's title file (core.md
+		# § Reserved names, open question 3): say so rather than cat a directory.
+		if(test -d $k/win/$win/title) echo '-- window' $win '(title shadowed by a child)'
+		if not echo '-- window' $win `{cat $k/win/$win/title}
 		cat $k/win/$win/tree
 		for(ov in `{ls -p $k/win/$win/over}) if(test -d $k/win/$win/over/$ov) {
 			echo '-- overlay' $win/$ov

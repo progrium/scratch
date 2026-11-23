@@ -24,12 +24,35 @@ third_party/      hyper9 (submodule)
 
 ```sh
 git submodule update --init uitree/third_party/hyper9
+tools/zig-pin                       # the Zig version (core/build.zig.zon), 0.16.0
 cd uitree/core
-zig build test          # Zig 0.16, no Rust needed
-zig build               # zig-out/lib/libuitcore.a, zig-out/bin/uitree-headless
+zig build test                      # no Rust needed
+zig build -Dh9=true                 # libuitcore.a, uitree-headless, apps in h9
+cd ../tests/conformance && ./run    # needs $H9ROOT, a 9front root
+cd ../../renderer/gpui
+cargo test && cargo test -p host    # GPUI test platform, no display
+cargo build --release -p uitree     # build.rs runs zig build for the core
+tools/sign target/release/uitree    # macOS: h9.entitlements; elsewhere a no-op
+tools/shoot-examples                # every 0.2 example under Xvfb, screenshots
+cd ../tui && zig build test         # the terminal renderer
 ```
 
-The GPUI renderer builds with `cargo build` in `renderer/gpui` once the
-spike lands it; its `build.rs` runs `zig build` for the core.
+`H9ROOT` is a 9front root with `rc` in it: in `third_party/hyper9`,
+`scripts/fetch.sh isoamd64`, then
+`zig build isoroot -- .local/9front/9front-11952.amd64.iso .local/9front/root-amd64`.
 
-Status: scaffold. Nothing past the tokenizer is implemented.
+## CI
+
+- `.github/workflows/uitree-core.yml`: the Zig pin check
+  (`tools/zig-pin check` fails if `renderer/tui` or hyper9 drift from
+  `core/build.zig.zon`), `zig build test`, the conformance suite and the
+  example clients on `uitree-headless` in h9 (Linux, no GPU), and the
+  terminal renderer's tests.
+- `.github/workflows/uitree-renderer.yml`: the GPUI renderer on Linux,
+  macOS and Windows (`cargo build --release -p uitree` links h9 for each;
+  host tests where the core serves 9P, which is not Windows yet), signed
+  on macOS, then every example under Xvfb from the `uitree` binary with
+  screenshots as an artifact.
+
+Status: every workstream has landed on `uitree`. Conformance on
+`uitree-headless`: 27 pass, 1 skip (16-transfer: no `layer transfer`).

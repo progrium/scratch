@@ -4,14 +4,14 @@ div root  : v-flex size-full bg=background
     text name  text=planets.csv  : font-semibold flex-1
     input q  cleanable  placeholder=Filter…  tag=filter  : w=260
       icon prefix  name=search
-  table t  stripe  sortable  sorted  resizable  selectable=row  tag=table  columns=<<END  rows=<<END2  : flex-1
-c1	Planet	180	sort
-c2	Type	180	sort
-c3	Mass (Earth=1)	156	sort	align=right
-c4	Radius (km)	132	sort	align=right
-c5	Moons	100	sort	align=right
-c6	Day (hours)	132	sort	align=right
-c7	Year (days)	132	sort	align=right
+  table t  stripe  sortable  sorted  resizable  tag=table  columns=<<END  rows=<<END2  : flex-1
+c1 Planet 180 sort
+c2 Type 180 sort
+c3 'Mass (Earth=1)' 156 sort align=right
+c4 'Radius (km)' 132 sort align=right
+c5 Moons 100 sort align=right
+c6 'Day (hours)' 132 sort align=right
+c7 'Year (days)' 132 sort align=right
 END
 1	Mercury	Terrestrial	0.055	2440	0	4222.6	88
 2	Venus	Terrestrial	0.815	6052	0	2802	224.7

@@ -1,0 +1,33 @@
+#!/bin/sh
+# zig-pin: the one Zig version uitree builds with, and a check that
+# nothing else disagrees with it.
+#
+#	tools/zig-pin          print the pin (CI passes it to setup-zig)
+#	tools/zig-pin check    exit 1 if a build.zig.zon, or hyper9's, drifts
+#
+# The pin is minimum_zig_version in core/build.zig.zon. renderer/tui and
+# the hyper9 submodule (third_party/hyper9) must say the same: hyper9 is
+# compiled into libuitcore.a with -Dh9=true, so a hyper9 bump that moves
+# Zig has to move uitree's pin in the same change.
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd)
+pin_of() { sed -n 's/^ *\.minimum_zig_version *= *"\([^"]*\)".*/\1/p' "$1"; }
+pin=$(pin_of "$here/core/build.zig.zon")
+[ -n "$pin" ] || { echo "zig-pin: no minimum_zig_version in core/build.zig.zon" >&2; exit 2; }
+[ "${1:-}" = check ] || { echo "$pin"; exit 0; }
+
+bad=0
+for f in renderer/tui/build.zig.zon third_party/hyper9/build.zig.zon; do
+	if [ ! -f "$here/$f" ]; then
+		echo "zig-pin: $f is missing (git submodule update --init uitree/third_party/hyper9)" >&2
+		bad=1
+		continue
+	fi
+	v=$(pin_of "$here/$f")
+	if [ "$v" != "$pin" ]; then
+		echo "zig-pin: $f says Zig ${v:-nothing}, core/build.zig.zon says $pin" >&2
+		bad=1
+	fi
+done
+[ $bad -eq 0 ] && echo "zig-pin: $pin everywhere"
+exit $bad

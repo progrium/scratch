@@ -1,0 +1,68 @@
+#!/bin/sh
+# shoot-examples: run every 0.2 example from the uitree binary under Xvfb,
+# with the app in h9, and screenshot each window once its tree is built.
+#
+#	tools/shoot-examples [OUTDIR] [NAME...]
+#
+# The examples are the ones ported to 0.2 in tests/conformance/examples
+# (run-examples checks what they build; this checks they draw). Needs a
+# release build (cargo build --release -p uitree), Xvfb, ImageMagick's
+# import, and $H9ROOT naming a 9front root (README.md). OUTDIR defaults
+# to examples/screenshots/ci. Exit 1 if an example exits before it is shot
+# or a screenshot is blank.
+set -u
+here=$(cd "$(dirname "$0")/.." && pwd)
+bin=$here/target/release/uitree
+ex=$here/../../tests/conformance/examples
+out=${1:-$here/examples/screenshots/ci}
+[ $# -gt 0 ] && shift
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+[ -x "$bin" ] || { echo "shoot-examples: no $bin (cargo build --release -p uitree)" >&2; exit 2; }
+: "${H9ROOT:?shoot-examples: set H9ROOT to a 9front root}"
+wait_secs=${SHOOT_WAIT:-8}
+
+# name | directory | title | command
+list() {
+	cat <<END
+hello|$ex/rc|Hello|rc hello.rc
+counter|$ex/rc|Counter|rc counter.rc
+confirm|$ex/rc|Confirm|rc confirm.rc Delete?
+signin|$ex/rc|Sign in|rc signin.rc
+csvview|$ex/awk|planets.csv|awk -f csvview.awk planets.csv
+END
+}
+
+disp=:${DISPLAY_NUM:-91}
+Xvfb "$disp" -screen 0 1280x800x24 >/dev/null 2>&1 &
+xvfb=$!
+trap 'kill $xvfb 2>/dev/null' EXIT INT TERM
+sleep 1
+
+fail=0
+list | {
+while IFS='|' read -r name dir title cmd; do
+	if [ $# -gt 0 ] && ! echo " $* " | grep -q " $name "; then continue; fi
+	log=$out/$name.log
+	# shellcheck disable=SC2086
+	(cd "$dir" && DISPLAY=$disp exec "$bin" -k -t "$title" $cmd) >"$log" 2>&1 &
+	pid=$!
+	sleep "$wait_secs"
+	if ! kill -0 $pid 2>/dev/null; then
+		echo "FAIL $name: exited before the screenshot (see $log)"
+		fail=1
+		continue
+	fi
+	DISPLAY=$disp import -window root "$out/$name.png"
+	kill $pid 2>/dev/null; wait $pid 2>/dev/null
+	# A blank frame has one colour.
+	colors=$(convert "$out/$name.png" -format '%k' info: 2>/dev/null || echo 0)
+	if [ "${colors:-0}" -le 1 ]; then
+		echo "FAIL $name: blank screenshot"
+		fail=1
+	else
+		echo "shot $name ($colors colours) $out/$name.png"
+	fi
+done
+exit $fail
+}

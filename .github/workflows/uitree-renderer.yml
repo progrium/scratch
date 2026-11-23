@@ -1,0 +1,124 @@
+name: uitree-renderer
+
+# The renderer job: the GPUI renderer (Rust) on Linux, macOS and Windows.
+# uitcore-sys's build.rs runs `zig build -Dh9=true` for Cargo's target, so
+# this is also the check that hyper9's C links into an MSVC binary on
+# Windows (SPIKE.md). macOS binaries are signed with hyper9's
+# h9.entitlements by renderer/gpui/tools/sign, the renderer's post-build
+# step. On Linux the examples run under Xvfb from the uitree binary, with
+# screenshots uploaded as an artifact.
+
+on:
+  push:
+    branches: [uitree, main]
+    paths: ["uitree/**", ".github/workflows/uitree-renderer.yml"]
+  pull_request:
+    branches: [uitree, main]
+    paths: ["uitree/**", ".github/workflows/uitree-renderer.yml"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+    working-directory: uitree/renderer/gpui
+
+jobs:
+  pin:
+    name: zig pin
+    runs-on: ubuntu-latest
+    outputs:
+      zig: ${{ steps.pin.outputs.zig }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - id: pin
+        working-directory: .
+        run: echo "zig=$(uitree/tools/zig-pin)" >>"$GITHUB_OUTPUT"
+
+  gpui:
+    name: gpui (${{ matrix.os }})
+    needs: pin
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: mlugg/setup-zig@v2
+        with: { version: "${{ needs.pin.outputs.zig }}" }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: uitree/renderer/gpui }
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev libvulkan-dev
+      # uitcore-sys and uitcore: no display. uitcore's test and the host
+      # harness talk 9P over a unix socket, which the core doesn't serve on
+      # Windows yet (W4: no Windows transport), so Windows builds only.
+      - if: runner.os != 'Windows'
+        run: cargo test
+      - if: runner.os != 'Windows'
+        name: host tests (GPUI test platform)
+        run: cargo test -p host
+      - name: cargo build --release -p uitree (links h9)
+        run: cargo build --release -p uitree
+      - if: runner.os == 'Windows'
+        name: host tests compile
+        run: cargo test -p host --no-run
+      - name: post-build (sign on macOS)
+        run: tools/sign target/release/uitree
+        if: runner.os == 'macOS'
+      - if: runner.os == 'macOS'
+        run: codesign -d --entitlements - target/release/uitree
+      - if: runner.os != 'Windows'
+        run: target/release/uitree --bench 2000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uitree-${{ runner.os }}
+          path: |
+            uitree/renderer/gpui/target/release/uitree
+            uitree/renderer/gpui/target/release/uitree.exe
+          if-no-files-found: error
+
+  examples:
+    name: examples under Xvfb (Linux)
+    needs: [pin, gpui]
+    runs-on: ubuntu-latest
+    env:
+      H9ROOT: ${{ github.workspace }}/uitree/third_party/hyper9/.local/9front/root-amd64
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: mlugg/setup-zig@v2
+        with: { version: "${{ needs.pin.outputs.zig }}" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: uitree-Linux
+          path: uitree/renderer/gpui/target/release
+      - run: chmod +x target/release/uitree
+      - run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers
+      - name: Let the runner open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/cache@v4
+        id: root
+        with:
+          path: uitree/third_party/hyper9/.local/9front/root-amd64
+          key: uitree-root-amd64-${{ hashFiles('uitree/third_party/hyper9/scripts/pins.sh', 'uitree/third_party/hyper9/tools/isoroot.zig') }}
+      - name: 9front amd64 root from the ISO
+        if: steps.root.outputs.cache-hit != 'true'
+        working-directory: uitree/third_party/hyper9
+        run: |
+          scripts/fetch.sh isoamd64
+          . scripts/pins.sh
+          zig build isoroot -- ".local/9front/9front-$NINEFRONT_RELEASE.amd64.iso" .local/9front/root-amd64
+          rm -f .local/9front/*.iso
+      - run: tools/shoot-examples "$RUNNER_TEMP/shots"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-screenshots
+          path: ${{ runner.temp }}/shots/

@@ -32,6 +32,13 @@ cd examples && H9ROOT=/path/to/9front/root ../target/release/uitree -t Counter r
 ../target/release/uitree --bench 2000        # FFI cost per frame
 ```
 
+On macOS, h9 needs the `com.apple.security.hypervisor` entitlement:
+`tools/sign target/release/uitree` signs a build with hyper9's
+`h9.entitlements` (a no-op on other systems), and `.cargo/config.toml`
+makes `cargo run` and `cargo test` sign before they run.
+`tools/shoot-examples` runs every 0.2 example from the release binary
+under Xvfb and saves a screenshot of each (CI uploads them).
+
 `H9ROOT` is a 9front root with `rc` in it: in `third_party/hyper9`,
 `scripts/fetch.sh isoamd64` then
 `zig build isoroot -- .local/9front/9front-11952.amd64.iso .local/9front/root-amd64`.

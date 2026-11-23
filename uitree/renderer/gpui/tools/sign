@@ -1,0 +1,25 @@
+#!/bin/sh
+# sign: the renderer's post-build step. On macOS, ad-hoc sign each binary
+# with hyper9's h9.entitlements (com.apple.security.hypervisor), which
+# Hypervisor.framework needs before h9 can start a machine. Elsewhere it
+# does nothing, so scripts and CI can call it on every OS.
+#
+#	tools/sign BINARY...            after cargo build
+#	tools/sign --run BINARY [ARG...]  sign, then run it (Cargo's runner on
+#	                                  macOS, so cargo run and cargo test sign
+#	                                  first; see ../.cargo/config.toml)
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd)
+ent=$here/../../third_party/hyper9/h9.entitlements
+run=0
+if [ "${1:-}" = --run ]; then run=1; shift; fi
+[ $# -gt 0 ] || { sed -n '7,11p' "$0" >&2; exit 2; }
+if [ "$(uname -s)" = Darwin ]; then
+	[ -f "$ent" ] || { echo "sign: no $ent (git submodule update --init uitree/third_party/hyper9)" >&2; exit 1; }
+	if [ $run -eq 1 ]; then
+		codesign --force --sign - --entitlements "$ent" "$1" 2>/dev/null
+	else
+		for b; do codesign --force --sign - --entitlements "$ent" "$b"; done
+	fi
+fi
+if [ $run -eq 1 ]; then exec "$@"; fi

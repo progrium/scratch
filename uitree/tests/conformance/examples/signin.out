@@ -1,4 +1,4 @@
--- window main Sign in
+-- window main (title shadowed by a child)
 div root  : v-flex size-full p=24 gap=16 bg=background
   text title  text='Sign in'  : text-xl font-semibold
   form f  tag=login
