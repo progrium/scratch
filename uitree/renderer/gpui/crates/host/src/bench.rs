@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use gpui::{App, AsyncApp};
 use uitcore::{Core, Node};
 
-use crate::Host;
+use crate::runtime::Inner as Host;
 
 fn msg(t: u8, tag: u16, body: &[u8]) -> Vec<u8> {
     let mut m = Vec::with_capacity(7 + body.len());
@@ -128,7 +128,7 @@ fn count(core: &Core, n: Node) -> usize {
     1 + core.children(n).iter().map(|&k| count(core, k)).sum::<usize>()
 }
 
-pub fn start(host: &Rc<Host>, n: usize, cx: &mut App) {
+pub(crate) fn start(host: &Rc<Host>, n: usize, cx: &mut App) {
     let dial = match host.core.borrow_mut().listen() {
         Ok(d) => d,
         Err(e) => {
@@ -175,14 +175,16 @@ pub fn start(host: &Rc<Host>, n: usize, cx: &mut App) {
             per_walk.as_nanos() as f64 / calls as f64
         );
         // 2. Real frames.
-        let _ = cx.update(|cx| crate::open_window(&h, cx));
+        let _ = cx.update(|cx| crate::window::open(&h, "main", cx));
         h.frames.borrow_mut().clear();
         for _ in 0..120 {
             cx.background_executor().timer(Duration::from_millis(16)).await;
             let _ = cx.update(|cx| {
-                if let Some((_, v)) = h.window.borrow().as_ref() {
-                    v.update(cx, |_, cx| cx.notify());
+                // A frame from scratch: forget what the renderer cached.
+                if std::env::var_os("UITREE_BENCH_COLD").is_some() {
+                    h.cache.borrow_mut().clear();
                 }
+                crate::runtime::notify_window(&h, "main", cx)
             });
         }
         cx.background_executor().timer(Duration::from_millis(200)).await;
@@ -192,14 +194,12 @@ pub fn start(host: &Rc<Host>, n: usize, cx: &mut App) {
             println!("bench: no frames rendered");
         } else {
             let med = f[f.len() / 2];
-            let mut walks: Vec<_> = f.iter().map(|x| x.0).collect();
-            walks.sort();
+            let p90 = f[f.len() * 9 / 10];
             println!(
-                "bench: {} frames; ABI reads in render: median {:.3} ms, p90 {:.3} ms; whole element build: median {:.3} ms",
+                "bench: {} frames; whole element build (reads, cached styles, elements): median {:.3} ms, p90 {:.3} ms",
                 f.len(),
-                walks[walks.len() / 2].as_secs_f64() * 1e3,
-                walks[walks.len() * 9 / 10].as_secs_f64() * 1e3,
-                med.1.as_secs_f64() * 1e3
+                med.1.as_secs_f64() * 1e3,
+                p90.1.as_secs_f64() * 1e3
             );
         }
         let _ = cx.update(|cx| cx.quit());

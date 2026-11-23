@@ -11,6 +11,9 @@ use std::marker::PhantomData;
 use std::os::raw::c_int;
 
 pub use uitcore_sys as sys;
+
+#[cfg(feature = "test-client")]
+pub mod client;
 use sys::UitStr;
 
 pub type Node = u32;
@@ -58,6 +61,83 @@ pub struct Core {
 /// A borrowed string as UTF-8; invalid bytes become U+FFFD.
 fn text<'a>(u: UitStr) -> std::borrow::Cow<'a, str> {
     String::from_utf8_lossy(unsafe { u.as_bytes() })
+}
+
+fn utf8<'a>(u: UitStr) -> &'a str {
+    std::str::from_utf8(unsafe { u.as_bytes() }).unwrap_or("")
+}
+
+/// An answer the core passed as text (`close`, `keep`): its words.
+pub fn answer_ctl(t: &str) -> Ctl {
+    let words = split_words(t);
+    let mut c = Ctl::default();
+    for (i, w) in words.into_iter().enumerate() {
+        if i == 0 {
+            c.verb = w;
+        } else if let Some((k, v)) = w.split_once('=') {
+            c.attrs.push((k.to_string(), v.to_string()));
+        } else {
+            c.args.push(w);
+        }
+    }
+    c
+}
+
+/// Blank-separated words with single quotes, `''` a literal quote.
+fn split_words(l: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut any = false;
+    let mut q = false;
+    let mut it = l.chars().peekable();
+    while let Some(ch) = it.next() {
+        if q {
+            if ch == '\'' {
+                if it.peek() == Some(&'\'') {
+                    cur.push('\'');
+                    it.next();
+                } else {
+                    q = false;
+                }
+            } else {
+                cur.push(ch);
+            }
+        } else if ch == '\'' {
+            q = true;
+            any = true;
+        } else if ch == ' ' || ch == '\t' {
+            if any || !cur.is_empty() {
+                out.push(std::mem::take(&mut cur));
+            }
+            any = false;
+        } else {
+            cur.push(ch);
+        }
+    }
+    if any || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+/// The renderer-side stand-in for `uit_lines` while the core lacks it.
+fn fallback_lines(t: &str) -> Vec<Line> {
+    t.split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| {
+            let body = l.trim_start_matches(' ');
+            let indent = ((l.len() - body.len()) / 2) as u32;
+            let fields = if body.contains('\t') {
+                body.split('\t').map(str::to_string).collect()
+            } else if body.starts_with("# ") {
+                vec!["#".to_string(), body[2..].to_string()]
+            } else {
+                split_words(body)
+            };
+            Line { fields, indent }
+        })
+        .collect()
 }
 
 fn slice<'a, T>(p: *const T, n: usize) -> &'a [T] {
@@ -115,17 +195,98 @@ impl<'a> StyleWord<'a> {
     }
 }
 
+/// A pre-parsed `ctl` line, copied out of the pump.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ctl {
+    pub verb: String,
+    pub args: Vec<String>,
+    pub attrs: Vec<(String, String)>,
+}
+
+impl Ctl {
+    pub fn new(verb: impl Into<String>) -> Ctl {
+        Ctl { verb: verb.into(), ..Default::default() }
+    }
+    pub fn arg(&self, i: usize) -> Option<&str> {
+        self.args.get(i).map(String::as_str)
+    }
+    pub fn attr(&self, k: &str) -> Option<&str> {
+        self.attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
+    }
+    fn copy(c: &sys::UitCtl) -> Ctl {
+        Ctl {
+            verb: text(c.verb).into_owned(),
+            args: slice(c.args, c.n_args).iter().map(|a| text(*a).into_owned()).collect(),
+            attrs: slice(c.attrs, c.n_attrs).iter().map(|a| (text(a.name).into_owned(), text(a.value).into_owned())).collect(),
+        }
+    }
+}
+
 /// A host command, copied out of the pump so it can outlive it.
 #[derive(Debug, Clone)]
 pub enum HostCmd {
     Window { win: String },
-    WindowCtl { win: String, verb: String, args: Vec<String> },
+    WindowCtl { win: String, ctl: Ctl },
     Quit,
     Menus,
     Keymap,
     Theme,
+    /// `enabled`, `check`: `None` unchanged. `check`: 0 off, 1 on, 2 mixed.
+    SetAction { id: String, enabled: Option<bool>, check: Option<i32> },
+    Overlay { win: String, node: Node, name: String, open: bool },
+    Focus { win: String, node: Node },
+    /// The text to publish, from the command's `answer`.
+    Clipboard { text: String },
+    ComponentVerb { node: Node, ctl: Ctl },
+    Answer { seq: u64, answer: Ctl },
     Redraw { win: String },
+    ThemeLoad { path: String },
     Other(u32),
+}
+
+/// One line of a data file, split into fields by the core.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Line {
+    pub fields: Vec<String>,
+    pub indent: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyBinding {
+    pub keystroke: String,
+    pub action: String,
+    pub context: String,
+    pub global: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuKind {
+    Item,
+    Sep,
+    Sub,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuItem {
+    pub kind: MenuKind,
+    pub depth: u32,
+    pub id: String,
+    pub label: String,
+    pub key: String,
+    pub icon: String,
+    pub role: String,
+    pub menu: String,
+    pub enabled: bool,
+    /// -1 none, 0 off, 1 on, 2 mixed.
+    pub check: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragKind {
+    Start,
+    Over,
+    Drop,
+    End,
 }
 
 /// What a pump changed (copied: it is small, and the host acts on it
@@ -225,16 +386,26 @@ impl Core {
             let win = || text(c.win).into_owned();
             out.cmds.push(match c.tag {
                 sys::UIT_CMD_WINDOW => HostCmd::Window { win: win() },
-                sys::UIT_CMD_WINDOW_CTL => HostCmd::WindowCtl {
-                    win: win(),
-                    verb: text(c.ctl.verb).into_owned(),
-                    args: slice(c.ctl.args, c.ctl.n_args).iter().map(|a| text(*a).into_owned()).collect(),
-                },
+                sys::UIT_CMD_WINDOW_CTL => HostCmd::WindowCtl { win: win(), ctl: Ctl::copy(&c.ctl) },
                 sys::UIT_CMD_QUIT => HostCmd::Quit,
                 sys::UIT_CMD_MENUS => HostCmd::Menus,
                 sys::UIT_CMD_KEYMAP => HostCmd::Keymap,
                 sys::UIT_CMD_THEME => HostCmd::Theme,
                 sys::UIT_CMD_REDRAW => HostCmd::Redraw { win: win() },
+                sys::UIT_CMD_SET_ACTION => HostCmd::SetAction {
+                    id: text(c.name).into_owned(),
+                    enabled: (c.flag >= 0).then_some(c.flag != 0),
+                    check: (c.flag2 >= 0).then_some(c.flag2),
+                },
+                sys::UIT_CMD_OVERLAY => HostCmd::Overlay { win: win(), node: c.node, name: text(c.name).into_owned(), open: c.flag != 0 },
+                sys::UIT_CMD_FOCUS => HostCmd::Focus { win: win(), node: c.node },
+                sys::UIT_CMD_CLIPBOARD => HostCmd::Clipboard { text: text(c.answer).into_owned() },
+                sys::UIT_CMD_COMPONENT_VERB => HostCmd::ComponentVerb { node: c.node, ctl: Ctl::copy(&c.ctl) },
+                sys::UIT_CMD_ANSWER => HostCmd::Answer {
+                    seq: c.seq,
+                    answer: if c.ctl.verb.len > 0 { Ctl::copy(&c.ctl) } else { answer_ctl(&text(c.answer)) },
+                },
+                sys::UIT_CMD_THEME_LOAD => HostCmd::ThemeLoad { path: text(c.name).into_owned() },
                 t => HostCmd::Other(t),
             });
         }
@@ -267,6 +438,13 @@ impl Core {
         let mut out = UitStr::EMPTY;
         let r = unsafe { sys::uit_prop(self.raw, n, s(file), &mut out) };
         (r == 1).then(|| std::str::from_utf8(unsafe { out.as_bytes() }).unwrap_or(""))
+    }
+
+    /// A prop file's bytes (binary props such as an image's `data`).
+    pub fn prop_bytes(&self, n: Node, file: &str) -> Option<&[u8]> {
+        let mut out = UitStr::EMPTY;
+        let r = unsafe { sys::uit_prop(self.raw, n, s(file), &mut out) };
+        (r == 1).then(|| unsafe { out.as_bytes() })
     }
 
     pub fn style(&self, n: Node) -> impl Iterator<Item = StyleWord<'_>> {
@@ -307,6 +485,154 @@ impl Core {
 
     pub fn window_closed(&self, win: &str) {
         unsafe { sys::uit_window_closed(self.raw, s(win)) };
+    }
+
+    /// The window names, in creation order.
+    pub fn windows(&self) -> Vec<&str> {
+        let mut p = std::ptr::null();
+        let k = unsafe { sys::uit_windows(self.raw, &mut p) };
+        slice(p, k).iter().map(|w| utf8(*w)).collect()
+    }
+
+    pub fn overlays(&self, win: &str) -> &[Node] {
+        let mut p = std::ptr::null();
+        let k = unsafe { sys::uit_overlays(self.raw, s(win), &mut p) };
+        slice(p, k)
+    }
+
+    pub fn window_of(&self, n: Node) -> &str {
+        utf8(unsafe { sys::uit_window_of(self.raw, n) })
+    }
+
+    /// A data file split into lines and fields per its format. Copied.
+    ///
+    /// Until the core implements `uit_lines` (the spike returns
+    /// `UIT_ENOTSUP`), this falls back to splitting the prop's text here:
+    /// lines on newlines, fields on tabs, or on blanks with the one quoting
+    /// rule when the line has no tab. The fallback goes when W3 lands.
+    pub fn lines(&self, n: Node, file: &str) -> Vec<Line> {
+        let mut out = sys::UitLines { lines: std::ptr::null(), n: 0 };
+        let r = unsafe { sys::uit_lines(self.raw, n, s(file), &mut out) };
+        if r == sys::UIT_ENOTSUP {
+            return self.prop(n, file).map(fallback_lines).unwrap_or_default();
+        }
+        if r < 0 {
+            return Vec::new();
+        }
+        slice(out.lines, out.n)
+            .iter()
+            .map(|l| Line { fields: slice(l.fields, l.n_fields).iter().map(|f| text(*f).into_owned()).collect(), indent: l.indent })
+            .collect()
+    }
+
+    pub fn keys(&self) -> Vec<KeyBinding> {
+        let mut p = std::ptr::null();
+        let mut k = 0usize;
+        if unsafe { sys::uit_keys(self.raw, &mut p, &mut k) } < 0 {
+            return Vec::new();
+        }
+        slice(p, k)
+            .iter()
+            .map(|b| KeyBinding {
+                keystroke: text(b.keystroke).into_owned(),
+                action: text(b.action).into_owned(),
+                context: text(b.context).into_owned(),
+                global: b.global != 0,
+            })
+            .collect()
+    }
+
+    pub fn menu_bar(&self) -> Vec<String> {
+        let mut p = std::ptr::null();
+        let k = unsafe { sys::uit_menu_bar(self.raw, &mut p) };
+        slice(p, k).iter().map(|w| text(*w).into_owned()).collect()
+    }
+
+    pub fn menu(&self, name: &str) -> Vec<MenuItem> {
+        let mut p = std::ptr::null();
+        let mut k = 0usize;
+        if unsafe { sys::uit_menu(self.raw, s(name), &mut p, &mut k) } < 0 {
+            return Vec::new();
+        }
+        slice(p, k)
+            .iter()
+            .map(|m| MenuItem {
+                kind: match m.kind {
+                    sys::UIT_MENU_SEP => MenuKind::Sep,
+                    sys::UIT_MENU_SUB => MenuKind::Sub,
+                    _ => MenuKind::Item,
+                },
+                depth: m.depth,
+                id: text(m.id).into_owned(),
+                label: text(m.label).into_owned(),
+                key: text(m.key).into_owned(),
+                icon: text(m.icon).into_owned(),
+                role: text(m.role).into_owned(),
+                menu: text(m.menu).into_owned(),
+                enabled: m.enabled != 0,
+                check: m.check,
+            })
+            .collect()
+    }
+
+    pub fn theme_dark(&self) -> bool {
+        unsafe { sys::uit_theme_dark(self.raw) != 0 }
+    }
+
+    /// Opens a request; `Ok(seq)`, or `Ok(0)` when the core applied the
+    /// default answer at once (it then arrives as `HostCmd::Answer` too,
+    /// unless the core says otherwise).
+    pub fn request(&self, n: Node, name: &str, attrs: &[(&str, &str)], default_answer: &str) -> u64 {
+        let a: Vec<sys::UitAttr> = attrs.iter().map(|(k, v)| sys::UitAttr { name: s(k), value: s(v) }).collect();
+        unsafe { sys::uit_request(self.raw, n, s(name), a.as_ptr(), a.len(), s(default_answer)) }
+    }
+
+    pub fn mirror(&self, n: Node, file: &str, value: &[u8]) -> Result<(), Error> {
+        let v = UitStr { ptr: value.as_ptr(), len: value.len() };
+        self.check(unsafe { sys::uit_mirror(self.raw, n, s(file), v) })
+    }
+
+    /// `UIT_ENOTSUP` from a core that doesn't keep bounds yet is not an error.
+    pub fn bounds(&self, n: Node, b: [f32; 4]) {
+        unsafe { sys::uit_bounds(self.raw, n, b[0], b[1], b[2], b[3]) };
+    }
+
+    pub fn frame_drawn(&self, win: &str) {
+        unsafe { sys::uit_frame_drawn(self.raw, s(win)) };
+    }
+
+    pub fn menu_action(&self, id: &str) {
+        unsafe { sys::uit_menu_action(self.raw, s(id)) };
+    }
+
+    pub fn system_dark(&self, dark: bool) {
+        unsafe { sys::uit_system_dark(self.raw, dark as u32) };
+    }
+
+    /// Transfer layer. `Start` returns the new drag's number.
+    pub fn drag(&self, kind: DragKind, drag: u64, n: Node, x: f32, y: f32, attrs: &[(&str, &str)]) -> Result<u64, Error> {
+        let a: Vec<sys::UitAttr> = attrs.iter().map(|(k, v)| sys::UitAttr { name: s(k), value: s(v) }).collect();
+        let m = sys::UitDragMsg {
+            kind: match kind {
+                DragKind::Start => sys::UIT_DRAG_START,
+                DragKind::Over => sys::UIT_DRAG_OVER,
+                DragKind::Drop => sys::UIT_DRAG_DROP,
+                DragKind::End => sys::UIT_DRAG_END,
+            },
+            drag,
+            node: n,
+            x,
+            y,
+            attrs: a.as_ptr(),
+            n_attrs: a.len(),
+        };
+        let mut out = drag;
+        self.check(unsafe { sys::uit_drag(self.raw, &m, &mut out) })?;
+        Ok(out)
+    }
+
+    pub fn wake(&self) {
+        unsafe { sys::uit_wake_renderer(self.raw) }
     }
 
     pub fn shutdown(&self) {
