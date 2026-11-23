@@ -1,0 +1,15 @@
+[package]
+name = "uitree-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The GPUI renderer in the browser: gpui_web on a canvas, the core in its own wasm module (uitree/web)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+host.workspace = true
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"

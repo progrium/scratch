@@ -122,7 +122,7 @@ pub(crate) fn keystroke(k: &gpui::Keystroke) -> String {
 
 impl Render for WindowView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t0 = std::time::Instant::now();
+        let t0 = crate::time::Instant::now();
         let host = self.host.clone();
         // `spacing` scales every rem-based length: the Tailwind scale words
         // (`p-4` is 1rem) and the rem text sizes, as in Tailwind.

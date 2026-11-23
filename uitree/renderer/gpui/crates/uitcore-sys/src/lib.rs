@@ -254,6 +254,10 @@ pub struct UitDragMsg {
     pub n_attrs: usize,
 }
 
+// In the browser (uitree/web/README.md) the core is its own wasm module
+// sharing this one's memory, and these are imports from it ("uitcore",
+// which uitree/web/gpui.js provides).
+#[cfg_attr(target_family = "wasm", link(wasm_import_module = "uitcore"))]
 unsafe extern "C" {
     pub fn uit_abi_version() -> u32;
 

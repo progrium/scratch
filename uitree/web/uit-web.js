@@ -31,11 +31,12 @@ const dec = new TextDecoder();
  * coroutine, so it may only schedule work. `onOutput(fd, bytes)` gets
  * the module's stdout and stderr.
  */
-export async function instantiate(bytes, { imports = {}, onWake = () => {}, onOutput, log = console.error, args = ['uitree'], env = {} } = {}) {
+export async function instantiate(bytes, { imports = {}, onWake = () => {}, onOutput, log = console.error, args = ['uitree'], env = {}, memory: shared = null } = {}) {
   if (!haveJSPI) throw new Error('this browser lacks JavaScript Promise Integration (Chrome 137 or later)');
   const mod = bytes instanceof WebAssembly.Module ? bytes : await WebAssembly.compile(bytes);
   let inst;
-  const memory = { get buffer() { return inst.exports.memory.buffer; } };
+  // `shared`: a memory to import (uitcore-shared.wasm, in another module's memory).
+  const memory = shared ?? { get buffer() { return inst.exports.memory.buffer; } };
   const u8 = (p, n) => new Uint8Array(memory.buffer, p >>> 0, n >>> 0);
 
   // Coroutines, as h9-web.js: a park is a Promise that unpark resolves;
@@ -101,7 +102,7 @@ export async function instantiate(bytes, { imports = {}, onWake = () => {}, onOu
   const write = (fd, data) => (onOutput ? onOutput(fd, data) : log(dec.decode(data)));
   const wasi = wasiImports({ memory, root: parseRoot(enc.encode('h9root1\n')), args, env, write });
   wasi.proc_exit = (code) => { throw new Error(`exit ${code}`); };
-  const all = { wasi_snapshot_preview1: wasi, h9, uit };
+  const all = { wasi_snapshot_preview1: wasi, h9, uit, ...(shared ? { env: { memory: shared } } : {}) };
   for (const [k, v] of Object.entries(imports)) all[k] = { ...(all[k] ?? {}), ...(typeof v === 'function' ? v(memory) : v) };
   inst = await WebAssembly.instantiate(mod, all);
   entry = WebAssembly.promising(inst.exports.h9_coro_entry);

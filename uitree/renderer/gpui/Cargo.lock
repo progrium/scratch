@@ -3337,6 +3337,7 @@ dependencies = [
  "serde_json",
  "similar",
  "uitcore",
+ "web-time",
 ]
 
 [[package]]
@@ -7446,6 +7447,15 @@ name = "uitree"
 version = "0.1.0"
 dependencies = [
  "host",
+]
+
+[[package]]
+name = "uitree-web"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "host",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -1,0 +1,32 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uitree on GPUI</title>
+<!-- uitree_web.wasm imports uitcore.h's functions from the module "uitcore". -->
+<script type="importmap">{ "imports": { "uitcore": "./uitcore-imports.js" } }</script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #fff; }
+  #err { position: absolute; inset: 8px; font: 13px ui-monospace, monospace; color: #b00; white-space: pre-wrap; pointer-events: none; }
+</style>
+<body>
+<div id="err"></div>
+<script type="module">
+import { startGpui } from './gpui.js';
+const q = new URLSearchParams(location.search);
+const app = q.get('app') ?? 'counter';
+const dec = new TextDecoder();
+const err = (s) => { document.getElementById('err').textContent += s + '\n'; };
+try {
+  window.gpui = await startGpui({
+    argv: ['rc', '-c', `cd /app; . ./${app}.rc`],
+    title: q.get('title') ?? 'Counter',
+    files: [`${app}.rc`, 'lib.rc'],
+    onOutput: (fd, d) => console.log(`[${fd}] ${dec.decode(d)}`),
+    onExit: (code, msg) => { if (code) err(`exit ${code} ${msg ?? ''}`); },
+    log: (s) => { console.error(s); err(s); },
+  });
+  parent.postMessage({ type: 'gpui-ready', timings: window.gpui.timings }, '*');
+} catch (e) {
+  err(e?.stack ?? String(e));
+}
+</script>

@@ -78,6 +78,17 @@ pub fn build(b: *std.Build) void {
         const wasm = b.addExecutable(.{ .name = "uitcore-web", .root_module = core });
         configureWeb(wasm);
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(wasm.getEmittedBin(), .{ .custom = "web" }, "uitcore.wasm").step);
+        // uitcore-shared.wasm: the same, importing its memory from the
+        // renderer's module (GPUI's, uitree/web/gpui.js), so uitcore.h's
+        // pointers mean the same thing in both. Its data, stack and heap
+        // start at `web-base`, above what the renderer's module has
+        // when the page instantiates the core.
+        const base = b.option(u32, "web-base", "Where uitcore-shared.wasm's memory starts (default 256 MiB)") orelse 256 << 20;
+        const shared = b.addExecutable(.{ .name = "uitcore-shared", .root_module = core });
+        configureWeb(shared);
+        shared.import_memory = true;
+        shared.global_base = base;
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(shared.getEmittedBin(), .{ .custom = "web" }, "uitcore-shared.wasm").step);
         return;
     }
 

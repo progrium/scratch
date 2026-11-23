@@ -25,6 +25,11 @@ anyhow = "1"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 similar = "2.7"
 
+# std::time panics on wasm32-unknown-unknown: Instant and SystemTime from
+# the browser's clock there (uitree/web).
+[target.'cfg(target_family = "wasm")'.dependencies]
+web-time = "1.1"
+
 [features]
 # Exposes `host::testing` (the TestAppContext harness) to other crates.
 test-support = ["gpui/test-support", "gpui-kit/test-support", "uitcore/test-client"]

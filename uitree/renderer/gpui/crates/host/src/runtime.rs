@@ -426,8 +426,17 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
 /// Starts GPUI and the core on this (main) thread and runs the app in h9;
 /// returns the exit code when the app quits.
 pub fn run(opts: Options) -> i32 {
-    gpui_kit::application().with_assets(gpui_kit::assets::AllAssets).run(move |cx: &mut App| {
+    // In the browser (uitree/web): gpui_web on one canvas, single-threaded,
+    // icons fetched on demand. run returns at once there; the page's event
+    // loop runs the app, and uit_run_machine starts it in h9's Worker.
+    #[cfg(target_family = "wasm")]
+    let app = gpui_kit::platform::single_threaded_web().with_assets(gpui_kit::assets::AllAssets::default());
+    #[cfg(not(target_family = "wasm"))]
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    let launch = move |cx: &mut App| {
         gpui_component::init(cx);
+        #[cfg(target_family = "wasm")]
+        web_fonts(cx);
         cx.set_quit_mode(gpui::QuitMode::Explicit);
         let inner = match install(opts.clone(), cx) {
             Ok(i) => i,
@@ -455,8 +464,29 @@ pub fn run(opts: Options) -> i32 {
             EXIT.store(1, Ordering::SeqCst);
             cx.quit();
         }
-    });
+    };
+    // The page's event loop owns the app in the browser: keep it alive.
+    #[cfg(target_family = "wasm")]
+    std::mem::forget(app.run_embedded(launch));
+    #[cfg(not(target_family = "wasm"))]
+    app.run(launch);
     EXIT.load(Ordering::SeqCst)
+}
+
+/// The browser has no system fonts: IBM Plex Sans, which gpui_web resolves
+/// `.SystemUIFont` to and which must exist before the first frame, as the
+/// UI font, and JetBrains Mono. From GPUI Kit's story-web (OFL, web/fonts).
+#[cfg(target_family = "wasm")]
+fn web_fonts(cx: &mut App) {
+    use std::borrow::Cow;
+    cx.text_system()
+        .add_fonts(vec![
+            Cow::Borrowed(include_bytes!("../../web/fonts/JetBrainsMono-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../../web/fonts/IBMPlexSans-Regular.ttf").as_slice()),
+        ])
+        .expect("web fonts");
+    gpui_component::Theme::global_mut(cx).font_family = "IBM Plex Sans".into();
+    gpui_component::Theme::global_mut(cx).mono_font_family = "JetBrains Mono".into();
 }
 
 /// One pump: apply what the core queued, then act on what changed.

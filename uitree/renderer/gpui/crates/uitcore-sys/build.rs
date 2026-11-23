@@ -30,6 +30,11 @@ fn main() {
     let want = format!("#define UIT_ABI_VERSION {ABI_VERSION}u");
     assert!(h.contains(&want), "uitcore-sys: header is not ABI {ABI_VERSION}; update src/lib.rs and build.rs");
 
+    // In the browser the core is a separate wasm module (uitree/web):
+    // nothing to build or link here.
+    if env::var("CARGO_CFG_TARGET_FAMILY").unwrap() == "wasm" {
+        return;
+    }
     let h9 = env::var_os("CARGO_FEATURE_H9").is_some();
     let lib = if let Some(dir) = env::var_os("UITCORE_LIB_DIR") {
         PathBuf::from(dir)

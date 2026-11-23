@@ -349,8 +349,8 @@ fn bounds_matcher(node: &NodeView) -> Option<Matcher> {
 
 /// Today in UTC.
 fn today() -> civil::Date {
-    let days = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    let days = crate::time::SystemTime::now()
+        .duration_since(crate::time::UNIX_EPOCH)
         .map(|d| d.as_secs() / 86_400)
         .unwrap_or(0) as i64;
     let epoch = civil::date(1970, 1, 1);
