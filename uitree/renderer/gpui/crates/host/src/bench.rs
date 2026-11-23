@@ -13,7 +13,12 @@
 //! It prints both and exits.
 
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
+// The core serves 9P over unix sockets only (no Windows transport yet), so
+// on Windows `listen` fails before the bench dials; this keeps it compiling.
+#[cfg(not(unix))]
+use std::net::TcpStream as UnixStream;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
