@@ -2,8 +2,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>uitree on GPUI</title>
-<!-- uitree_web.wasm imports uitcore.h's functions from the module "uitcore". -->
-<script type="importmap">{ "imports": { "uitcore": "./uitcore-imports.js" } }</script>
+<!-- uitree_web.wasm, with the core linked in, imports the core's platform. -->
+<script type="importmap">{ "imports": { "h9": "./uitcore-imports.js", "uit": "./uitcore-imports.js", "wasi_snapshot_preview1": "./uitcore-imports.js" } }</script>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #fff; }
   #err { position: absolute; inset: 8px; font: 13px ui-monospace, monospace; color: #b00; white-space: pre-wrap; pointer-events: none; }

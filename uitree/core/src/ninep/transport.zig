@@ -1,26 +1,67 @@
 //! Transports for the 9P server: a connected fd (`uit_serve_fd`, a pipe
 //! from a parent), a unix socket (`unix!PATH`, and the private socket h9
-//! dials), and TCP (`tcp!HOST!PORT`, for `-a`).
+//! dials), TCP (`tcp!HOST!PORT`, for `-a`), and a connection the renderer
+//! or the platform carries itself (`uit_serve_conn`'s UitConn: the
+//! browser's).
 //!
-//! POSIX only for now. On Windows every constructor returns
-//! `error.Unsupported`; a winsock TCP transport is the open item (the
-//! spike's SPIKE.md § Windows).
+//! Sockets and fds are POSIX only for now. On Windows and in the browser
+//! every socket constructor returns `error.Unsupported`; a winsock TCP
+//! transport is the open item (the spike's SPIKE.md § Windows).
 
 const std = @import("std");
 const builtin = @import("builtin");
 
 const c = std.c;
 const web = @import("../web.zig");
-/// Sockets and fds. Not on Windows (yet) and not in the browser, where a
-/// Conn is one of the page's channels (web.zig).
-const posix = builtin.os.tag != .windows and !web.enabled;
+/// Sockets and fds. Not on Windows (yet) and not in the browser (wasi),
+/// where every connection is a UitConn.
+const posix = builtin.os.tag != .windows and builtin.os.tag != .wasi;
 
-/// One connected byte stream.
+/// uitcore.h's UitConn: a byte stream someone else carries.
+pub const UitConn = extern struct {
+    read: ?*const fn (ctx: ?*anyopaque, buf: [*]u8, n: usize) callconv(.c) isize = null,
+    write: ?*const fn (ctx: ?*anyopaque, buf: [*]const u8, n: usize) callconv(.c) c_int = null,
+    hangup: ?*const fn (ctx: ?*anyopaque) callconv(.c) void = null,
+    release: ?*const fn (ctx: ?*anyopaque) callconv(.c) void = null,
+    ctx: ?*anyopaque = null,
+};
+
+/// A UitConn being served: the callbacks, copied, and whether it has
+/// been hung up (UitConn.hangup is called at most once).
+pub const Ext = struct {
+    gpa: std.mem.Allocator,
+    cb: UitConn,
+    hung: std.atomic.Value(bool) = .init(false),
+
+    fn callRead(e: *Ext, buf: []u8) isize {
+        return e.cb.read.?(e.cb.ctx, buf.ptr, buf.len);
+    }
+
+    fn read(e: *Ext, buf: []u8) !usize {
+        // In the browser a read may be a Suspending import: park around it.
+        const n = if (web.enabled) web.blocking(callRead, .{ e, buf }) else e.callRead(buf);
+        if (n < 0) return error.ReadFailed;
+        return @min(@as(usize, @intCast(n)), buf.len);
+    }
+
+    fn hangup(e: *Ext) void {
+        if (e.hung.swap(true, .acq_rel)) return;
+        if (e.cb.hangup) |f| f(e.cb.ctx);
+    }
+
+    fn release(e: *Ext) void {
+        if (e.cb.release) |f| f(e.cb.ctx);
+        e.gpa.destroy(e);
+    }
+};
+
+/// One connected byte stream: an fd, or a UitConn (`ext`).
 pub const Conn = struct {
-    fd: c_int,
+    fd: c_int = -1,
+    ext: ?*Ext = null,
 
     pub fn read(k: Conn, buf: []u8) !usize {
-        if (web.enabled) return web.recv(k.fd, buf);
+        if (k.ext) |e| return e.read(buf);
         if (!posix) return error.Unsupported;
         while (true) {
             const n = c.read(k.fd, buf.ptr, buf.len);
@@ -31,7 +72,10 @@ pub const Conn = struct {
     }
 
     pub fn writeAll(k: Conn, b: []const u8) !void {
-        if (web.enabled) return web.send(k.fd, b);
+        if (k.ext) |e| {
+            if (e.cb.write.?(e.cb.ctx, b.ptr, b.len) < 0) return error.WriteFailed;
+            return;
+        }
         if (!posix) return error.Unsupported;
         var off: usize = 0;
         while (off < b.len) {
@@ -48,17 +92,32 @@ pub const Conn = struct {
     /// Ends both directions so a blocked reader sees end of file, without
     /// freeing the fd (the reader still closes it).
     pub fn shutdown(k: Conn) void {
-        if (web.enabled) return web.close(k.fd);
+        if (k.ext) |e| return e.hangup();
         if (!posix) return;
         _ = c.shutdown(k.fd, 2);
     }
 
     pub fn close(k: Conn) void {
-        if (web.enabled) return web.close(k.fd);
+        if (k.ext) |e| return e.release();
         if (!posix) return;
         _ = c.close(k.fd);
     }
 };
+
+/// Takes a UitConn: copies it, and owns it from here (release is called
+/// even when this fails). error.Invalid without read or write.
+pub fn fromUitConn(gpa: std.mem.Allocator, cb: UitConn) !Conn {
+    if (cb.read == null or cb.write == null) {
+        if (cb.release) |f| f(cb.ctx);
+        return error.Invalid;
+    }
+    const e = gpa.create(Ext) catch |err| {
+        if (cb.release) |f| f(cb.ctx);
+        return err;
+    };
+    e.* = .{ .gpa = gpa, .cb = cb };
+    return .{ .ext = e };
+}
 
 pub fn fromFd(fd: c_int) Conn {
     return .{ .fd = fd };

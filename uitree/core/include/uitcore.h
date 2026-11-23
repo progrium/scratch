@@ -1,6 +1,9 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
+ * Version 6: version 5 plus uit_serve_conn: a connection the renderer
+ * carries itself (UitConn), for a platform with no fds to hand the core.
+ * The browser build serves its machine's connections this way.
  * Version 5: version 4 plus uit_token_text, for the look tokens that
  * aren't colors (radius, radius-lg, font-size, font-family, spacing,
  * shadow).
@@ -48,7 +51,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 5u
+#define UIT_ABI_VERSION 6u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -107,7 +110,9 @@ typedef struct {
     /* The OS appearance at start: 0 light, 1 dark. */
     uint32_t system_dark;
     /* Called from any core thread when ops are queued: schedule uit_pump
-     * on the owner thread. Must be cheap and must not call into the core. */
+     * on the owner thread. Must be cheap and must not call into the core.
+     * NULL in the browser: the platform's (the page's `uit.wake`), for a
+     * renderer in JS, which has no function pointer to give. */
     void (*wake)(void *ctx);
     void *wake_ctx;
 } UitConfig;
@@ -121,13 +126,45 @@ int uit_create(const UitConfig *cfg, UitCore **out);
  * the catalog has). $ui/theme/name then takes their names and family
  * names, and $ui/theme/names lists them; uit_token and theme/tokens resolve
  * through the selected palette. Call after uit_create and before serving
- * (UIT_EINUSE after uit_serve_fd, uit_listen or uit_run_machine).
+ * (UIT_EINUSE after uit_serve_fd, uit_serve_conn, uit_listen or
+ * uit_run_machine).
  * UIT_EBADVALUE if the text doesn't parse. Since version 4. */
 int uit_themes(UitCore *, UitStr text);
 
 /* Serves $ui over 9P2000 on a connected fd (a socket or a pipe pair end)
- * until it closes. The core takes the fd. */
+ * until it closes. The core takes the fd. UIT_ENOTSUP in the browser,
+ * which has no sockets: use uit_serve_conn. */
 int uit_serve_fd(UitCore *, int fd);
+
+/* A connection the renderer carries itself, for a platform where it has
+ * no fd to give the core: the browser, where the app's machine is in
+ * another Worker and its bytes come by message. The core serves 9P2000
+ * over it as it would over a socket. Since version 6.
+ *
+ * read blocks until bytes come and returns how many (at most n), 0 at
+ * end of stream, or a negative number on error. write sends all n bytes
+ * and returns 0, or a negative number on error. Both are called from the
+ * connection's own core thread (one reader; writes from any core thread,
+ * one at a time).
+ * hangup ends the stream from the core's side: a read blocked in it
+ * returns 0. From any core thread, at most once. May be NULL.
+ * release is the last call: the core is done with ctx. Once, from a core
+ * thread.
+ *
+ * In the browser the core's threads are coroutines (JSPI), and read may be
+ * a Suspending import: the core parks the calling coroutine around every
+ * call, so the others and the page's event loop run while it waits. */
+typedef struct {
+    ptrdiff_t (*read)(void *ctx, uint8_t *buf, size_t n);
+    int (*write)(void *ctx, const uint8_t *buf, size_t n);
+    void (*hangup)(void *ctx);
+    void (*release)(void *ctx);
+    void *ctx;
+} UitConn;
+
+/* Serves $ui over 9P2000 on `conn` until it ends. The core copies *conn
+ * and owns the connection from here: release is called even on error. */
+int uit_serve_conn(UitCore *, const UitConn *conn);
 
 /* Listens for 9P2000 connections on `addr` (`unix!PATH`, `tcp!HOST!PORT`).
  * Empty addr: a fresh unix socket in a private directory. The dial string
@@ -160,7 +197,12 @@ typedef struct {
 
 /* Starts h9 on its own thread running args->prog with $ui mounted at
  * /mnt/ui and `ui` set in its environment. Returns at once. The exit is
- * reported by a pump (UitChanges.exited). One machine per core. */
+ * reported by a pump (UitChanges.exited). One machine per core.
+ *
+ * In the browser the machine is the platform's: h9's browser host in a
+ * Worker the page starts when the core asks (uitree/web/README.md, "The
+ * core's platform"). The page gets *args as is and uses what it can (argv,
+ * env); the machine's $ui connections come back to the core as UitConns. */
 int uit_run_machine(UitCore *, const UitMachineArgs *args);
 
 /* Any thread. Hangs up: every events read ends, later 9P access fails

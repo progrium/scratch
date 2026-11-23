@@ -70,25 +70,15 @@ pub fn build(b: *std.Build) void {
     b.installFile("include/uitcore.h", "include/uitcore.h");
 
     if (is_web) {
-        // uitcore.wasm: the core as a wasm reactor whose exports are
-        // uitcore.h, for a renderer in another wasm module (GPUI's, through
-        // its uitcore-sys shim) and web/uit-web.js. No uitree-headless.
-        // libuitcore.a is installed too, with libh9coro.a beside it, for a
-        // renderer in Zig that links the core (renderer/tui's web build).
+        // uitcore.wasm: the core alone as a wasm reactor whose exports are
+        // uitcore.h (and libc's malloc and free, for a renderer in JS), for
+        // web/core-test.html. A renderer links libuitcore.a and
+        // libh9coro.a instead: renderer/tui's web build, and GPUI's
+        // through uitcore-sys. web/README.md, "The core's platform".
         const wasm = b.addExecutable(.{ .name = "uitcore-web", .root_module = core });
         configureWeb(wasm);
+        wasm.root_module.export_symbol_names = &.{ "malloc", "free" };
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(wasm.getEmittedBin(), .{ .custom = "web" }, "uitcore.wasm").step);
-        // uitcore-shared.wasm: the same, importing its memory from the
-        // renderer's module (GPUI's, uitree/web/gpui.js), so uitcore.h's
-        // pointers mean the same thing in both. Its data, stack and heap
-        // start at `web-base`, above what the renderer's module has
-        // when the page instantiates the core.
-        const base = b.option(u32, "web-base", "Where uitcore-shared.wasm's memory starts (default 256 MiB)") orelse 256 << 20;
-        const shared = b.addExecutable(.{ .name = "uitcore-shared", .root_module = core });
-        configureWeb(shared);
-        shared.import_memory = true;
-        shared.global_base = base;
-        b.getInstallStep().dependOn(&b.addInstallFileWithDir(shared.getEmittedBin(), .{ .custom = "web" }, "uitcore-shared.wasm").step);
         return;
     }
 
