@@ -131,7 +131,10 @@ fn main() {
 
 /// Cargo's target triple as Zig spells it; `native` for the host.
 fn zig_target(target: &str, host: &str) -> String {
-    if target == host {
+    // Zig's native ABI on Windows is gnu, so an MSVC build always names
+    // its target: a gnu libuitcore in an MSVC link brings a compiler_rt
+    // that link.exe rejects (LNK1143).
+    if target == host && !target.ends_with("msvc") {
         return "native".into();
     }
     let arch = target.split('-').next().unwrap();
