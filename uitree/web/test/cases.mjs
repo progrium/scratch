@@ -132,3 +132,89 @@ export const cases = [
     },
   },
 ];
+
+// tour.rc: what no other example covers.
+const C = 't/controls/c';
+cases.push(
+  {
+    app: 'tour', name: 'checkbox, textarea, progress',
+    async run(t) {
+      await t.ready(`${C}/agree`);
+      await t.retry('checked', () => t.click(`${C}/agree`), async () => (await value(t, `${C}/agree`)) === 'on');
+      await is(t, 'progress follows', `${C}/p/value`, '80');
+      await t.click(`${C}/notes`);
+      await t.type('two words');
+      await t.until('textarea value', async () => (await value(t, `${C}/notes`)) === 'two words');
+    },
+  },
+  {
+    app: 'tour', name: 'clipboard: copy to $ui/clip, paste back',
+    async run(t) {
+      await t.ready(`${C}/clip/copy`);
+      await t.retry('copied', () => t.click(`${C}/clip/copy`), async () => (await t.ui.read('clip')).trim() === 'copy me');
+      await t.click(`${C}/clip/paste`);
+      await is(t, 'pasted', `${C}/pasted/text`, 'pasted: copy me');
+    },
+  },
+  {
+    app: 'tour', name: 'tabs by key, markdown, editor, img',
+    async run(t) {
+      await t.ready('t');
+      await t.retry('content tab', () => t.press('Control+2'), async () => (await text(t, 't/value')) === 'content');
+      for (const n of ['t/content/v/md', 't/content/v/row/ed', 't/content/v/row/pic']) await t.node(n);
+    },
+    renderers: gpui,
+  },
+  {
+    app: 'tour', name: 'popover, notify, tooltip',
+    async run(t) {
+      await t.ready('top/more');
+      await t.retry('popover open', () => t.click('top/more'), async () => (await text(t, 'over/pop/open')) === 'on');
+      await t.press('Escape');
+      await t.click('top/toast');
+      await t.hover('top/toast');
+      await t.wait(900);
+    },
+    renderers: gpui,
+  },
+  {
+    app: 'tour', name: 'a link opens its href',
+    async run(t) {
+      await t.ready('top/docs');
+      const popup = t.page.waitForEvent('popup', { timeout: 8000 });
+      await t.click('top/docs');
+      const p = await popup;
+      if (!p.url().startsWith('https://example.com/uitree')) throw new Error(`opened ${p.url()}`);
+    },
+  },
+  {
+    app: 'tour', name: 'menu bar in the window',
+    async run(t) {
+      await t.ready('t');
+      // GPUI Kit's AppMenuBar, at the window's top-left: its menus and
+      // items aren't nodes, so they're clicked where they're drawn.
+      await t.retry('content by menu', async () => {
+        await t.page.mouse.click(24, 14);
+        await t.wait(400);
+        await t.page.mouse.click(48, 113);
+      }, async () => (await text(t, 't/value')) === 'content');
+    },
+    renderers: gpui,
+  },
+  {
+    app: 'tour', name: 'drop a file', skip: 'gpui_web makes no file drops (README.md)',
+    async run(t) {
+      await t.ready('t');
+      await t.retry('drop tab', () => t.press('Control+3'), async () => (await text(t, 't/value')) === 'files');
+      const [x, y, w, h] = await t.node('t/files/zone');
+      await t.page.evaluate(([x, y]) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(['hello from the page\n'], 'hello.txt', { type: 'text/plain' }));
+        const el = document.elementFromPoint(x, y);
+        for (const type of ['dragenter', 'dragover', 'drop']) el.dispatchEvent(new DragEvent(type, { dataTransfer: dt, clientX: x, clientY: y, bubbles: true, cancelable: true }));
+      }, [x + w / 2, y + h / 2]);
+      await is(t, 'dropped', 't/files/zone/t/text', 'Dropped: hello.txt');
+    },
+    renderers: gpui,
+  },
+);

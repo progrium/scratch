@@ -34,6 +34,7 @@ export async function startTui(el, { wasm = 'uitree-tui.wasm', cols = 60, rows =
         wake: () => { if (!scheduled) { scheduled = true; setTimeout(pump, 0); } },
         title: (p, n) => onTitle(dec.decode(new Uint8Array(memory.buffer, p, n))),
         tip_timer: (gen, ms) => setTimeout(() => x.tui_tip(gen), ms),
+        open: (p, n) => { const u = dec.decode(new Uint8Array(memory.buffer, p, n)); if (/^https?:/.test(u)) window.open(u, '_blank', 'noopener'); },
       }),
     },
   });

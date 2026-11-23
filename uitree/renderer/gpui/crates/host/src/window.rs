@@ -168,8 +168,20 @@ impl Render for WindowView {
             .bg(bg)
             .text_color(fg)
             .font_family(font)
-            .text_size(font_size)
-            .children(body);
+            .text_size(font_size);
+        // The menu bar, in the browser (actions.rs): above the root, which
+        // takes the rest of the window.
+        #[cfg(target_family = "wasm")]
+        let el = match self.host.menu_bar.borrow().clone() {
+            Some(bar) if !gpui_component::GlobalState::global(cx).app_menus().is_empty() => el
+                .flex()
+                .flex_col()
+                .child(div().flex_none().border_b_1().border_color(cx.theme().border).child(bar))
+                .child(div().flex_1().min_h_0().relative().children(body)),
+            _ => el.children(body),
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let el = el.children(body);
         let el = if over.is_empty() { el } else { el.child(div().absolute().top_0().left_0().size_full().children(over)) };
         self.host.frames.borrow_mut().push((std::time::Duration::ZERO, t0.elapsed()));
         el
