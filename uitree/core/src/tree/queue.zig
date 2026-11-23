@@ -100,7 +100,8 @@ pub const OpQueue = struct {
         return ack.text();
     }
 
-    /// Owner thread: applies every queued op in order and acks each.
+    /// Owner thread: applies every queued op in order, publishes the
+    /// snapshot, then acks each, so a writer's next read sees its write.
     /// Returns how many ran.
     pub fn drain(q: *OpQueue, tree: *treem.Tree) usize {
         q.mu.lockUncancelable(q.io);
@@ -108,17 +109,42 @@ pub const OpQueue = struct {
         q.items = .empty;
         q.mu.unlock(q.io);
         defer batch.deinit(q.gpa);
-        for (batch.items) |it| {
+        if (batch.items.len == 0) return 0;
+        const Res = struct { ok: bool, buf: [512]u8 = undefined, len: usize = 0 };
+        const res = q.gpa.alloc(Res, batch.items.len) catch {
+            // No room to hold results: ack as we go.
+            for (batch.items) |it| {
+                defer q.gpa.free(it.mem);
+                const r = tree.apply(it.op);
+                if (it.ack) |a| q.finish(a, r, tree);
+            }
+            tree.publish() catch {};
+            return batch.items.len;
+        };
+        defer q.gpa.free(res);
+        for (batch.items, res) |it, *o| {
             defer q.gpa.free(it.mem);
-            const r = tree.apply(it.op);
-            if (it.ack) |a| {
-                q.mu.lockUncancelable(q.io);
-                if (r) |_| a.set(true, "") else |e| a.set(false, if (e == error.OutOfMemory) "out of memory" else tree.lastError());
-                q.cond.broadcast(q.io);
-                q.mu.unlock(q.io);
+            o.* = .{ .ok = true };
+            if (tree.apply(it.op)) |_| {} else |e| {
+                o.ok = false;
+                const m = if (e == error.OutOfMemory) "out of memory" else tree.lastError();
+                o.len = @min(m.len, o.buf.len);
+                @memcpy(o.buf[0..o.len], m[0..o.len]);
             }
         }
+        tree.publish() catch {};
+        q.mu.lockUncancelable(q.io);
+        for (batch.items, res) |it, *o| if (it.ack) |a| a.set(o.ok, o.buf[0..o.len]);
+        q.cond.broadcast(q.io);
+        q.mu.unlock(q.io);
         return batch.items.len;
+    }
+
+    fn finish(q: *OpQueue, a: *Ack, r: anyerror!void, tree: *treem.Tree) void {
+        q.mu.lockUncancelable(q.io);
+        if (r) |_| a.set(true, "") else |e| a.set(false, if (e == error.OutOfMemory) "out of memory" else tree.lastError());
+        q.cond.broadcast(q.io);
+        q.mu.unlock(q.io);
     }
 
     /// No more ops: pending ones fail with `app gone`, and so do later

@@ -710,7 +710,10 @@ pub const Tree = struct {
         defer arena.deinit();
         const a = arena.allocator();
         const n = st.node(ev.node);
-        const kind: EventKind = ev.kind orelse kindOf(n, ev.name);
+        // A design state name (`hover`, `focus`, ...) coalesces even when
+        // the host calls it an action.
+        var kind: EventKind = ev.kind orelse kindOf(n, ev.name);
+        if (kind == .action and state.inList(&state_events, ev.name)) kind = .state;
         var attrs: std.ArrayList(Attr) = .empty;
         var win_name: ?[]const u8 = ev.win;
         var path: []const u8 = ev.path orelse "-";
@@ -725,11 +728,18 @@ pub const Tree = struct {
             }
         } else if (ev.win) |wn| if (st.win(wn)) |w| try chain.append(a, w.root);
         var route: []const u8 = ev.key orelse (if (n) |nd| inheritedTag(st, nd.id) else null) orelse "-";
+        // `win=` first (core.md § Events' examples), `via=` last.
+        if (win_name) |w| try attrs.append(a, .{ .key = "win", .value = w });
+        var via_at: ?Attr = null;
         for (ev.attrs) |x| {
             // `key=` given as an attribute is the routing word.
-            if (std.mem.eql(u8, x.key, "key")) route = x.value else try attrs.append(a, x);
+            if (std.mem.eql(u8, x.key, "key")) {
+                route = x.value;
+            } else if (std.mem.eql(u8, x.key, "via")) {
+                via_at = x;
+            } else try attrs.append(a, x);
         }
-        if (win_name) |w| try attrs.append(a, .{ .key = "win", .value = w });
+        if (via_at) |x| try attrs.append(a, x);
         const has_via = for (ev.attrs) |x| {
             if (std.mem.eql(u8, x.key, "via")) break true;
         } else false;

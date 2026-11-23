@@ -53,6 +53,16 @@ const Fx = struct {
         return f.t.apply(.{ .write = .{ .session = 1, .path = p, .data = data } });
     }
 
+    fn writeAs(f: *Fx, session: tree.Session, p: []const u8, data: []const u8) !void {
+        return f.t.apply(.{ .write = .{ .session = session, .path = p, .data = data } });
+    }
+
+    /// Children of window main's root in the state the renderer draws.
+    fn drawnKids(f: *Fx) usize {
+        const st = f.t.committed();
+        return st.node(st.win("main").?.root).?.children.items.len;
+    }
+
     fn ok(f: *Fx, p: []const u8, data: []const u8) !void {
         f.write(p, data) catch |e| {
             std.debug.print("write {s} {s}: {s}\n", .{ p, data, f.t.lastError() });
@@ -180,6 +190,14 @@ fn norm(a: std.mem.Allocator, lines: []const u8) ![]const u8 {
         try out.append(a, '\n');
     }
     return out.items;
+}
+
+/// 0.2: `gone - - seq=N`, then end of file.
+fn expectGone(got: []const u8) !void {
+    tt.expect(std.mem.startsWith(u8, got, "gone - - seq=") and std.mem.endsWith(u8, got, "\n<eof>")) catch |e| {
+        std.debug.print("got: {s}\n", .{got});
+        return e;
+    };
 }
 
 fn names(a: std.mem.Allocator, lines: []const u8) ![]const u8 {
@@ -569,4 +587,817 @@ test "data files are checked" {
     try f.ok("menu/bar", "file\n");
     try f.expectRead("menu/bar", "file\n");
     try tt.expectEqualStrings("bar file", try listNames(&f, "menu"));
+}
+
+// ---------------------------------------------------------------- windows
+
+test "windows and root verbs" {
+    var f: Fx = undefined;
+    try f.init();
+    defer f.deinit();
+    f.t.clearChanges();
+    try f.ok("ctl", "window prefs title=Settings size=600,400 kind=dialog");
+    // 0.2: a window stays hidden, and the host isn't told, until it has
+    // content or a `show`.
+    try tt.expectEqual(@as(usize, 0), try cmdsOf(&f, .window));
+    try f.ok("win/prefs/ctl", "show");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .window));
+    const W = "win/prefs";
+    try f.expectRead(W ++ "/title", "Settings\n");
+    // 0.2: window props are files; the window ctl takes the window verbs.
+    try f.ok(W ++ "/title", "Again\n");
+    try f.expectRead(W ++ "/title", "Again\n");
+    f.t.clearChanges();
+    try f.ok(W ++ "/ctl", "state max");
+    try f.expectRead(W ++ "/state", "max\n");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .window_ctl));
+    try tt.expectEqual(Code.bad_value, try f.code(W ++ "/ctl", "state maximized"));
+    try f.ok(W ++ "/ctl", "notify 'Saved draft' type=success");
+    try tt.expectEqual(Code.bad_value, try f.code(W ++ "/ctl", "notify hi type=loud"));
+    // focus
+    try f.ok(W ++ "/ctl", "new input name");
+    try f.ok(W ++ "/focus", "name\n");
+    try f.expectRead(W ++ "/focus", "name\n");
+    try tt.expectEqual(Code.not_found, try f.code(W ++ "/focus", "zz"));
+    // app verbs
+    // 0.2: `set ID` needs an action some key or menu item names.
+    try tt.expectEqual(Code.not_found, try f.code("ctl", "set save enabled=off"));
+    try f.ok("keys", "cmd-s save\n");
+    f.t.clearChanges();
+    try f.ok("ctl", "set save enabled=off check=on\ntheme mode dark");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .set_action));
+    try f.expectRead("theme/mode", "dark\n");
+    try f.ok("theme/tokens", "primary #0b5cff\nradius 6\n");
+    const toks = try f.read("theme/tokens");
+    try tt.expect(std.mem.indexOf(u8, toks, "primary #0b5cff\n") != null);
+    try tt.expect(std.mem.indexOf(u8, toks, "background ") != null);
+    // destroy removes the window; its readers get gone, then EOF
+    const ws = try f.subPath(W);
+    defer ws.close();
+    const ns = try f.subPath(W ++ "/name");
+    defer ns.close();
+    try f.ok(W ++ "/ctl", "destroy");
+    try tt.expect(!try f.exists(W));
+    try expectGone(try f.drain(ws));
+    try expectGone(try f.drain(ns));
+    // mkdir win/x makes a window
+    try f.mkdir("win/x");
+    try f.expectRead("win/x/type", "div\n");
+}
+
+test "component verbs" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    // 0.2's editor has no verbs (`save` is its event); console's `clear`
+    // is a component verb the host runs.
+    try f.ok(R ++ "/ctl", "new console src");
+    f.t.clearChanges();
+    try f.ok(R ++ "/src/ctl", "clear");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .component_verb));
+    try tt.expectEqual(Code.unknown_command, try f.code(R ++ "/src/ctl", "explode"));
+    try tt.expect(std.mem.indexOf(u8, try f.read(R ++ "/src/ctl"), "clear") != null);
+}
+
+// ---------------------------------------------------------------- events
+
+test "event lines and tags" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new button save label=Save tag=save\nnew select lang");
+    const s = try f.sub(.app);
+    defer s.close();
+    const seq = try f.t.emit(.{ .name = "click", .node = f.node(R ++ "/save").? });
+    _ = try f.t.emit(.{ .name = "change", .node = f.node(R ++ "/lang").?, .attrs = &.{.{ .key = "value", .value = "go" }} });
+    _ = try f.t.emit(.{ .name = "close", .node = f.node(R).?, .kind = .action, .attrs = &.{.{ .key = "via", .value = "titlebar" }} });
+    _ = try f.t.emit(.{ .name = "quit", .kind = .action });
+    const want = try std.fmt.allocPrint(f.a(),
+        \\click save save win=main seq={d}
+        \\change - lang win=main value=go via=user seq={d}
+        \\close - . win=main via=titlebar seq={d}
+        \\quit - - seq={d}
+        \\
+    , .{ seq, seq + 1, seq + 2, seq + 3 });
+    try tt.expectEqualStrings(want, try f.drain(s));
+}
+
+test "where to read" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("ctl", "window other");
+    try f.ok(R ++ "/ctl", "new button a\nnew button b");
+    const app_s = try f.sub(.app);
+    defer app_s.close();
+    const win_s = try f.subPath(R);
+    defer win_s.close();
+    const a_s = try f.subPath(R ++ "/a");
+    defer a_s.close();
+    _ = try f.t.emit(.{ .name = "click", .node = f.node(R ++ "/a").? });
+    _ = try f.t.emit(.{ .name = "click", .node = f.node(R ++ "/b").? });
+    _ = try f.t.emit(.{ .name = "click", .node = f.node("win/other").? });
+    _ = try f.t.emit(.{ .name = "quit", .kind = .action });
+    try tt.expectEqualStrings("click click click quit", try names(f.a(), try f.drain(app_s)));
+    try tt.expectEqualStrings("click click", try names(f.a(), try f.drain(win_s)));
+    try tt.expectEqualStrings("click", try names(f.a(), try f.drain(a_s)));
+    // The resync line carries the last seq.
+    const late = try f.t.bus.subscribe(.app);
+    defer late.close();
+    try tt.expectEqualStrings(try std.fmt.allocPrint(f.a(), "resync - - seq={d}\n", .{f.t.bus.lastSeq()}), try f.drain(late));
+    // Node removal: gone, then EOF.
+    try f.ok(R ++ "/ctl", "delete a");
+    try expectGone(try f.drain(a_s));
+}
+
+test "state events coalesce and never follow their submit" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new input in\nnew input other");
+    const in = f.node(R ++ "/in").?;
+    const other = f.node(R ++ "/other").?;
+    const s = try f.sub(.app);
+    defer s.close();
+    _ = try f.t.emit(.{ .name = "change", .node = in });
+    _ = try f.t.emit(.{ .name = "change", .node = other });
+    _ = try f.t.emit(.{ .name = "change", .node = in });
+    _ = try f.t.emit(.{ .name = "submit", .node = in });
+    const got = try f.drain(s);
+    var it = std.mem.splitScalar(u8, got, '\n');
+    try tt.expect(std.mem.startsWith(u8, it.next().?, "change - other "));
+    try tt.expect(std.mem.startsWith(u8, it.next().?, "change - in "));
+    try tt.expect(std.mem.startsWith(u8, it.next().?, "submit"));
+    // A change after the submit stays after it.
+    _ = try f.t.emit(.{ .name = "change", .node = in });
+    _ = try f.t.emit(.{ .name = "submit", .node = in });
+    _ = try f.t.emit(.{ .name = "change", .node = in });
+    try tt.expectEqualStrings("submit change", try names(f.a(), try f.drain(s)));
+    // The coalesced event keeps the position of its newest copy.
+    _ = try f.t.emit(.{ .name = "change", .node = in });
+    _ = try f.t.emit(.{ .name = "submit", .node = in });
+    _ = try f.t.emit(.{ .name = "focus", .node = in });
+    const seq = try f.t.emit(.{ .name = "change", .node = in });
+    const got2 = try f.drain(s);
+    try tt.expectEqualStrings("submit focus change", try names(f.a(), got2));
+    try tt.expect(std.mem.endsWith(u8, got2, try std.fmt.allocPrint(f.a(), "seq={d}\n", .{seq})));
+}
+
+// ---------------------------------------------------------------- requests
+
+fn openCount(f: *Fx) usize {
+    var buf: [16]u64 = undefined;
+    return f.t.openRequests(&buf);
+}
+
+test "request default applies with no reader" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    f.t.clearChanges();
+    const seq = try f.t.request(.{ .name = "close", .node = f.node(R).? }, "close");
+    try tt.expectEqual(@as(u64, 0), seq);
+    try tt.expectEqual(@as(usize, 0), openCount(&f));
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .answer));
+}
+
+test "request answered by seq" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new tabs tabs\nnew tab tabs/t1\nnew div other");
+    const s = try f.sub(.app);
+    defer s.close();
+    const tab = f.node(R ++ "/tabs/t1").?;
+    const seq = try f.t.request(.{ .name = "close", .node = tab }, "close");
+    try tt.expect(seq != 0);
+    try tt.expectEqual(@as(usize, 1), openCount(&f));
+    const ans = try std.fmt.allocPrint(f.a(), "keep seq={d}", .{seq});
+    // On the wrong node's ctl: not found.
+    try tt.expectEqual(Code.not_found, try f.code(R ++ "/other/ctl", ans));
+    f.t.clearChanges();
+    try f.ok(R ++ "/tabs/t1/ctl", ans);
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .answer));
+    try tt.expect(f.node(R ++ "/tabs/t1") != null);
+    // A late answer: not found.
+    try tt.expectEqual(Code.not_found, try f.code(R ++ "/tabs/t1/ctl", try std.fmt.allocPrint(f.a(), "close seq={d}", .{seq})));
+    // 0.2: closing a tab removes it.
+    const seq2 = try f.t.request(.{ .name = "close", .node = tab }, "close");
+    try f.ok(R ++ "/tabs/t1/ctl", try std.fmt.allocPrint(f.a(), "close seq={d}", .{seq2}));
+    try tt.expect(f.node(R ++ "/tabs/t1") == null);
+    // Window and app requests are answered on their own ctl.
+    const w = try f.t.request(.{ .name = "close", .node = f.node(R).? }, "close");
+    try tt.expect(w != 0);
+    try f.ok(R ++ "/ctl", try std.fmt.allocPrint(f.a(), "keep seq={d}", .{w}));
+    try f.ok("ctl", "ask quit");
+    const q = try f.t.request(.{ .name = "quit" }, "quit");
+    try tt.expect(q != 0);
+    try f.ok("ctl", try std.fmt.allocPrint(f.a(), "keep seq={d}", .{q}));
+    try tt.expectEqual(@as(usize, 0), openCount(&f));
+}
+
+test "request times out to default" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("ctl", "ask quit");
+    const s = try f.sub(.app);
+    defer s.close();
+    const seq = try f.t.request(.{ .name = "quit" }, "quit");
+    try f.t.advanceClock(tree.request_timeout_ns / 2);
+    try tt.expectEqual(@as(usize, 1), openCount(&f));
+    f.t.clearChanges();
+    try f.t.advanceClock(tree.request_timeout_ns);
+    try tt.expectEqual(@as(usize, 0), openCount(&f));
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .answer));
+    // The default was quit, so the app is gone (uitreefs: not found).
+    try tt.expectEqual(Code.app_gone, try f.code("ctl", try std.fmt.allocPrint(f.a(), "keep seq={d}", .{seq})));
+}
+
+test "drop request and drag data" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new div notes");
+    try f.ok(R ++ "/notes/drop", "files text\n");
+    try f.t.dragData(7, "/drag/7/files/a.txt\n");
+    try f.expectRead("drag/7/data", "/drag/7/files/a.txt\n");
+    const s = try f.sub(.app);
+    defer s.close();
+    const seq = try f.t.request(.{ .name = "drop", .node = f.node(R ++ "/notes").?, .attrs = &.{
+        .{ .key = "type", .value = "files" },
+        .{ .key = "drag", .value = "7" },
+        .{ .key = "pt", .value = "40,212" },
+    } }, "refuse");
+    try f.ok(R ++ "/notes/ctl", try std.fmt.allocPrint(f.a(), "accept seq={d}", .{seq}));
+    try tt.expect(!try f.exists("drag/7/data"));
+    // A client-started drag: the client writes the payload.
+    try f.t.dragData(8, "");
+    try f.ok("drag/8/data", "note:42");
+    try tt.expectEqualStrings("note:42", f.t.current().drag(8).?.val.bytes);
+    try tt.expectEqual(Code.not_found, try f.code("drag/9/data", "x"));
+}
+
+// ---------------------------------------------------------------- batches
+
+test "batch freezes then commits" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("ctl", "begin");
+    f.t.clearChanges();
+    try f.ok(R ++ "/ctl", "new text a text=Hi");
+    try tt.expectEqual(@as(usize, 0), (try f.t.changes()).dirty.len);
+    // Reads show the write; the renderer still sees the old tree.
+    try f.expectRead(R ++ "/a/text", "Hi\n");
+    try tt.expectEqual(@as(usize, 0), f.drawnKids());
+    // Another session's commit doesn't end this one.
+    try tt.expectEqual(Code.no_batch, blk: {
+        f.writeAs(2, "ctl", "commit") catch |e| break :blk Code.fromError(e).?;
+        return error.TestExpectedError;
+    });
+    try tt.expectEqual(Code.in_use, try f.code("ctl", "begin"));
+    f.t.clearChanges();
+    try f.ok("ctl", "commit");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .redraw));
+    try tt.expectEqual(@as(usize, 1), f.drawnKids());
+}
+
+test "batch commit replays props" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new input in");
+    try f.ok(R ++ "/in/value", "typed");
+    try f.ok("ctl", "begin");
+    try f.ok(R ++ "/in/value", "");
+    f.t.clearChanges();
+    try f.ok("ctl", "commit");
+    const in = f.node(R ++ "/in").?;
+    const ch = try f.t.changes();
+    const found = for (ch.props) |p| {
+        if (p.node == in and std.mem.eql(u8, p.file, "value")) break true;
+    } else false;
+    try tt.expect(found);
+    try f.expectRead(R ++ "/in/value", "");
+}
+
+test "batch abort restores" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new text keep text=Old");
+    try f.ok("ctl", "begin");
+    try f.ok(R ++ "/ctl", "new text gone");
+    const gone = f.node(R ++ "/gone").?;
+    try f.ok(R ++ "/keep/text", "New");
+    f.t.clearChanges();
+    try f.ok("ctl", "abort");
+    try tt.expectEqualSlices(Handle, &.{gone}, (try f.t.changes()).removed);
+    try f.expectRead(R ++ "/keep/text", "Old\n");
+    try tt.expect(f.node(R ++ "/gone") == null);
+}
+
+test "batch times out and session close aborts" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("ctl", "begin");
+    try f.ok(R ++ "/ctl", "new text a");
+    try tt.expectEqual(@as(usize, 0), f.drawnKids());
+    f.t.clearChanges();
+    try f.t.advanceClock(tree.batch_timeout_ns + 1);
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .redraw));
+    try tt.expectEqual(@as(usize, 1), f.drawnKids());
+    try tt.expect(std.mem.endsWith(u8, try f.traceText(), "batch timeout\n"));
+    // A session that goes away aborts its batch.
+    try f.ok("ctl", "begin");
+    try f.ok(R ++ "/ctl", "new text b");
+    const b = f.node(R ++ "/b").?;
+    f.t.clearChanges();
+    try f.t.apply(.{ .session_closed = 1 });
+    try tt.expectEqualSlices(Handle, &.{b}, (try f.t.changes()).removed);
+    try tt.expect(f.node(R ++ "/b") == null);
+    // begin and commit in one write cancel out.
+    try f.ok("ctl", "begin\ncommit");
+    try tt.expect(!f.t.batchOpen());
+}
+
+// ---------------------------------------------------------------- documents
+
+/// core.md § Documents' sign-in document (conformance 21-tree-docs).
+const signin =
+    \\div root  : v-flex size-full p=24 gap=16
+    \\  text title  text='Sign in'  : text-xl font-semibold
+    \\  form f
+    \\    field user  label=Email
+    \\      input in  placeholder=you@example.com
+    \\    field pass  label=Password
+    \\      input in  secret
+    \\    field go
+    \\      button submit  primary  label='Sign in'  tag=login  : w-full
+    \\  link help  label='Forgot password?'  href=https://example.com/reset
+    \\
+;
+
+test "tree documents round trip" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/tree", signin);
+    try f.expectRead(R ++ "/tree", signin);
+    try f.expectRead(R ++ "/title/text", "Sign in\n");
+    try f.expectRead(R ++ "/f/user/in/placeholder", "you@example.com\n");
+    try f.expectRead(R ++ "/f/go/submit/tag", "login\n");
+    try f.expectRead(R ++ "/order", "title f help\n");
+    try f.expectRead(R ++ "/f/order", "user pass go\n");
+    // A subtree reads on its own.
+    try f.expectRead(R ++ "/f/user/tree", "field user  label=Email\n  input in  placeholder=you@example.com\n");
+    // Other spacing and order read back the same.
+    try f.ok(R ++ "/tree",
+        \\div root : v-flex size-full p=24 gap=16
+        \\  text title text='Sign in' : text-xl font-semibold
+        \\  form f
+        \\    field user label=Email
+        \\      input in placeholder=you@example.com
+        \\    field pass label=Password
+        \\      input in secret=on
+        \\    field go
+        \\      button submit label='Sign in' primary tag=login : w-full
+        \\  link help label='Forgot password?' href=https://example.com/reset
+        \\
+    );
+    try f.expectRead(R ++ "/tree", signin);
+    // A here-value.
+    const notes =
+        \\div root
+        \\  text notes  text=<<END
+        \\# Notes
+        \\
+        \\- one
+        \\- two
+        \\END
+        \\
+    ;
+    try f.ok(R ++ "/tree", notes);
+    try f.expectRead(R ++ "/notes/text", "# Notes\n\n- one\n- two\n");
+    try f.expectRead(R ++ "/tree", notes);
+    // Save and restore.
+    const saved = try f.a().dupe(u8, try f.read(R ++ "/tree"));
+    try f.ok(R ++ "/tree", saved);
+    try f.expectRead(R ++ "/tree", saved);
+}
+
+test "tree write keeps children by name and type" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/tree", signin);
+    const in = f.node(R ++ "/f/user/in").?;
+    const pass = f.node(R ++ "/f/pass").?;
+    const help = f.node(R ++ "/help").?;
+    try f.ok(R ++ "/f/user/in/value", "Ada");
+    try f.ok(R ++ "/focus", "f/user/in");
+    f.t.clearChanges();
+    try f.ok(R ++ "/tree",
+        \\div root  : v-flex size-full p=24 gap=16
+        \\  form f
+        \\    field user  label='Your email'
+        \\      input in  placeholder=you@example.com
+        \\  text title  text='Welcome back'
+        \\
+    );
+    // Kept: the input, with its state, and the focus on it.
+    try tt.expectEqual(in, f.node(R ++ "/f/user/in").?);
+    try f.expectRead(R ++ "/f/user/in/value", "Ada\n");
+    try f.expectRead(R ++ "/focus", "f/user/in\n");
+    try f.expectRead(R ++ "/order", "f title\n");
+    try f.expectRead(R ++ "/f/user/label", "Your email\n");
+    const ch = try f.t.changes();
+    try tt.expect(std.mem.indexOfScalar(Handle, ch.removed, pass) != null);
+    try tt.expect(std.mem.indexOfScalar(Handle, ch.removed, help) != null);
+    try tt.expect(std.mem.indexOfScalar(Handle, ch.created, in) == null);
+    // A child whose type changed is replaced, so its state goes.
+    try f.ok(R ++ "/tree", "div root\n  form f\n    field user\n      textarea in\n");
+    try f.expectRead(R ++ "/f/user/in/type", "textarea\n");
+    try f.expectRead(R ++ "/f/user/in/value", "");
+    // The root's style was left out, so it's back to empty.
+    try f.expectRead(R ++ "/style", "");
+    // A bad document changes nothing.
+    const before = try f.a().dupe(u8, try f.read(R ++ "/tree"));
+    try tt.expectEqual(Code.unknown_type, try f.code(R ++ "/tree", "div root\n  nosuchtype x\n"));
+    try tt.expect(std.meta.isError(f.write(R ++ "/tree", "div root\n      text deep\n")));
+    // The root line must match the node.
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/tree", "text root\n"));
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/tree", "div other\n"));
+    try f.expectRead(R ++ "/tree", before);
+    try f.expectRead(R ++ "/type", "div\n");
+}
+
+// ---------------------------------------------------------------- trace
+
+test "trace matches the conformance golden" {
+    // tests/conformance/25-trace, against the tree alone.
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    const start = (try f.traceText()).len;
+    try f.ok(R ++ "/ctl", "new text a text=hi\nnew input pass secret");
+    try f.mkdir(R ++ "/b");
+    try f.ok(R ++ "/a/text", "Hello\n");
+    try f.ok(R ++ "/a/text", "line one\nline two\n");
+    try f.ok(R ++ "/pass/value", "hunter2\n");
+    try f.ok(R ++ "/ctl", "new input pin secret value=1234");
+    try f.ok(R ++ "/ctl", "set pass value=swordfish");
+    try f.ok("ctl", "set win/main/pin value=0000");
+    try tt.expect(std.meta.isError(f.write(R ++ "/a/style", "flexx\n")));
+    // rm -r: the files (which log nothing), then the directory
+    for ([_][]const u8{ R ++ "/b/type", R ++ "/b/style", R ++ "/b" }) |p| try f.remove(p);
+    try f.ok("ctl", "begin");
+    try f.t.advanceClock(2 * std.time.ns_per_s);
+    try tt.expectEqualStrings(
+        \\ctl path=win/main/ctl cmd='new text a text=hi'
+        \\ctl path=win/main/ctl cmd='new input pass secret'
+        \\mkdir path=win/main/b
+        \\write path=win/main/a/text value=Hello
+        \\write path=win/main/a/text len=17
+        \\write path=win/main/pass/value value=<secret>
+        \\ctl path=win/main/ctl cmd='new input pin secret value=<secret>'
+        \\ctl path=win/main/ctl cmd='set pass value=<secret>'
+        \\ctl path=ctl cmd='set win/main/pin value=<secret>'
+        \\error path=win/main/a/style err='unknown style word: flexx'
+        \\remove path=win/main/b
+        \\ctl path=ctl cmd=begin
+        \\batch timeout
+        \\
+    , (try f.traceText())[start..]);
+}
+
+test "trace hides secrets in documents" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new input name");
+    try f.ok(R ++ "/name/value", "Jo\n");
+    try f.ok(R ++ "/tree", "div root\n  input pw  secret  value=hunter4\n");
+    const tr = try f.traceText();
+    try tt.expect(std.mem.indexOf(u8, tr, "write path=win/main/name/value value=Jo\n") != null);
+    try tt.expect(std.mem.indexOf(u8, tr, "hunter") == null);
+    // A tree write logs one line, not its props.
+    var lines = std.mem.splitBackwardsScalar(u8, std.mem.trimEnd(u8, tr, "\n"), '\n');
+    try tt.expect(std.mem.startsWith(u8, lines.next().?, "write path=win/main/tree len="));
+}
+
+// ---------------------------------------------------------------- changes
+
+test "changes report props" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new button b");
+    try f.ok(R ++ "/ctl", "show");
+    f.t.clearChanges();
+    try f.ok(R ++ "/b/label", "Go");
+    var ch = try f.t.changes();
+    try tt.expectEqual(@as(usize, 1), ch.props.len);
+    try tt.expectEqual(f.node(R ++ "/b").?, ch.props[0].node);
+    try tt.expectEqualStrings("label", ch.props[0].file);
+    try tt.expectEqual(@as(usize, 1), ch.dirty.len);
+    try tt.expectEqualStrings("main", ch.dirty[0]);
+    f.t.clearChanges();
+    try f.ok(R ++ "/title", "T2");
+    ch = try f.t.changes();
+    try tt.expectEqual(@as(usize, 1), ch.props.len);
+    try tt.expectEqual(f.node(R).?, ch.props[0].node);
+    try tt.expectEqualStrings("title", ch.props[0].file);
+}
+
+test "mkdir then type before first frame" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new form f");
+    // mkdir under a form makes a div, which may become a field
+    try f.mkdir(R ++ "/f/name");
+    try tt.expectEqual(Code.unknown_type, try f.code(R ++ "/f/name/type", "button"));
+    try f.ok(R ++ "/f/name/type", "field");
+    try tt.expectError(error.InUse, f.mkdir(R ++ "/f/name"));
+    // Changing type drops files the new type doesn't have.
+    try f.ok(R ++ "/ctl", "new button b label=Hi tag=x");
+    try f.ok(R ++ "/b/type", "text");
+    try tt.expect(!try f.exists(R ++ "/b/label"));
+    try f.expectRead(R ++ "/b/tag", "x\n");
+}
+
+// ---------------------------------------------------------------- echoes, close, theme
+
+fn noSeq(a: std.mem.Allocator, got: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var it = std.mem.splitScalar(u8, got, '\n');
+    while (it.next()) |l| {
+        if (l.len == 0) continue;
+        const i = std.mem.lastIndexOf(u8, l, " seq=") orelse l.len;
+        try out.appendSlice(a, l[0..i]);
+        try out.append(a, '\n');
+    }
+    return out.items;
+}
+
+test "client writes echo with via=ctl" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new checkbox cb label='Remember me'\nnew input in\nnew button b");
+    const s = try f.subPath(R);
+    defer s.close();
+    try f.ok(R ++ "/cb/value", "off\n");
+    try f.ok(R ++ "/in/value", "typed\n");
+    try f.ok(R ++ "/b/label", "no echo for labels");
+    try f.ok(R ++ "/ctl", "state min");
+    try f.ok(R ++ "/focus", "b");
+    try tt.expectEqualStrings(
+        \\change - cb win=main value=off via=ctl
+        \\change - in win=main via=ctl
+        \\state - . win=main value=min via=ctl
+        \\focus - b win=main via=ctl
+        \\
+    , try noSeq(f.a(), try f.drain(s)));
+    // Props set by `new` or by a tree document send no echo.
+    try f.ok(R ++ "/ctl", "new checkbox cb2 value=on");
+    try f.ok(R ++ "/cb2/tree", "checkbox cb2  value=mixed\n");
+    try tt.expectEqualStrings("", try f.drain(s));
+}
+
+fn lastSeq(got: []const u8) !u64 {
+    const t = std.mem.trimEnd(u8, got, "\n");
+    const i = std.mem.lastIndexOf(u8, t, "seq=").?;
+    return std.fmt.parseInt(u64, t[i + 4 ..], 10);
+}
+
+test "window close verb is a request" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    const s = try f.sub(.app);
+    f.t.clearChanges();
+    try f.ok(R ++ "/ctl", "close");
+    try tt.expectEqual(@as(usize, 0), (try f.t.changes()).cmds.len);
+    var got = try f.drain(s);
+    try tt.expect(std.mem.startsWith(u8, got, "close - . win=main via=ctl seq="));
+    // keep: the window stays
+    try f.ok(R ++ "/ctl", try std.fmt.allocPrint(f.a(), "keep seq={d}", .{try lastSeq(got)}));
+    try tt.expect(f.t.current().win("main") != null);
+    // close: the window goes
+    try f.ok(R ++ "/ctl", "close");
+    got = try f.drain(s);
+    try f.ok(R ++ "/ctl", try std.fmt.allocPrint(f.a(), "close seq={d}", .{try lastSeq(got)}));
+    try tt.expect(f.t.current().win("main") == null);
+    // With no reader, the default closes at once.
+    s.close();
+    try f.ok("ctl", "window two");
+    try f.ok("win/two/ctl", "close");
+    try tt.expect(f.t.current().win("two") == null);
+}
+
+test "theme tokens, pref, mode and name" {
+    var f: Fx = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.ok("theme/tokens", "primary #0b5cff");
+    try f.ok("theme/tokens", "radius 6\naccent #445566\n");
+    const toks = try f.read("theme/tokens");
+    for ([_][]const u8{ "primary #0b5cff\n", "radius 6\n", "accent #445566\n" }) |x|
+        try tt.expect(std.mem.indexOf(u8, toks, x) != null);
+    const s = try f.sub(.app);
+    defer s.close();
+    try tt.expectEqual(Code.not_found, try f.code("theme/tokens", "no-such-token #ffffff"));
+    try tt.expectEqual(Code.bad_value, try f.code("theme/tokens", "primary blue"));
+    try tt.expectEqual(Code.bad_value, try f.code("theme/tokens", "accent #000000\nprimary blue"));
+    try tt.expect(std.mem.indexOf(u8, try f.read("theme/tokens"), "accent #445566\n") != null);
+    try tt.expectEqualStrings(
+        \\error - theme/tokens code=not-found
+        \\error - theme/tokens code=bad-value
+        \\error - theme/tokens code=bad-value
+        \\
+    , try noSeq(f.a(), try norm(f.a(), try f.drain(s))));
+    // The preference starts at system; the system is light.
+    try f.expectRead("theme/pref", "system\n");
+    try f.expectRead("theme/mode", "light\n");
+    try f.ok("theme/pref", "dark");
+    try f.expectRead("theme/mode", "dark\n");
+    // (Read now: theme events coalesce like any state event.)
+    try tt.expectEqualStrings("theme - - mode=dark via=ctl\n", try noSeq(f.a(), try f.drain(s)));
+    // Writing mode sets the preference.
+    try f.ok("theme/mode", "light");
+    try f.expectRead("theme/pref", "light\n");
+    try f.ok("theme/mode", "system");
+    try f.expectRead("theme/pref", "system\n");
+    try f.expectRead("theme/mode", "light\n");
+    try tt.expectEqual(Code.bad_value, try f.code("theme/mode", "sepia"));
+    try tt.expectEqual(Code.bad_value, try f.code("theme/pref", "sepia"));
+    try tt.expectEqualStrings(
+        \\theme - - mode=light via=ctl
+        \\error - theme/mode code=bad-value
+        \\error - theme/pref code=bad-value
+        \\
+    , try noSeq(f.a(), try norm(f.a(), try f.drain(s))));
+    // The system changes while pref is system, and while it is light.
+    try f.t.systemDark(true);
+    try f.expectRead("theme/mode", "dark\n");
+    try tt.expectEqualStrings("theme - - mode=dark via=system\n", try noSeq(f.a(), try f.drain(s)));
+    try f.ok("theme/pref", "light");
+    try tt.expectEqualStrings("theme - - mode=light via=ctl\n", try noSeq(f.a(), try f.drain(s)));
+    try f.t.systemDark(false);
+    try f.t.systemDark(true);
+    try tt.expectEqualStrings("", try f.drain(s));
+    // Names.
+    try tt.expectEqual(Code.not_found, try f.code("theme/name", "No Such Theme"));
+    try tt.expectEqual(Code.not_found, try f.code("ctl", "theme load /nonexistent/theme.json"));
+}
+
+// ---------------------------------------------------------------- odds and ends
+
+test "design state names coalesce even as actions" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new div card");
+    const s = try f.sub(.app);
+    defer s.close();
+    const card = f.node(R ++ "/card").?;
+    _ = try f.t.emit(.{ .name = "hover", .node = card, .kind = .action, .attrs = &.{.{ .key = "value", .value = "on" }} });
+    _ = try f.t.emit(.{ .name = "hover", .node = card, .kind = .action, .attrs = &.{.{ .key = "value", .value = "off" }} });
+    const got = try f.drain(s);
+    try tt.expectEqual(@as(usize, 1), std.mem.count(u8, got, "\n"));
+    try tt.expect(std.mem.indexOf(u8, got, "value=off") != null);
+}
+
+test "keystrokes are checked" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("keys", "cmd-s save\ncmd-shift-p palette\nescape dismiss context=editor\nctrl-tab next-tab\nctrl-- zoom-out\n-      dec\nshift-= plus\n");
+    try tt.expectEqual(Code.bad_value, try f.code("keys", "cmd-s save\ncmd-wibble-q quit\n"));
+    try tt.expect(std.mem.startsWith(u8, try f.read("keys"), "cmd-s save\ncmd-shift-p"));
+}
+
+test "advanced clock stamps batches and requests" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.t.advanceClock(10 * std.time.ns_per_s);
+    try f.ok("ctl", "begin\nask quit");
+    const s = try f.sub(.app);
+    defer s.close();
+    _ = try f.t.request(.{ .name = "quit" }, "quit");
+    f.t.clearChanges();
+    try f.t.tick(0);
+    try tt.expectEqual(@as(usize, 0), (try f.t.changes()).cmds.len);
+    try f.t.advanceClock(tree.batch_timeout_ns);
+    try tt.expect(!f.t.batchOpen());
+    try tt.expectEqual(@as(usize, 1), openCount(&f));
+    try f.t.advanceClock(tree.request_timeout_ns);
+    try tt.expectEqual(@as(usize, 0), openCount(&f));
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .answer));
+}
+
+test "border is a style word, not a variant" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new div card : border=3 border-color=border");
+    try f.ok(R ++ "/card/style", "border=1");
+    try tt.expectEqual(Code.unknown_style_word, try f.code(R ++ "/card/style", "primary"));
+}
+
+test "tree rewrite keeps a client-written value" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/tree", signin);
+    try f.ok(R ++ "/f/user/in/value", "Ada\n");
+    try f.ok(R ++ "/tree", signin);
+    try f.expectRead(R ++ "/f/user/in/value", "Ada\n");
+    // Naming it in the document sets it.
+    try f.ok(R ++ "/f/user/tree", "field user  label=Email\n  input in  value=Bob\n");
+    try f.expectRead(R ++ "/f/user/in/value", "Bob\n");
+}
+
+test "tree expanded ids must be items" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new tree files");
+    try f.ok(R ++ "/files/items", "src\t-\tsrc\nmain\tsrc\tmain.rs\n");
+    try f.ok(R ++ "/files/expanded", "src\n");
+    try tt.expectEqual(Code.not_found, try f.code(R ++ "/files/expanded", "src nope"));
+    try f.expectRead(R ++ "/files/expanded", "src\n");
+}
+
+// ---------------------------------------------------------------- threads
+
+test "OpQueue: a 9P thread's write is applied on the owner thread and acked" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    var q: tree.OpQueue = .init(tt.allocator, tt.io);
+    defer q.deinit();
+    const W = struct {
+        fn run(qq: *tree.OpQueue, out: *[2][64]u8, lens: *[2]usize) void {
+            var ack: tree.Ack = .{};
+            var path_buf: [32]u8 = undefined;
+            const p = std.fmt.bufPrint(&path_buf, "win/main/ctl", .{}) catch unreachable;
+            const ok_text = qq.call(.{ .write = .{ .session = 2, .path = p, .data = "new text t text=hi" } }, &ack) catch "oom";
+            @memcpy(out[0][0..ok_text.len], ok_text);
+            lens[0] = ok_text.len;
+            const bad = qq.call(.{ .write = .{ .session = 2, .path = "win/main/zz/text", .data = "x" } }, &ack) catch "oom";
+            @memcpy(out[1][0..bad.len], bad);
+            lens[1] = bad.len;
+        }
+    };
+    var out: [2][64]u8 = undefined;
+    var lens: [2]usize = .{ 99, 99 };
+    const th = try std.Thread.spawn(.{}, W.run, .{ &q, &out, &lens });
+    var ran: usize = 0;
+    while (ran < 2) ran += q.drain(f.t);
+    th.join();
+    try tt.expectEqualStrings("", out[0][0..lens[0]]);
+    try tt.expect(std.mem.startsWith(u8, out[1][0..lens[1]], "not found"));
+    try f.expectRead(R ++ "/t/text", "hi\n");
+    // After close, a push fails at once with `app gone`.
+    q.close();
+    var ack: tree.Ack = .{};
+    try tt.expectEqualStrings("app gone", try q.call(.{ .mkdir = .{ .session = 2, .path = R ++ "/x" } }, &ack));
+}
+
+test "snapshots: readers keep the version they acquired" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok(R ++ "/ctl", "new text t text=one");
+    try f.t.publish();
+    const old = f.t.acquire();
+    defer old.release();
+    try f.ok(R ++ "/t/text", "two");
+    try f.t.publish();
+    const new = f.t.acquire();
+    defer new.release();
+    try tt.expectEqualStrings("one\n", try old.read(f.a(), R ++ "/t/text"));
+    try tt.expectEqualStrings("two\n", try new.read(f.a(), R ++ "/t/text"));
+    // A reader on another thread.
+    const T = struct {
+        fn run(s: *tree.Snapshot, out: *[16]u8, n: *usize) void {
+            var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+            defer arena.deinit();
+            const v = s.read(arena.allocator(), R ++ "/t/text") catch "err";
+            @memcpy(out[0..v.len], v);
+            n.* = v.len;
+        }
+    };
+    var buf: [16]u8 = undefined;
+    var n: usize = 0;
+    const th = try std.Thread.spawn(.{}, T.run, .{ new.retain(), &buf, &n });
+    th.join();
+    new.release();
+    try tt.expectEqualStrings("two\n", buf[0..n]);
 }

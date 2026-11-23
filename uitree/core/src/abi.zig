@@ -7,13 +7,17 @@
 //! callbacks into the renderer during a pump except wake; errors are
 //! negative codes plus uit_last_error; panics abort, nothing unwinds.
 //!
-//! Status: version 1. The spike implements what the counter needs on its
-//! throwaway tree (spike/); the rest returns UIT_ENOTSUP. W3 rewires these
-//! exports onto `tree` and replaces spike/.
+//! Version 1, backed by the tree (W3): the owner thread owns the `Tree`;
+//! 9P threads reach it through ninep/ns.zig's `TreeFs`, the `OpQueue` and
+//! published snapshots. Reads here come from the state the last pump
+//! pinned, so input calls between pumps (which change the tree at once)
+//! never invalidate what the renderer borrowed.
 
 const std = @import("std");
 const builtin = @import("builtin");
-const spike = @import("spike/root.zig");
+const treem = @import("tree/root.zig");
+const types = @import("types/root.zig");
+const proto = @import("proto/root.zig");
 const machine = @import("machine/root.zig");
 const ninep = @import("ninep/root.zig");
 
@@ -197,141 +201,122 @@ pub const UitDragMsg = extern struct {
 };
 
 // ---------------------------------------------------------------------
+// ---------------------------------------------------------------------
 // The core
-
-/// An op from another thread (or from the renderer's input calls),
-/// applied by the next pump.
-pub const Op = struct {
-    kind: Kind,
-    node: u32 = 0,
-    name: []u8 = &.{},
-    text: []u8 = &.{},
-    attrs: [][2][]const u8 = &.{},
-    flag: u32 = 0,
-    ack: ?*Ack = null,
-
-    pub const Kind = enum { ctl, keys, menu, prop, emit, system_dark, exited, menu_action };
-};
-
-/// What a 9P writer waits on.
-pub const Ack = struct {
-    done: bool = false,
-    /// The protocol error text, or empty.
-    err_buf: [256]u8 = undefined,
-    err_len: usize = 0,
-    pub fn err(a: *const Ack) []const u8 {
-        return a.err_buf[0..a.err_len];
-    }
-};
 
 pub const Core = struct {
     gpa: Allocator,
     threaded: Io.Threaded,
     owner: std.Thread.Id,
-    /// Guards `queue`, the tree for 9P readers, subscriptions, acks.
-    mu: Io.Mutex = .init,
-    /// Broadcast when an op is acked, an event is queued, or the core
-    /// hangs up.
-    cond: Io.Condition = .init,
+    cat: types.Catalog,
+    tree: *treem.Tree,
+    queue: treem.OpQueue,
+    tfs: ninep.ns.TreeFs = undefined,
     wake_fn: ?*const fn (?*anyopaque) callconv(.c) void,
     wake_ctx: ?*anyopaque,
-    tree: *spike.Tree,
-    queue: std.ArrayList(*Op) = .empty,
+    /// Set from any thread by uit_shutdown; the next pump tells the tree.
     gone: std.atomic.Value(bool) = .init(false),
     err_buf: [512]u8 = undefined,
     err_len: usize = 0,
     /// The 9P server, listeners and mounts (W4), made on first use.
     host: ?*ninep.host.Host = null,
-    spike_fs: spike.fs.SpikeFs = undefined,
     runner: ?*machine.Runner = null,
+    /// The machine's exit, from its thread, under `exit_mu`.
+    exit_mu: Io.Mutex = .init,
+    exited: bool = false,
     exit_status: ?[]u8 = null,
-    /// Borrowed results of tree reads, freed at the next pump.
+    /// Borrowed results of reads, freed at the next pump.
     reads: std.heap.ArenaAllocator,
-    pump_dirty: [1]UitStr = .{UitStr.lit("main")},
+    /// The state reads come from: what the renderer draws, pinned at the
+    /// last pump.
+    pinned: ?*treem.state.State = null,
+    styles: std.AutoHashMapUnmanaged(treem.Handle, []const UitStyleWord) = .empty,
+    next_drag: u64 = 1,
+    /// Wakes the renderer while a batch or a request has a deadline.
+    timer: ?std.Thread = null,
+    timers_due: std.atomic.Value(bool) = .init(false),
+    stopping: std.atomic.Value(bool) = .init(false),
 
     pub fn io(c: *Core) Io {
         return c.threaded.io();
-    }
-
-    pub fn lock(c: *Core) void {
-        c.mu.lockUncancelable(c.io());
-    }
-    pub fn unlock(c: *Core) void {
-        c.mu.unlock(c.io());
     }
 
     pub fn wake(c: *Core) void {
         if (c.wake_fn) |f| f(c.wake_ctx);
     }
 
-    /// Queues `op`; the caller holds no lock.
-    pub fn push(c: *Core, op: *Op) !void {
-        c.lock();
-        defer c.unlock();
-        try c.queue.append(c.gpa, op);
-    }
-
-    /// Queues `op`, wakes the renderer and waits for the pump to apply
-    /// it. Returns the error text, empty on success (in ack).
-    pub fn submit(c: *Core, op: *Op, ack: *Ack) void {
-        op.ack = ack;
-        c.lock();
-        defer c.unlock();
-        c.queue.append(c.gpa, op) catch {
-            ack.err_len = setText(&ack.err_buf, "out of memory");
-            return;
-        };
+    fn wakeQueue(ctx: ?*anyopaque) void {
+        const c: *Core = @ptrCast(@alignCast(ctx.?));
         c.wake();
-        while (!ack.done) {
-            if (c.gone.load(.acquire)) {
-                ack.err_len = setText(&ack.err_buf, "app gone");
-                return;
-            }
-            c.cond.waitUncancelable(c.io(), &c.mu);
-        }
     }
 
     /// The core's 9P host, serving the tree. A host (uitree-headless)
     /// mounts its own directories on it before anything connects.
     pub fn getHost(c: *Core) !*ninep.host.Host {
         if (c.host) |h| return h;
-        c.spike_fs = .{ .core = c };
-        c.host = try ninep.host.Host.create(c.gpa, c.io(), c.spike_fs.fs());
+        c.tfs = .{ .gpa = c.gpa, .t = c.tree, .q = &c.queue };
+        c.host = try ninep.host.Host.create(c.gpa, c.io(), c.tfs.fs());
         return c.host.?;
     }
 
-    fn setErr(c: *Core, comptime fmt: []const u8, args: anytype) c_int {
-        c.err_len = if (std.fmt.bufPrint(&c.err_buf, fmt, args)) |s| s.len else |_| 0;
-        return UIT_EBADVALUE;
+    /// Moves the tree's clock forward (`/debug/inject tick`); runs what
+    /// falls due. Owner thread.
+    pub fn advanceClock(c: *Core, ns: u64) void {
+        c.tree.advanceClock(ns) catch {};
+        c.wake();
+    }
+
+    fn setText(c: *Core, s: []const u8) void {
+        const n = @min(s.len, c.err_buf.len);
+        @memcpy(c.err_buf[0..n], s[0..n]);
+        c.err_len = n;
+    }
+
+    /// A tree error as a UitErr, with its text for uit_last_error.
+    fn fail(c: *Core, e: anyerror) c_int {
+        if (e == error.OutOfMemory) {
+            c.setText("out of memory");
+            return UIT_ENOMEM;
+        }
+        const code = proto.Code.fromError(e) orelse {
+            c.setText(@errorName(e));
+            return UIT_EINVAL;
+        };
+        const last = c.tree.lastError();
+        c.setText(if (last.len > 0) last else code.phrase());
+        return switch (code) {
+            .not_found, .gone => UIT_ENOTFOUND,
+            .in_use => UIT_EINUSE,
+            .app_gone => UIT_EGONE,
+            .unsupported => UIT_ENOTSUP,
+            else => UIT_EBADVALUE,
+        };
     }
 
     fn checkOwner(c: *Core) bool {
         if (builtin.mode == .Debug) std.debug.assert(std.Thread.getCurrentId() == c.owner);
         return std.Thread.getCurrentId() == c.owner;
     }
+
+    fn st(c: *Core) *const treem.state.State {
+        return c.pinned orelse c.tree.committed();
+    }
+
+    fn node(c: *Core, h: UitNode) ?*const treem.state.Node {
+        return c.st().node(h);
+    }
+
+    fn timerLoop(c: *Core) void {
+        while (!c.stopping.load(.acquire)) {
+            c.io().sleep(.fromMilliseconds(100), .awake) catch {};
+            if (c.timers_due.load(.acquire) and !c.stopping.load(.acquire)) c.wake();
+        }
+    }
 };
 
-fn setText(buf: []u8, s: []const u8) usize {
-    const n = @min(s.len, buf.len);
-    @memcpy(buf[0..n], s[0..n]);
-    return n;
-}
-
-fn freeOp(gpa: Allocator, op: *Op) void {
-    gpa.free(op.name);
-    gpa.free(op.text);
-    for (op.attrs) |a| {
-        gpa.free(a[0]);
-        gpa.free(a[1]);
-    }
-    gpa.free(op.attrs);
-    gpa.destroy(op);
-}
-
-pub fn newOp(gpa: Allocator, kind: Op.Kind, node: u32, name: []const u8, text: []const u8) !*Op {
-    const op = try gpa.create(Op);
-    op.* = .{ .kind = kind, .node = node, .name = try gpa.dupe(u8, name), .text = try gpa.dupe(u8, text) };
-    return op;
+fn monoNow(c: *Core) u64 {
+    const ns = Io.Clock.awake.now(c.io()).nanoseconds;
+    return if (ns < 0) 0 else @intCast(ns);
 }
 
 const gpa_default = std.heap.c_allocator;
@@ -349,20 +334,55 @@ export fn uit_create(cfg: ?*const UitConfig, out: ?*?*Core) c_int {
     if (c_cfg.abi_version != abi_version) return UIT_EVERSION;
     const gpa = gpa_default;
     const c = gpa.create(Core) catch return UIT_ENOMEM;
-    const tree = spike.Tree.init(gpa, c_cfg.style_words.slice(), c_cfg.theme_tokens.slice(), c_cfg.types.slice(), c_cfg.system_dark != 0) catch {
-        gpa.destroy(c);
-        return UIT_ENOMEM;
-    };
     c.* = .{
         .gpa = gpa,
         .threaded = .init(gpa, .{}),
         .owner = std.Thread.getCurrentId(),
+        .cat = undefined,
+        .tree = undefined,
+        .queue = undefined,
         .wake_fn = c_cfg.wake,
         .wake_ctx = c_cfg.wake_ctx,
-        .tree = tree,
         .reads = .init(gpa),
     };
+    const r = create(c, c_cfg);
+    if (r != UIT_OK) {
+        c.reads.deinit();
+        c.threaded.deinit();
+        gpa.destroy(c);
+        return r;
+    }
     o.* = c;
+    return UIT_OK;
+}
+
+fn create(c: *Core, cfg: *const UitConfig) c_int {
+    c.cat = types.Catalog.builtin(c.gpa) catch return UIT_ENOMEM;
+    // I6: every type the renderer draws must be one the core has.
+    if (cfg.types.len > 0) {
+        var d: types.Diag = .{};
+        _ = c.cat.checkRegistered(c.gpa, cfg.types.slice(), &d) catch |e| {
+            c.cat.deinit();
+            return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_ETYPES;
+        };
+    }
+    if (cfg.style_words.len > 0) c.cat.loadStyleWords(cfg.style_words.slice()) catch {
+        c.cat.deinit();
+        return UIT_EBADVALUE;
+    };
+    if (cfg.theme_tokens.len > 0) c.cat.loadThemeTokens(cfg.theme_tokens.slice()) catch {
+        c.cat.deinit();
+        return UIT_EBADVALUE;
+    };
+    c.tree = treem.Tree.create(c.gpa, c.io(), &c.cat, .{ .system_dark = cfg.system_dark != 0 }) catch {
+        c.cat.deinit();
+        return UIT_ENOMEM;
+    };
+    c.queue = .init(c.gpa, c.io());
+    c.queue.wake = Core.wakeQueue;
+    c.queue.wake_ctx = c;
+    c.tree.publish() catch {};
+    c.timer = std.Thread.spawn(.{}, Core.timerLoop, .{c}) catch null;
     return UIT_OK;
 }
 
@@ -389,7 +409,7 @@ export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
     if (!c.checkOwner()) return UIT_ETHREAD;
     const a = args orelse return UIT_EINVAL;
     if (!machine.available) {
-        c.err_len = setText(&c.err_buf, "built without h9 (-Dh9=true)");
+        c.setText("built without h9 (-Dh9=true)");
         return UIT_ENOTSUP;
     }
     if (c.runner != null) return UIT_EINUSE;
@@ -405,34 +425,35 @@ export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
 /// From the machine's thread when the client ends.
 fn onExit(ctx: *anyopaque, status: []const u8) void {
     const c: *Core = @ptrCast(@alignCast(ctx));
-    const op = newOp(c.gpa, .exited, 0, "", status) catch return;
-    c.push(op) catch return;
+    c.exit_mu.lockUncancelable(c.io());
+    if (c.exit_status) |s| c.gpa.free(s);
+    c.exit_status = c.gpa.dupe(u8, status) catch null;
+    c.exited = true;
+    c.exit_mu.unlock(c.io());
     c.wake();
 }
 
 export fn uit_shutdown(c: *Core) void {
-    c.gone.store(true, .release);
-    c.lock();
-    c.tree.closeAll();
-    c.cond.broadcast(c.io());
-    c.unlock();
+    if (c.gone.swap(true, .acq_rel)) return;
+    c.queue.close();
+    c.tree.bus.shutDown();
     if (c.runner) |r| r.hangup();
+    c.wake();
 }
 
 export fn uit_destroy(c: *Core) void {
     uit_shutdown(c);
+    c.stopping.store(true, .release);
+    if (c.timer) |t| t.join();
     if (c.runner) |r| r.join();
     // Hangs up every connection and waits for them: nothing holds a
-    // subscription after this.
+    // subscription or a snapshot after this.
     if (c.host) |h| h.destroy();
-    c.lock();
-    for (c.queue.items) |op| {
-        if (op.ack) |a| a.done = true;
-        freeOp(c.gpa, op);
-    }
-    c.queue.deinit(c.gpa);
-    c.unlock();
-    c.tree.deinit();
+    c.queue.deinit();
+    if (c.pinned) |p| p.unref(c.gpa);
+    c.styles.deinit(c.gpa);
+    c.tree.destroy();
+    c.cat.deinit();
     if (c.exit_status) |s| c.gpa.free(s);
     c.reads.deinit();
     c.threaded.deinit();
@@ -450,263 +471,479 @@ export fn uit_wake_renderer(c: *Core) void {
 // ---------------------------------------------------------------------
 // Pump
 
+fn ptrOf(comptime T: type, s: []const T) ?[*]const T {
+    return if (s.len > 0) s.ptr else null;
+}
+
 export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
     if (!c.checkOwner()) return UIT_ETHREAD;
     const o = out orelse return UIT_EINVAL;
     _ = c.reads.reset(.retain_capacity);
+    c.styles.clearRetainingCapacity();
     const t = c.tree;
-    c.lock();
-    defer c.unlock();
-    t.beginPump();
-    var exited = false;
-    for (c.queue.items) |op| {
-        var why: []const u8 = "";
-        var why_buf: [256]u8 = undefined;
-        const r: spike.Error!void = switch (op.kind) {
-            .ctl => t.ctl(op.node, op.text, &why, &why_buf),
-            .keys => t.setKeys(op.text),
-            .menu => t.setMenu(op.name, op.text),
-            .prop => t.setProp(op.node, op.name, op.text, &why, &why_buf),
-            .emit => t.emit(op.node, op.name, op.attrs) catch |e| switch (e) {
-                error.OutOfMemory => error.OutOfMemory,
-                else => error.NotFound,
-            },
-            .menu_action => t.emitLine(t.main_root, "action", op.name, "-", &.{}, "menu"),
-            .system_dark => t.setDark(op.flag != 0),
-            .exited => blk: {
-                exited = true;
-                if (c.exit_status) |s| c.gpa.free(s);
-                c.exit_status = c.gpa.dupe(u8, op.text) catch null;
-                break :blk {};
-            },
-        };
-        if (op.ack) |a| {
-            if (r) |_| {} else |e| {
-                var eb: [256]u8 = undefined;
-                const txt = spike.tree.errText(&eb, e, why);
-                @memcpy(a.err_buf[0..txt.len], txt);
-                a.err_len = txt.len;
-            }
-            a.done = true;
-        }
-        freeOp(c.gpa, op);
+    if (c.gone.load(.acquire) and !t.current().gone) t.appGone();
+    _ = c.queue.drain(t);
+    t.tick(monoNow(c)) catch {};
+    t.publish() catch {};
+    var buf: [1]u64 = undefined;
+    c.timers_due.store(t.batchOpen() or t.openRequests(&buf) > 0, .release);
+
+    // Pin what the renderer draws until the next pump.
+    const now: *treem.state.State = @constCast(t.committed());
+    if (c.pinned != now) {
+        if (c.pinned) |p| p.unref(c.gpa);
+        c.pinned = now.ref();
     }
-    c.queue.clearRetainingCapacity();
-    c.cond.broadcast(c.io());
 
     o.* = .{};
-    const ch = &t.ch;
-    if (ch.dirty_main) {
-        o.dirty_windows = &c.pump_dirty;
-        o.n_dirty = 1;
-    }
-    o.created = if (ch.created.items.len > 0) ch.created.items.ptr else null;
-    o.n_created = ch.created.items.len;
-    o.removed = if (ch.removed.items.len > 0) ch.removed.items.ptr else null;
-    o.n_removed = ch.removed.items.len;
-    o.props = if (ch.props.items.len > 0) ch.props.items.ptr else null;
-    o.n_props = ch.props.items.len;
-    o.cmds = if (ch.cmds.items.len > 0) ch.cmds.items.ptr else null;
-    o.n_cmds = ch.cmds.items.len;
-    if (exited) {
+    const r = fillChanges(c, o);
+    t.clearChanges();
+    if (r != UIT_OK) return r;
+    c.exit_mu.lockUncancelable(c.io());
+    defer c.exit_mu.unlock(c.io());
+    if (c.exited) {
+        c.exited = false;
         o.exited = 1;
-        o.exit_status = UitStr.of(c.exit_status orelse "");
+        o.exit_status = UitStr.of(c.reads.allocator().dupe(u8, c.exit_status orelse "") catch "");
     }
     return UIT_OK;
+}
+
+fn dupStr(a: Allocator, s: []const u8) Allocator.Error!UitStr {
+    return UitStr.of(try a.dupe(u8, s));
+}
+
+fn fillChanges(c: *Core, o: *UitChanges) c_int {
+    const a = c.reads.allocator();
+    const ch = c.tree.changes() catch return UIT_ENOMEM;
+    fill(a, ch, o) catch return UIT_ENOMEM;
+    return UIT_OK;
+}
+
+fn fill(a: Allocator, ch: treem.Changes, o: *UitChanges) Allocator.Error!void {
+    const dirty = try a.alloc(UitStr, ch.dirty.len);
+    for (ch.dirty, dirty) |d, *x| x.* = try dupStr(a, d);
+    const created = try a.dupe(UitNode, ch.created);
+    const removed = try a.dupe(UitNode, ch.removed);
+    const props = try a.alloc(UitPropChange, ch.props.len);
+    for (ch.props, props) |p, *x| x.* = .{ .node = p.node, .file = try dupStr(a, p.file) };
+    const cmds = try a.alloc(UitHostCmd, ch.cmds.len);
+    for (ch.cmds, cmds) |hc, *x| {
+        const args = try a.alloc(UitStr, hc.ctl.words.len);
+        for (hc.ctl.words, args) |w, *y| y.* = try dupStr(a, w);
+        const attrs = try a.alloc(UitAttr, hc.ctl.attrs.len);
+        for (hc.ctl.attrs, attrs) |at, *y| y.* = .{ .name = try dupStr(a, at.key), .value = try dupStr(a, at.value) };
+        x.* = .{
+            .tag = @intFromEnum(hc.tag),
+            .win = try dupStr(a, hc.win),
+            .node = hc.node,
+            .name = try dupStr(a, hc.name),
+            .ctl = .{
+                .verb = try dupStr(a, hc.ctl.verb),
+                .args = ptrOf(UitStr, args),
+                .n_args = args.len,
+                .attrs = ptrOf(UitAttr, attrs),
+                .n_attrs = attrs.len,
+            },
+            .seq = hc.seq,
+            .flag = hc.flag,
+            .flag2 = hc.flag2,
+            .answer = try dupStr(a, hc.answer),
+        };
+    }
+    o.dirty_windows = ptrOf(UitStr, dirty);
+    o.n_dirty = dirty.len;
+    o.created = ptrOf(UitNode, created);
+    o.n_created = created.len;
+    o.removed = ptrOf(UitNode, removed);
+    o.n_removed = removed.len;
+    o.props = ptrOf(UitPropChange, props);
+    o.n_props = props.len;
+    o.cmds = ptrOf(UitHostCmd, cmds);
+    o.n_cmds = cmds.len;
 }
 
 // ---------------------------------------------------------------------
-// Tree reads (owner thread; the owner is the only writer, so no lock)
-
-var main_name = [_]UitStr{UitStr.lit("main")};
+// Tree reads: from the state pinned at the last pump
 
 export fn uit_windows(c: *Core, out: ?*?[*]const UitStr) usize {
-    _ = c;
-    if (out) |o| o.* = &main_name;
-    return 1;
+    const s = c.st();
+    var names: std.ArrayList(UitStr) = .empty;
+    for (s.wins.items) |w| if (!w.hidden) names.append(c.reads.allocator(), UitStr.of(w.nameStr())) catch return 0;
+    if (out) |o| o.* = ptrOf(UitStr, names.items);
+    return names.items.len;
 }
 
 export fn uit_window_root(c: *Core, win: UitStr) UitNode {
-    if (!std.mem.eql(u8, win.slice(), "main")) return 0;
-    return c.tree.main_root;
+    const w = c.st().win(win.slice()) orelse return 0;
+    return w.root;
 }
 
-export fn uit_children(c: *Core, node: UitNode, out: ?*?[*]const UitNode) usize {
-    const n = c.tree.get(node) orelse return 0;
-    if (out) |o| o.* = if (n.kids.items.len > 0) n.kids.items.ptr else null;
-    return n.kids.items.len;
+export fn uit_children(c: *Core, h: UitNode, out: ?*?[*]const UitNode) usize {
+    const n = c.node(h) orelse return 0;
+    // `order`: a child it leaves out is not drawn (core.md § Nodes).
+    if (out) |o| o.* = ptrOf(UitNode, n.order.items);
+    return n.order.items.len;
 }
 
 export fn uit_overlays(c: *Core, win: UitStr, out: ?*?[*]const UitNode) usize {
-    _ = c;
-    _ = win;
-    if (out) |o| o.* = null;
-    return 0;
+    const w = c.st().win(win.slice()) orelse return 0;
+    if (out) |o| o.* = ptrOf(UitNode, w.open.items);
+    return w.open.items.len;
 }
 
-export fn uit_type(c: *Core, node: UitNode) UitStr {
-    const n = c.tree.get(node) orelse return .{};
-    return UitStr.of(n.typ);
+export fn uit_type(c: *Core, h: UitNode) UitStr {
+    const n = c.node(h) orelse return .{};
+    return UitStr.of(n.ty.name);
 }
 
-export fn uit_path(c: *Core, node: UitNode) UitStr {
-    const n = c.tree.get(node) orelse return .{};
-    return UitStr.of(n.path);
+export fn uit_path(c: *Core, h: UitNode) UitStr {
+    _ = c.node(h) orelse return .{};
+    const p = c.st().relPathAlloc(c.reads.allocator(), h) catch return .{};
+    return UitStr.of(p);
 }
 
-export fn uit_window_of(c: *Core, node: UitNode) UitStr {
-    _ = c.tree.get(node) orelse return .{};
-    return UitStr.lit("main");
+export fn uit_window_of(c: *Core, h: UitNode) UitStr {
+    const w = c.st().winOf(h) orelse return .{};
+    return UitStr.of(w.nameStr());
 }
 
-export fn uit_prop(c: *Core, node: UitNode, file: UitStr, out: ?*UitStr) c_int {
-    const n = c.tree.get(node) orelse return UIT_EINVAL;
-    const v = n.prop(file.slice()) orelse return 0;
-    if (out) |o| o.* = UitStr.of(v);
+export fn uit_prop(c: *Core, h: UitNode, file: UitStr, out: ?*UitStr) c_int {
+    const n = c.node(h) orelse return UIT_EINVAL;
+    const name = file.slice();
+    const v: ?[]const u8 = n.stored(name) orelse winProp(c, n, name);
+    const val = v orelse return 0;
+    if (out) |o| o.* = UitStr.of(val);
     return 1;
 }
 
-export fn uit_style(c: *Core, node: UitNode, out: ?*?[*]const UitStyleWord, n_out: ?*usize) c_int {
-    const n = c.tree.get(node) orelse return UIT_EINVAL;
-    if (out) |o| o.* = if (n.style.len > 0) n.style.ptr else null;
-    if (n_out) |k| k.* = n.style.len;
+/// A window's props read through its root (`title`, `size`, `state`,
+/// `focus`), unless the root has its own file of that name.
+fn winProp(c: *Core, n: *const treem.state.Node, name: []const u8) ?[]const u8 {
+    if (n.parent != 0) return null;
+    const w = c.st().winOfRoot(n.id) orelse return null;
+    if (std.mem.eql(u8, name, "state")) return @tagName(w.shownState());
+    if (std.mem.eql(u8, name, "focus")) {
+        if (w.focus == 0) return null;
+        return c.st().relPathAlloc(c.reads.allocator(), w.focus) catch null;
+    }
+    return w.prop(name);
+}
+
+// ---- style
+
+fn parseColor(s: []const u8) ?u32 {
+    if (s.len < 2 or s[0] != '#') return null;
+    const hex = s[1..];
+    var v: u32 = switch (hex.len) {
+        6, 8 => std.fmt.parseInt(u32, hex, 16) catch return null,
+        3, 4 => blk: {
+            var x: u32 = 0;
+            for (hex) |ch| {
+                const d = std.fmt.charToDigit(ch, 16) catch return null;
+                x = (x << 8) | (d * 17);
+            }
+            break :blk x;
+        },
+        else => return null,
+    };
+    if (hex.len == 6 or hex.len == 3) v = (v << 8) | 0xff;
+    return v;
+}
+
+/// A theme token's value for the mode in effect: the app's `theme/tokens`
+/// first, then the catalog's.
+fn tokenText(c: *Core, name: []const u8) ?[]const u8 {
+    const s = c.st();
+    if (s.token(name)) |v| return v;
+    for (c.cat.theme_tokens) |t| if (std.mem.eql(u8, t.name, name)) return if (s.dark()) t.dark else t.light;
+    return null;
+}
+
+fn styleArg(c: *Core, kind: types.style.ArgKind, x: []const u8) UitStyleArg {
+    if (parseColor(x)) |v| return .{ .kind = UIT_ARG_RGBA, .rgba = v };
+    if (kind == .color or kind == .shadow) if (tokenText(c, x)) |tv| {
+        if (parseColor(tv)) |v| return .{ .kind = UIT_ARG_RGBA, .rgba = v, .text = UitStr.of(x) };
+    };
+    if (kind == .text or kind == .variant or kind == .size) return .{ .kind = UIT_ARG_TEXT, .text = UitStr.of(x) };
+    if (std.mem.endsWith(u8, x, "%")) {
+        if (std.fmt.parseFloat(f32, x[0 .. x.len - 1])) |f| return .{ .kind = UIT_ARG_PERCENT, .a = f } else |_| {}
+    }
+    if (std.mem.endsWith(u8, x, "rem")) {
+        if (std.fmt.parseFloat(f32, x[0 .. x.len - 3])) |f| return .{ .kind = UIT_ARG_REM, .a = f } else |_| {}
+    }
+    if (std.mem.endsWith(u8, x, "px")) {
+        if (std.fmt.parseFloat(f32, x[0 .. x.len - 2])) |f| return .{ .kind = UIT_ARG_PX, .a = f } else |_| {}
+    }
+    if (std.fmt.parseFloat(f32, x)) |f| return .{ .kind = if (kind == .number) UIT_ARG_NUMBER else UIT_ARG_PX, .a = f } else |_| {}
+    // A length token (`radius`).
+    if (tokenText(c, x)) |tv| if (std.fmt.parseFloat(f32, tv)) |f| return .{ .kind = UIT_ARG_PX, .a = f, .text = UitStr.of(x) } else |_| {};
+    return .{ .kind = UIT_ARG_TEXT, .text = UitStr.of(x) };
+}
+
+fn buildStyle(c: *Core, text: []const u8) ![]const UitStyleWord {
+    const a = c.reads.allocator();
+    const words = try types.style.parse(a, text);
+    const out = try a.alloc(UitStyleWord, words.len);
+    for (words, out) |w, *o| {
+        const kind: types.style.ArgKind = if (c.cat.styleWord(w.name)) |e| e.arg else .length;
+        const args = try a.alloc(UitStyleArg, w.args.len);
+        for (w.args, args) |x, *y| y.* = styleArg(c, kind, x);
+        var state: u32 = UIT_STATE_BASE;
+        if (w.state) |s| state = switch (s) {
+            .hover => UIT_STATE_HOVER,
+            .active => UIT_STATE_ACTIVE,
+            .focus => UIT_STATE_FOCUS,
+            .disabled => UIT_STATE_DISABLED,
+            .@"drop-over" => UIT_STATE_DROP_OVER,
+        };
+        var group: []const u8 = w.group orelse "";
+        if (w.group_hover) |g| {
+            state = UIT_STATE_GROUP_HOVER;
+            group = g;
+        }
+        o.* = .{ .name = UitStr.of(w.name), .state = state, .group = UitStr.of(group), .args = ptrOf(UitStyleArg, args), .n_args = args.len };
+    }
+    return out;
+}
+
+export fn uit_style(c: *Core, h: UitNode, out: ?*?[*]const UitStyleWord, n_out: ?*usize) c_int {
+    const n = c.node(h) orelse return UIT_EINVAL;
+    const ws = c.styles.get(h) orelse blk: {
+        const built = buildStyle(c, n.value("style")) catch |e| return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_EBADVALUE;
+        c.styles.put(c.gpa, h, built) catch return UIT_ENOMEM;
+        break :blk built;
+    };
+    if (out) |o| o.* = ptrOf(UitStyleWord, ws);
+    if (n_out) |k| k.* = ws.len;
     return UIT_OK;
 }
 
-export fn uit_lines(c: *Core, node: UitNode, file: UitStr, out: ?*UitLines) c_int {
-    _ = c;
-    _ = node;
-    _ = file;
-    if (out) |o| o.* = .{ .lines = null, .n = 0 };
-    return UIT_ENOTSUP;
+// ---- data files, keys, menus, theme
+
+export fn uit_lines(c: *Core, h: UitNode, file: UitStr, out: ?*UitLines) c_int {
+    const n = c.node(h) orelse return UIT_EINVAL;
+    const a = c.reads.allocator();
+    var lines: std.ArrayList(UitLine) = .empty;
+    var it = std.mem.splitScalar(u8, n.value(file.slice()), '\n');
+    while (it.next()) |raw| {
+        var l = std.mem.trimEnd(u8, raw, "\r");
+        if (l.len == 0) continue;
+        var indent: u32 = 0;
+        while (true) {
+            if (std.mem.startsWith(u8, l, "  ")) {
+                l = l[2..];
+            } else if (l[0] == '\t' and std.mem.indexOfScalar(u8, l[1..], '\t') == null and l.len > 1 and l[1] == '\t') {
+                l = l[1..];
+            } else break;
+            indent += 1;
+            if (l.len == 0) break;
+        }
+        const fs = proto.lines.fields(a, l, null) catch |e| return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_EBADVALUE;
+        const strs = a.alloc(UitStr, fs.len) catch return UIT_ENOMEM;
+        for (fs, strs) |f, *s| s.* = UitStr.of(f);
+        lines.append(a, .{ .fields = ptrOf(UitStr, strs), .n_fields = strs.len, .indent = indent }) catch return UIT_ENOMEM;
+    }
+    if (out) |o| o.* = .{ .lines = ptrOf(UitLine, lines.items), .n = lines.items.len };
+    return UIT_OK;
 }
 
 export fn uit_keys(c: *Core, out: ?*?[*]const UitKeyBinding, n: ?*usize) c_int {
     const a = c.reads.allocator();
-    const ks = a.alloc(UitKeyBinding, c.tree.keys.items.len) catch return UIT_ENOMEM;
-    for (c.tree.keys.items, ks) |k, *o| o.* = .{ .keystroke = UitStr.of(k.key), .action = UitStr.of(k.action), .context = UitStr.of(k.context), .global = @intFromBool(k.global) };
-    if (out) |o| o.* = if (ks.len > 0) ks.ptr else null;
-    if (n) |x| x.* = ks.len;
+    var ks: std.ArrayList(UitKeyBinding) = .empty;
+    var it = std.mem.splitScalar(u8, treem.state.Blob.str(c.st().keys), '\n');
+    while (it.next()) |l| {
+        if (std.mem.trim(u8, l, " \t\r").len == 0) continue;
+        const b = proto.lines.KeyBinding.parse(a, l, null) catch continue;
+        const stroke = std.mem.join(a, " ", b.keys) catch return UIT_ENOMEM;
+        ks.append(a, .{ .keystroke = UitStr.of(stroke), .action = UitStr.of(b.action), .context = UitStr.of(b.context() orelse ""), .global = @intFromBool(b.global) }) catch return UIT_ENOMEM;
+    }
+    if (out) |o| o.* = ptrOf(UitKeyBinding, ks.items);
+    if (n) |x| x.* = ks.items.len;
     return UIT_OK;
 }
 
 export fn uit_menu_bar(c: *Core, out: ?*?[*]const UitStr) usize {
-    _ = c;
-    if (out) |o| o.* = null;
-    return 0;
+    const a = c.reads.allocator();
+    var names: std.ArrayList(UitStr) = .empty;
+    var it = std.mem.tokenizeAny(u8, treem.state.Blob.str(c.st().bar), " \t\r\n");
+    while (it.next()) |w| names.append(a, UitStr.of(w)) catch return 0;
+    if (out) |o| o.* = ptrOf(UitStr, names.items);
+    return names.items.len;
 }
 
 export fn uit_menu(c: *Core, name: UitStr, out: ?*?[*]const UitMenuItem, n: ?*usize) c_int {
-    _ = c;
-    _ = name;
-    if (out) |o| o.* = null;
-    if (n) |x| x.* = 0;
-    return UIT_ENOTSUP;
+    const a = c.reads.allocator();
+    const m = c.st().menu(name.slice()) orelse return UIT_ENOTFOUND;
+    const ls = proto.lines.parseMenu(a, m.val.bytes, null) catch |e| return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_EBADVALUE;
+    const items = a.alloc(UitMenuItem, ls.len) catch return UIT_ENOMEM;
+    for (ls, items) |l, *o| {
+        const check: i32 = if (l.attr("check")) |v|
+            (if (std.mem.eql(u8, v, "on")) 1 else if (std.mem.eql(u8, v, "mixed")) 2 else 0)
+        else
+            -1;
+        const off = if (l.attr("enabled")) |v| std.mem.eql(u8, v, "off") else false;
+        o.* = .{
+            .kind = switch (l.kind) {
+                .item => UIT_MENU_ITEM,
+                .sep => UIT_MENU_SEP,
+                .sub => UIT_MENU_SUB,
+            },
+            .depth = @intCast(l.depth),
+            .id = UitStr.of(if (l.kind == .sub) "-" else if (l.id.len == 0) "-" else l.id),
+            .label = UitStr.of(l.attr("label") orelse ""),
+            .key = UitStr.of(l.attr("key") orelse ""),
+            .icon = UitStr.of(l.attr("icon") orelse ""),
+            .role = UitStr.of(l.attr("role") orelse ""),
+            .menu = UitStr.of(if (l.kind == .sub) l.attr("menu") orelse l.id else ""),
+            .enabled = @intFromBool(!off),
+            .check = check,
+        };
+    }
+    if (out) |o| o.* = ptrOf(UitMenuItem, items);
+    if (n) |x| x.* = items.len;
+    return UIT_OK;
 }
 
+pub const UIT_MENU_ITEM: u32 = 0;
+pub const UIT_MENU_SEP: u32 = 1;
+pub const UIT_MENU_SUB: u32 = 2;
+
 export fn uit_theme_dark(c: *Core) u32 {
-    return @intFromBool(c.tree.dark);
+    return @intFromBool(c.st().dark());
 }
 
 export fn uit_token(c: *Core, name: UitStr, rgba: ?*u32) c_int {
-    const v = c.tree.token(name.slice()) orelse return 0;
+    const v = parseColor(tokenText(c, name.slice()) orelse return 0) orelse return 0;
     if (rgba) |r| r.* = v;
     return 1;
 }
 
 // ---------------------------------------------------------------------
-// Input
+// Input: applied to the tree at once (reads stay on the pinned state);
+// what changed is reported by the next pump.
 
-fn queueInput(c: *Core, op: *Op) c_int {
-    c.push(op) catch {
-        freeOp(c.gpa, op);
-        return UIT_ENOMEM;
-    };
+fn input(c: *Core) ?c_int {
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    if (c.gone.load(.acquire) or c.tree.current().gone) return UIT_EGONE;
+    return null;
+}
+
+fn done(c: *Core, r: anyerror!void) c_int {
+    r catch |e| return c.fail(e);
     c.wake();
     return UIT_OK;
 }
 
-export fn uit_emit(c: *Core, node: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize) c_int {
-    if (!c.checkOwner()) return UIT_ETHREAD;
-    if (c.gone.load(.acquire)) return UIT_EGONE;
-    if (c.tree.get(node) == null) return UIT_EINVAL;
-    const op = newOp(c.gpa, .emit, node, name.slice(), "") catch return UIT_ENOMEM;
-    if (n > 0) {
-        const list = c.gpa.alloc([2][]const u8, n) catch {
-            freeOp(c.gpa, op);
-            return UIT_ENOMEM;
-        };
-        for (attrs.?[0..n], list) |a, *l| l.* = .{
-            c.gpa.dupe(u8, a.name.slice()) catch "",
-            c.gpa.dupe(u8, a.value.slice()) catch "",
-        };
-        op.attrs = list;
-    }
-    return queueInput(c, op);
+fn attrsOf(a: Allocator, attrs: ?[*]const UitAttr, n: usize) Allocator.Error![]proto.ctl.Attr {
+    const out = try a.alloc(proto.ctl.Attr, n);
+    if (n > 0) for (attrs.?[0..n], out) |x, *o| {
+        o.* = .{ .key = x.name.slice(), .value = x.value.slice() };
+    };
+    return out;
 }
 
-export fn uit_request(c: *Core, node: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize, default_answer: UitStr) u64 {
-    _ = c;
-    _ = node;
-    _ = name;
-    _ = attrs;
-    _ = n;
-    _ = default_answer;
-    return 0; // the spike applies every default at once
+export fn uit_emit(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize) c_int {
+    if (input(c)) |r| return r;
+    if (h != 0 and c.tree.current().node(h) == null) return UIT_EINVAL;
+    const as = attrsOf(c.gpa, attrs, n) catch return UIT_ENOMEM;
+    defer c.gpa.free(as);
+    _ = c.tree.emit(.{ .name = name.slice(), .node = h, .attrs = as }) catch |e| return c.fail(e);
+    return UIT_OK;
 }
 
-export fn uit_mirror(c: *Core, node: UitNode, file: UitStr, value: UitStr) c_int {
-    if (!c.checkOwner()) return UIT_ETHREAD;
-    const op = newOp(c.gpa, .prop, node, file.slice(), value.slice()) catch return UIT_ENOMEM;
-    return queueInput(c, op);
+export fn uit_request(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize, default_answer: UitStr) u64 {
+    if (input(c) != null) return 0;
+    const as = attrsOf(c.gpa, attrs, n) catch return 0;
+    defer c.gpa.free(as);
+    const seq = c.tree.request(.{ .name = name.slice(), .node = h, .attrs = as }, default_answer.slice()) catch |e| {
+        _ = c.fail(e);
+        return 0;
+    };
+    c.wake();
+    return seq;
 }
 
-export fn uit_bounds(c: *Core, node: UitNode, x: f32, y: f32, w: f32, h: f32) c_int {
-    _ = .{ c, node, x, y, w, h };
-    return UIT_ENOTSUP;
+export fn uit_mirror(c: *Core, h: UitNode, file: UitStr, value: UitStr) c_int {
+    if (input(c)) |r| return r;
+    return done(c, c.tree.mirror(h, file.slice(), value.slice()));
+}
+
+export fn uit_bounds(c: *Core, h: UitNode, x: f32, y: f32, w: f32, hh: f32) c_int {
+    if (input(c)) |r| return r;
+    const b: [4]i64 = .{ @intFromFloat(@round(x)), @intFromFloat(@round(y)), @intFromFloat(@round(w)), @intFromFloat(@round(hh)) };
+    c.tree.setBounds(h, b) catch |e| return c.fail(e);
+    return UIT_OK;
 }
 
 export fn uit_frame_drawn(c: *Core, win: UitStr) c_int {
-    _ = .{ c, win };
-    return UIT_OK;
+    if (input(c)) |r| return r;
+    return done(c, c.tree.frameDrawn(if (win.len == 0) null else win.slice()));
 }
 
 export fn uit_window_closed(c: *Core, win: UitStr) c_int {
-    _ = win;
-    // Closing the last window quits.
-    c.lock();
-    c.tree.cmd(.{ .tag = UIT_CMD_QUIT }) catch {};
-    c.unlock();
-    uit_shutdown(c);
-    return UIT_OK;
+    if (input(c)) |r| return r;
+    return done(c, c.tree.windowClosed(win.slice()));
 }
 
 export fn uit_key(c: *Core, win: UitStr, keystroke: UitStr, focused: UitNode) c_int {
-    _ = win;
-    if (!c.checkOwner()) return UIT_ETHREAD;
-    // Matching reads the committed keymap; the event goes out now (the
-    // owner is the only writer of the tree, and subscriptions are locked).
-    c.lock();
-    defer c.unlock();
-    const hit = c.tree.key(keystroke.slice(), focused) catch return UIT_ENOMEM;
-    if (hit) c.cond.broadcast(c.io());
+    if (input(c)) |r| return r;
+    const hit = c.tree.key(win.slice(), keystroke.slice(), focused) catch |e| return c.fail(e);
     return @intFromBool(hit);
 }
 
 export fn uit_menu_action(c: *Core, id: UitStr) c_int {
-    const op = newOp(c.gpa, .menu_action, 0, id.slice(), "") catch return UIT_ENOMEM;
-    return queueInput(c, op);
+    if (input(c)) |r| return r;
+    return done(c, c.tree.menuAction(id.slice()));
 }
 
 export fn uit_system_dark(c: *Core, dark: u32) c_int {
-    const op = newOp(c.gpa, .system_dark, 0, "", "") catch return UIT_ENOMEM;
-    op.flag = dark;
-    return queueInput(c, op);
+    if (input(c)) |r| return r;
+    return done(c, c.tree.systemDark(dark != 0));
 }
 
+pub const UIT_DRAG_START: u32 = 0;
+pub const UIT_DRAG_OVER: u32 = 1;
+pub const UIT_DRAG_DROP: u32 = 2;
+pub const UIT_DRAG_END: u32 = 3;
+
+/// Transfer layer. START makes `drag/N` (its data from a `data=` attr);
+/// DROP sends the `drop` request to the node, answered `accept` or
+/// `refuse` (default) by UIT_CMD_ANSWER; END drops `drag/N`. OVER is the
+/// renderer's own business (`drop-over` style).
 export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
-    _ = .{ c, msg, drag };
-    return UIT_ENOTSUP;
+    if (input(c)) |r| return r;
+    const m = msg orelse return UIT_EINVAL;
+    const as = attrsOf(c.gpa, m.attrs, m.n_attrs) catch return UIT_ENOMEM;
+    defer c.gpa.free(as);
+    switch (m.kind) {
+        UIT_DRAG_START => {
+            const n = c.next_drag;
+            c.next_drag += 1;
+            var data: []const u8 = "";
+            for (as) |x| if (std.mem.eql(u8, x.key, "data")) {
+                data = x.value;
+            };
+            c.tree.dragData(n, data) catch |e| return c.fail(e);
+            if (drag) |d| d.* = n;
+        },
+        UIT_DRAG_DROP => {
+            var all: std.ArrayList(proto.ctl.Attr) = .empty;
+            defer all.deinit(c.gpa);
+            var nb: [24]u8 = undefined;
+            var pb: [48]u8 = undefined;
+            all.append(c.gpa, .{ .key = "drag", .value = std.fmt.bufPrint(&nb, "{d}", .{m.drag}) catch "" }) catch return UIT_ENOMEM;
+            all.append(c.gpa, .{ .key = "pt", .value = std.fmt.bufPrint(&pb, "{d},{d}", .{ @as(i64, @intFromFloat(@round(m.x))), @as(i64, @intFromFloat(@round(m.y))) }) catch "" }) catch return UIT_ENOMEM;
+            all.appendSlice(c.gpa, as) catch return UIT_ENOMEM;
+            const seq = c.tree.request(.{ .name = "drop", .node = m.node, .attrs = all.items }, "refuse") catch |e| return c.fail(e);
+            if (drag) |d| d.* = seq;
+        },
+        UIT_DRAG_END => c.tree.dragDone(m.drag) catch |e| return c.fail(e),
+        UIT_DRAG_OVER => {},
+        else => return UIT_EINVAL,
+    }
+    c.wake();
+    return UIT_OK;
 }
 
 // ---------------------------------------------------------------------
@@ -726,23 +963,128 @@ test "header and abi.zig agree on the version and the constants" {
     }
 }
 
-test "a pump applies queued ops and reports what changed" {
+
+fn testCore() !*Core {
     var c: ?*Core = null;
     const cfg: UitConfig = .{ .abi_version = abi_version, .types = .{}, .style_words = .{}, .theme_tokens = .{}, .system_dark = 0, .wake = null, .wake_ctx = null };
     try std.testing.expectEqual(UIT_OK, uit_create(&cfg, &c));
-    defer uit_destroy(c.?);
-    const core = c.?;
-    try core.push(try newOp(core.gpa, .ctl, core.tree.main_root, "", "new text n text=0 : text-3xl"));
+    return c.?;
+}
+
+fn write(c: *Core, path: []const u8, data: []const u8) !void {
+    var ack: treem.Ack = .{};
+    try c.queue.push(.{ .write = .{ .session = 1, .path = path, .data = data } }, &ack);
+    var ch: UitChanges = .{};
+    try std.testing.expectEqual(UIT_OK, uit_pump(c, &ch));
+    try std.testing.expect(ack.done);
+    if (!ack.ok) {
+        std.debug.print("{s}: {s}\n", .{ path, ack.text() });
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "a pump applies queued ops and reports what changed" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    try core.queue.push(.{ .write = .{ .session = 1, .path = "win/main/ctl", .data = "new text n text=0 : text-3xl" } }, null);
     var ch: UitChanges = .{};
     try std.testing.expectEqual(UIT_OK, uit_pump(core, &ch));
     try std.testing.expectEqual(@as(usize, 1), ch.n_created);
     try std.testing.expectEqual(UIT_CMD_WINDOW, ch.cmds.?[0].tag);
+    try std.testing.expectEqualStrings("main", ch.cmds.?[0].win.slice());
     var kids: ?[*]const UitNode = null;
     try std.testing.expectEqual(@as(usize, 1), uit_children(core, uit_window_root(core, UitStr.lit("main")), &kids));
     var v: UitStr = .{};
     try std.testing.expectEqual(@as(c_int, 1), uit_prop(core, kids.?[0], UitStr.lit("text"), &v));
     try std.testing.expectEqualStrings("0", v.slice());
     try std.testing.expectEqualStrings("text", uit_type(core, kids.?[0]).slice());
+    try std.testing.expectEqualStrings("n", uit_path(core, kids.?[0]).slice());
+    var ws: ?[*]const UitStyleWord = null;
+    var nw: usize = 0;
+    try std.testing.expectEqual(UIT_OK, uit_style(core, kids.?[0], &ws, &nw));
+    try std.testing.expectEqual(@as(usize, 1), nw);
+    try std.testing.expectEqualStrings("text-3xl", ws.?[0].name.slice());
+}
+
+test "reads stay on the pinned state while input changes the tree" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    try write(core, "win/main/ctl", "new input in\nnew div d");
+    const root = uit_window_root(core, UitStr.lit("main"));
+    var kids: ?[*]const UitNode = null;
+    _ = uit_children(core, root, &kids);
+    const in = kids.?[0];
+    try std.testing.expectEqual(UIT_OK, uit_mirror(core, in, UitStr.lit("value"), UitStr.lit("typed")));
+    var v: UitStr = .{};
+    try std.testing.expectEqual(@as(c_int, 0), uit_prop(core, in, UitStr.lit("value"), &v));
+    var ch: UitChanges = .{};
+    try std.testing.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try std.testing.expectEqual(@as(usize, 1), ch.n_props);
+    try std.testing.expectEqual(@as(c_int, 1), uit_prop(core, in, UitStr.lit("value"), &v));
+    try std.testing.expectEqualStrings("typed", v.slice());
+    // order leaves d out: not drawn
+    try write(core, "win/main/order", "in");
+    try std.testing.expectEqual(@as(usize, 1), uit_children(core, root, &kids));
+}
+
+test "window props, lines, overlays, menus, keys, tokens" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    try write(core, "ctl", "window main title=Hello size=640,480");
+    const root = uit_window_root(core, UitStr.lit("main"));
+    var v: UitStr = .{};
+    try std.testing.expectEqual(@as(c_int, 1), uit_prop(core, root, UitStr.lit("title"), &v));
+    try std.testing.expectEqualStrings("Hello", v.slice());
+    try write(core, "win/main/ctl", "new table t\nnew dialog over/dlg title=Hi");
+    try write(core, "win/main/t/rows", "1\ta\t10\n2\tb\t20\n");
+    var kids: ?[*]const UitNode = null;
+    _ = uit_children(core, root, &kids);
+    var ls: UitLines = undefined;
+    try std.testing.expectEqual(UIT_OK, uit_lines(core, kids.?[0], UitStr.lit("rows"), &ls));
+    try std.testing.expectEqual(@as(usize, 2), ls.n);
+    try std.testing.expectEqual(@as(usize, 3), ls.lines.?[1].n_fields);
+    try std.testing.expectEqualStrings("b", ls.lines.?[1].fields.?[1].slice());
+    var ov: ?[*]const UitNode = null;
+    try std.testing.expectEqual(@as(usize, 0), uit_overlays(core, UitStr.lit("main"), &ov));
+    try write(core, "win/main/over/dlg/ctl", "open");
+    try std.testing.expectEqual(@as(usize, 1), uit_overlays(core, UitStr.lit("main"), &ov));
+    try std.testing.expectEqualStrings("dialog", uit_type(core, ov.?[0]).slice());
+    try write(core, "keys", "cmd-s save context=editor\n");
+    var kb: ?[*]const UitKeyBinding = null;
+    var nk: usize = 0;
+    try std.testing.expectEqual(UIT_OK, uit_keys(core, &kb, &nk));
+    try std.testing.expectEqual(@as(usize, 1), nk);
+    try std.testing.expectEqualStrings("editor", kb.?[0].context.slice());
+    try write(core, "menu/file", "item save label=Save key=cmd-s\nsep\nsub recent label=Recent\n  item r1 label=a.txt\n");
+    try write(core, "menu/bar", "file\n");
+    var bar: ?[*]const UitStr = null;
+    try std.testing.expectEqual(@as(usize, 1), uit_menu_bar(core, &bar));
+    var mi: ?[*]const UitMenuItem = null;
+    var nm: usize = 0;
+    try std.testing.expectEqual(UIT_OK, uit_menu(core, UitStr.lit("file"), &mi, &nm));
+    try std.testing.expectEqual(@as(usize, 4), nm);
+    try std.testing.expectEqual(UIT_MENU_SUB, mi.?[2].kind);
+    try std.testing.expectEqual(@as(u32, 1), mi.?[3].depth);
+    try write(core, "theme/tokens", "primary #0b5cff");
+    var rgba: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, 1), uit_token(core, UitStr.lit("primary"), &rgba));
+    try std.testing.expectEqual(@as(u32, 0x0b5cffff), rgba);
+}
+
+test "requests: a tab close answered by the client" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    try write(core, "win/main/ctl", "new tabs tabs\nnew tab tabs/a");
+    const s = try core.tree.bus.subscribe(.app);
+    defer s.close();
+    const tabs = core.tree.current().child(uit_window_root(core, UitStr.lit("main")), "tabs").?;
+    const a = core.tree.current().child(tabs, "a").?;
+    const seq = uit_request(core, a, UitStr.lit("close"), null, 0, UitStr.lit("close"));
+    try std.testing.expect(seq != 0);
+    var buf: [64]u8 = undefined;
+    const line = try std.fmt.bufPrint(&buf, "close seq={d}", .{seq});
+    try write(core, "win/main/tabs/a/ctl", line);
+    try std.testing.expect(core.tree.current().child(tabs, "a") == null);
 }
 
 test "extern layouts match the header's (64-bit)" {
@@ -758,4 +1100,46 @@ test "extern layouts match the header's (64-bit)" {
     inline for (want) |w| try std.testing.expectEqual(@as(usize, w[1]), @sizeOf(w[0]));
     try std.testing.expectEqual(@as(usize, 64), @offsetOf(UitConfig, "wake"));
     try std.testing.expectEqual(@as(usize, 96), @offsetOf(UitHostCmd, "seq"));
+}
+
+test "a 9P client writes and reads through the ABI's pump" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const core = try testCore();
+    defer uit_destroy(core);
+    var dial: UitStr = .{};
+    try std.testing.expectEqual(UIT_OK, uit_listen(core, .{}, &dial));
+    const Cl = struct {
+        done: std.atomic.Value(bool) = .init(false),
+        got: [64]u8 = undefined,
+        n: usize = 0,
+        failed: bool = false,
+        fn run(s: *@This(), d: []const u8) void {
+            defer s.done.store(true, .release);
+            s.go(d) catch {
+                s.failed = true;
+            };
+        }
+        fn go(s: *@This(), d: []const u8) !void {
+            const a = std.heap.page_allocator;
+            var cl = try ninep.Client.init(a, try ninep.transport.dial(d));
+            defer cl.deinit();
+            try cl.version();
+            const root = try cl.attach();
+            try cl.put(root, "win/main/ctl", "new text a text=hi\n");
+            const v = try cl.get(a, root, "win/main/a/text");
+            defer a.free(v);
+            @memcpy(s.got[0..v.len], v);
+            s.n = v.len;
+        }
+    };
+    var cl: Cl = .{};
+    const th = try std.Thread.spawn(.{}, Cl.run, .{ &cl, dial.slice() });
+    var ch: UitChanges = .{};
+    while (!cl.done.load(.acquire)) {
+        _ = uit_pump(core, &ch);
+        core.io().sleep(.fromMilliseconds(1), .awake) catch {};
+    }
+    th.join();
+    try std.testing.expect(!cl.failed);
+    try std.testing.expectEqualStrings("hi\n", cl.got[0..cl.n]);
 }
