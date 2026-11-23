@@ -1,0 +1,61 @@
+# every node has a tooltip file, empty until set
+ok
+yes
+|
+# a write sets it; a read gives it back with one newline
+ok
+Save file
+|
+# new and set take it as an attribute
+ok
+Open settings
+|
+ok
+Settings
+|
+# documents carry it
+button save  label=Save  tooltip='Save file'
+ok
+Drop files here
+|
+# an empty write removes it, from the document too
+ok
+|
+icon gear  name=settings
+# a child cannot be named tooltip
+bad value
+|
+# the tooltip overlay: anchor, text, placement, open-delay
+ok
+tooltip tip  anchor=gear  text='Open settings'  placement=bottom  open-delay=200
+Open settings
+|
+bottom
+|
+200
+|
+off
+|
+# defaults: placement=top open-delay=500
+ok
+top
+|
+500
+|
+# bad values
+bad value
+bad value
+not found
+# a tooltip holds no children
+unknown type
+# open and close are the client verbs, and send no events
+ok
+on
+|
+ok
+off
+|
+resync - -
+# open is read-only
+permission denied
+exit=0

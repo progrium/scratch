@@ -91,6 +91,7 @@ Every node has these files. Its type adds more ([components.md](components.md)).
 | `tree` | the subtree as a document (§ Documents) | replaces the subtree |
 | `bounds` | `x y w h` from the last layout, in window space (§ Coordinates) | — |
 | `on` | the element events this node sends | sets them |
+| `tooltip` | the node's tooltip text; empty for none | sets it; empty removes it (§ Overlays) |
 
 Text-valued properties (`text`, `value`, `label`, `placeholder`, `title`)
 are files of their own. A write is the whole value, raw bytes, with no
@@ -323,6 +324,24 @@ above the node tree. Each is still a node, made with `new` on
 `over/ctl` or the window's `ctl` (`new alert-dialog over/confirm ...`).
 Writing `open` to its `ctl` shows it and `close` hides it. Which overlay
 types exist is up to the host's `overlay` profile ([components.md](components.md#profiles)).
+
+**Tooltips.** Any node can have a tooltip without an overlay: its
+`tooltip` file holds the text, and the host shows it when the pointer
+rests on the node, with no round trip to the client.
+
+```rc
+echo 'Save file' >$ui/win/main/save/tooltip
+echo 'new button open label=Open tooltip=''Open a file''' >$ui/win/main/ctl
+```
+
+A `tooltip` file is the same as a `tooltip` overlay anchored to the node
+with its defaults (`placement=top open-delay=500`), and a host draws the
+two alike. A client that wants another placement or delay, or wants to
+open and close the tip itself, makes the overlay instead
+([components.md § Tooltips](components.md#tooltips)). Both kinds send no
+events: the host opens a tip on hover and closes it when the pointer
+leaves or presses the anchor. A host without the `overlay` profile still
+keeps the file, and may draw it any way it can or not at all.
 
 ## Events
 

@@ -141,6 +141,20 @@ const NodeState = struct {
 
 const Hit = struct { rect: Rect, box: *Box };
 
+/// A `tooltip` file's tip, as components.md § Tooltips times it with the
+/// `tooltip` overlay's defaults (`placement=top open-delay=500`).
+pub const Tip = struct {
+    node: Node = 0,
+    gen: u32 = 0,
+    shown: bool = false,
+    /// A timer is running for `gen`.
+    scheduled: bool = false,
+    /// A press on the node hides the tip until the pointer leaves it.
+    suppressed: bool = false,
+};
+
+pub const tip_delay_ms = 500;
+
 pub const Ui = struct {
     gpa: std.mem.Allocator,
     src: Source,
@@ -165,6 +179,11 @@ pub const Ui = struct {
     pressed: Node = 0,
     pressed_box: ?struct { node: Node, part: Part, index: u32 } = null,
     mouse: ?struct { x: i32, y: i32 } = null,
+    /// The `tooltip` file the pointer rests on (core.md § Overlays): the
+    /// innermost hovered node that has one. The host shows it after
+    /// `tip_delay_ms` (main.zig's timer posts `tipDue`), hides it when the
+    /// pointer leaves or presses, and sends nothing to the client.
+    tip: Tip = .{},
 
     edits: std.AutoHashMapUnmanaged(Node, Edit) = .empty,
     states: std.AutoHashMapUnmanaged(Node, NodeState) = .empty,
@@ -222,6 +241,7 @@ pub const Ui = struct {
         if (ui.focused == n) ui.focused = 0;
         if (ui.modal_prev == n) ui.modal_prev = 0;
         if (ui.pressed == n) ui.pressed = 0;
+        if (ui.tip.node == n) ui.tip = .{ .gen = ui.tip.gen +% 1 };
         if (ui.popup) |p| if (p.node == n) {
             ui.popup = null;
         };
@@ -388,6 +408,7 @@ pub const Ui = struct {
         }
 
         if (ui.popup) |p| ui.drawPopup(g, p.node, p.rect, body);
+        ui.drawTip(g, body);
     }
 
     fn drawTitle(ui: *Ui, g: *Grid) void {
@@ -1202,7 +1223,61 @@ pub const Ui = struct {
         if (std.mem.eql(Node, next.items, ui.hover.items)) return false;
         ui.hover.clearRetainingCapacity();
         ui.hover.appendSlice(ui.gpa, next.items) catch {};
+        _ = ui.retip();
         return true;
+    }
+
+    /// The innermost hovered node with a non-empty `tooltip` file.
+    fn tipNode(ui: *Ui) Node {
+        for (ui.hover.items) |n| {
+            if (std.mem.trim(u8, ui.src.text(n, "tooltip"), " \t\r\n").len > 0) return n;
+        }
+        return 0;
+    }
+
+    /// Follows the pointer to a new tip node; returns whether a shown tip
+    /// went away.
+    fn retip(ui: *Ui) bool {
+        const t = ui.tipNode();
+        if (t == ui.tip.node) return false;
+        const was = ui.tip.shown;
+        ui.tip = .{ .node = t, .gen = ui.tip.gen +% 1 };
+        return was;
+    }
+
+    /// A tip that wants a timer: its generation, once. main.zig sleeps
+    /// `tip_delay_ms` and hands it back to `tipDue`.
+    pub fn tipPending(ui: *Ui) ?u32 {
+        if (ui.tip.node == 0 or ui.tip.shown or ui.tip.suppressed or ui.tip.scheduled) return null;
+        ui.tip.scheduled = true;
+        return ui.tip.gen;
+    }
+
+    /// The timer for `gen` ran out: shows the tip if the pointer is still
+    /// on the same node. Returns whether to redraw.
+    pub fn tipDue(ui: *Ui, gen: u32) bool {
+        if (gen != ui.tip.gen or ui.tip.node == 0 or ui.tip.suppressed or ui.tip.shown) return false;
+        ui.tip.shown = true;
+        return true;
+    }
+
+    /// The tip as one row of popover colors above its node (below when the
+    /// node is on the top row), clipped to the window.
+    fn drawTip(ui: *Ui, g: *Grid, screen: Rect) void {
+        if (!ui.tip.shown) return;
+        const b = ui.boxOf(ui.tip.node) orelse return;
+        const text = std.mem.trim(u8, ui.src.text(ui.tip.node, "tooltip"), " \t\r\n");
+        if (text.len == 0) return;
+        const line = if (std.mem.indexOfScalar(u8, text, '\n')) |i| text[0..i] else text;
+        const w: i32 = @min(@as(i32, gridmod.width(line)) + 2, screen.w);
+        var x = b.rect.x + @divTrunc(b.rect.w - w, 2);
+        x = @max(screen.x, @min(x, screen.x + screen.w - w));
+        const y = if (b.rect.y - 1 >= screen.y) b.rect.y - 1 else b.rect.y + b.rect.h;
+        const r: Rect = .{ .x = x, .y = y, .w = w, .h = 1 };
+        g.blank(r, screen);
+        g.fill(r, screen, ui.tok("popover", ui.tok("background", 0xffffffff)));
+        const fg = ui.tok("popover-foreground", ui.tok("foreground", 0x0a0a0aff));
+        _ = g.print(x + 1, y, screen.intersect(.{ .x = x + 1, .y = y, .w = w - 2, .h = 1 }), line, .{ .fg = fg });
     }
 
     /// Nearest box (from b up) that acts on a click.
@@ -1257,6 +1332,11 @@ pub const Ui = struct {
                 }
             },
             .press => {
+                if (ui.tip.node != 0) {
+                    if (ui.tip.shown) redraw = true;
+                    ui.tip.shown = false;
+                    ui.tip.suppressed = true;
+                }
                 // A click outside an open select closes it.
                 if (ui.popup) |p| {
                     if (p.rect.contains(m.x, m.y)) {
@@ -2132,4 +2212,53 @@ test "a modal dialog hides what's under it and keeps focus" {
     try ui.frame(&g);
     try testing.expectEqual(in, ui.focused);
     try testing.expect(g.cursor != null);
+}
+
+test "a tooltip file shows above its node after the delay, and a press hides it" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try source.Fake.init(arena.allocator());
+    try f.set(".", "style", "v-flex size-full items-center justify-center");
+    _ = try f.new("button", "save", &.{ .{ "label", "Save" }, .{ "tooltip", "Save file" } }, "");
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    var g: Grid = undefined;
+    try render(f, 40, 10, &ui, &g);
+    defer g.deinit(testing.allocator);
+    // Find the button's label row.
+    var row: usize = 0;
+    var col: i32 = 0;
+    for (1..g.h) |y| {
+        const t = try rowText(&g, y);
+        defer testing.allocator.free(t);
+        if (std.mem.indexOf(u8, t, "Save")) |i| {
+            row = y;
+            col = @intCast(std.unicode.utf8CountCodepoints(t[0..i]) catch 0);
+        }
+    }
+    try testing.expect(row > 2);
+    try testing.expectEqual(@as(?u32, null), ui.tipPending());
+    _ = ui.onMouse(.{ .x = col, .y = @intCast(row), .kind = .motion });
+    const gen = ui.tipPending().?;
+    // One timer per hover.
+    try testing.expectEqual(@as(?u32, null), ui.tipPending());
+    try testing.expect(ui.tipDue(gen));
+    try ui.frame(&g);
+    var above: bool = false;
+    for (1..row) |y| {
+        const t = try rowText(&g, y);
+        defer testing.allocator.free(t);
+        if (std.mem.indexOf(u8, t, "Save file") != null) above = true;
+    }
+    try testing.expect(above);
+    // A press hides it, and it stays hidden while the pointer is there.
+    _ = ui.onMouse(.{ .x = col, .y = @intCast(row), .kind = .press });
+    try testing.expect(!ui.tip.shown);
+    try testing.expectEqual(@as(?u32, null), ui.tipPending());
+    // Leaving and coming back shows it again, after a new delay; a stale
+    // timer does nothing.
+    _ = ui.onMouse(.{ .x = 0, .y = 1, .kind = .motion });
+    _ = ui.onMouse(.{ .x = col, .y = @intCast(row), .kind = .motion });
+    try testing.expect(!ui.tipDue(gen));
+    try testing.expect(ui.tipDue(ui.tipPending().?));
 }

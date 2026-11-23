@@ -32,7 +32,15 @@ const Event = union(enum) {
     focus_out,
     /// The core queued ops: pump.
     wake,
+    /// A `tooltip` file's delay ran out (Ui.tipDue).
+    tip: u32,
 };
+
+/// Sleeps the tip delay on its own thread, then posts `.tip`.
+fn tipTimer(loop: *vaxis.Loop(Event), io: std.Io, gen: u32) void {
+    io.sleep(.fromMilliseconds(uimod.tip_delay_ms), .awake) catch return;
+    _ = loop.tryPostEvent(.{ .tip = gen }) catch {};
+}
 
 const App = struct {
     loop: *vaxis.Loop(Event),
@@ -161,6 +169,12 @@ pub fn main(init: std.process.Init) !u8 {
                     if (translateMouse(m)) |mm| {
                         if (ui.onMouse(mm)) redraw = true;
                     }
+                    if (ui.tipPending()) |gen| {
+                        if (std.Thread.spawn(.{}, tipTimer, .{ &loop, io, gen })) |t| t.detach() else |e| std.log.warn("tip timer: {t}", .{e});
+                    }
+                },
+                .tip => |gen| {
+                    if (ui.tipDue(gen)) redraw = true;
                 },
                 .wake => {
                     app.pending.store(false, .release);

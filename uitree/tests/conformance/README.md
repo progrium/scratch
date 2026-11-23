@@ -65,11 +65,12 @@ PR into `uitree` says which scripts it makes pass.
 | 26-lifecycle | core § Commands (`quit`), the host's exit status | |
 | 27-descriptors | components § The descriptor, § Profiles: the host accepts and refuses exactly what its descriptors say | |
 | 28-feedback | components § Profiles (feedback) | profile feedback |
+| 29-tooltips | core § Node files, § Overlays (tooltips), components § Tooltips | profile overlay |
 
 01 to 26 keep uitreefs's numbers and topics. Three changed shape:
 13 was editor, markdown and dock, which are uitreefs extras the spec
 doesn't define, so it is now the `layout` profile; 16 is now the whole
-transfer layer; 27 and 28 are new. The extras' own behavior (editor
+transfer layer; 27 to 29 are new. The extras' own behavior (editor
 completions, the dock's JSON layout) isn't specified by 0.2, so this
 suite doesn't test it beyond what 27 checks from their descriptors.
 

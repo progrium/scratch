@@ -432,7 +432,7 @@ test "node files and computed reads" {
     try tt.expectEqual(tree.Kind.readonly, (try snap.stat(f.a(), b ++ "/bounds")).kind);
     try tt.expectEqual(tree.Kind.dir, (try snap.stat(f.a(), b)).kind);
     try tt.expectEqualStrings("version ctl events trace keys clip menu theme asset types style win", try listNames(&f, ""));
-    try tt.expectEqualStrings("type order ctl events tree bounds style tag on context drop drag-types title bounds inner state focus over ok", try listNames(&f, R));
+    try tt.expectEqualStrings("type order ctl events tree bounds style tag on context tooltip drop drag-types title bounds inner state focus over ok", try listNames(&f, R));
     try tt.expectEqualStrings("main", try listNames(&f, "win"));
     // 0.2: over/ lists only its overlays.
     try tt.expectEqualStrings("", try listNames(&f, R ++ "/over"));
@@ -1475,4 +1475,33 @@ test "W6: a disabled action's binding sends nothing; key events carry key=" {
     try tt.expectEqualStrings("action", try names(f.a(), try f.drain(s)));
     _ = try f.t.emit(.{ .name = "key", .node = f.node(R ++ "/k").?, .attrs = &.{.{ .key = "key", .value = "a" }} });
     try tt.expect(std.mem.startsWith(u8, try f.drain(s), "key k k win=main key=a seq="));
+}
+
+test "tooltip is a node file on every node" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    // core.md § Node files: `tooltip` on any node, by file, `new` and `set`.
+    try f.ok(R ++ "/ctl", "new button save label=Save");
+    try f.ok(R ++ "/save/tooltip", "Save file\n");
+    try f.expectRead(R ++ "/save/tooltip", "Save file\n");
+    try f.ok(R ++ "/ctl", "new div pane tooltip='Drop files here'");
+    try f.expectRead(R ++ "/pane/tooltip", "Drop files here\n");
+    try f.ok(R ++ "/ctl", "set pane tooltip='Drop or paste'");
+    try f.expectRead(R ++ "/pane/tooltip", "Drop or paste\n");
+    // Documents carry it as an attribute, and read it back.
+    try f.expectRead(R ++ "/save/tree", "button save  label=Save  tooltip='Save file'\n");
+    try f.ok(R ++ "/tree", "div root\n  icon gear  name=settings  tooltip=Settings\n");
+    try f.expectRead(R ++ "/gear/tooltip", "Settings\n");
+    // An empty write clears it, and it leaves the document.
+    try f.ok(R ++ "/gear/tooltip", "");
+    try f.expectRead(R ++ "/gear/tooltip", "");
+    try f.expectRead(R ++ "/gear/tree", "icon gear  name=settings\n");
+    // A tooltip overlay's own node files include it too; its text is `text`.
+    try f.ok(R ++ "/over/ctl", "new tooltip tip anchor=gear text='Open settings' placement=bottom open-delay=200");
+    try f.expectRead(R ++ "/over/tip/text", "Open settings\n");
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/over/tip/placement", "under"));
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/over/tip/open-delay", "-5"));
+    // A child can't be named for it.
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/ctl", "new text tooltip text=x"));
 }

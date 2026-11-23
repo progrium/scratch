@@ -6,7 +6,6 @@ use gpui::{
 };
 use gpui::Refineable as _;
 use gpui_component::ElementExt as _;
-use gpui_component::tooltip::Tooltip;
 
 use crate::{NodeState, NodeView, RenderCx};
 
@@ -203,8 +202,10 @@ pub(crate) fn element_except(
             em.event("scroll", &[("dx", &num(d.x)), ("dy", &num(d.y))]);
         });
     }
-    if let Some(tip) = node.text("tooltip").filter(|t| !t.is_empty()) {
-        el = el.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx));
+    // `tooltip`: drawn with the window's overlays, as a `tooltip` overlay
+    // anchored here with its defaults (overlays::tooltip::node_tips).
+    if node.text("tooltip").is_some_and(|t| !t.trim().is_empty()) {
+        rcx.host.frame_tips.borrow_mut().entry(node.win().to_string()).or_default().push(node.node());
     }
 
     // `bounds`: window-relative x y w h from the last layout.

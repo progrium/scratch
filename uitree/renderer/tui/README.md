@@ -101,6 +101,7 @@ families and text sizes are accepted and not drawn.
 | `scroll` | clips and scrolls with the wheel |
 | `empty`, `alert`, `badge`, `kbd`, `separator`, `spinner`, `icon` | glyphs: `▭ Nothing to do`, a bordered box, ` 3 `, ` ⌘K `, `───`, `⠋`, `×` |
 | `img`, `svg` | `[image name]`, dim |
+| any node's `tooltip` file | one row in popover colors above the node (below it on the top row), 500 ms after the pointer rests on it, hidden when the pointer leaves or presses; nothing is sent to the client. The `tooltip` overlay type isn't registered (no `overlay` profile) |
 | `dialog` | from `uit_overlays`: centered over a scrim, opaque, bordered, title, description, children, `footer` last; while one is open, focus and Tab stay inside it, and focus goes back when it closes |
 
 **Input.** Tab and Shift-Tab move focus between controls in tree order.

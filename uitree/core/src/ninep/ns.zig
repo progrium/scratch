@@ -140,7 +140,7 @@ pub const TreeFs = struct {
     /// Text files and these apply each write, so `echo` sees their errors;
     /// data and bytes files are written whole at clunk.
     const per_write_names = [_][]const u8{
-        "style",     "order", "tag",      "on",       "type",       "flags",  "drop", "drag-type", "drag-types", "context", "keys", "focus",
+        "style",     "order", "tag",      "on",       "type",       "flags",  "drop", "drag-type", "drag-types", "context", "tooltip", "keys", "focus",
         "page",      "expanded", "origin", "selection", "controlled", "sorted", "state", "mode",
     };
 

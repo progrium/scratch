@@ -9,7 +9,7 @@ r=$k/win/main
 w $r/ctl new div card 'tag=open:42' : v-flex 'gap=4'
 c=$r/card
 echo '# every node has these files'
-exists $c/type $c/style $c/order $c/tag $c/ctl $c/events $c/tree $c/bounds $c/on
+exists $c/type $c/style $c/order $c/tag $c/ctl $c/events $c/tree $c/bounds $c/on $c/tooltip
 echo '# type, style, tag'
 val $c/type $c/style $c/tag
 echo '# order lists children; new appends'

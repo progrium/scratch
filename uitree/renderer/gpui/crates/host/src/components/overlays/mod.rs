@@ -1,5 +1,6 @@
 //! W6b: the `overlays` group: `dialog`, `alert-dialog`, `sheet`, `popover`,
-//! `hover-card`, `context-menu`. See `catalog::overlays` for the specs.
+//! `hover-card`, `context-menu`, and `tooltip` (in [`tooltip`], with the
+//! `tooltip` node file). See `catalog::overlays` for the specs.
 //!
 //! The window's root view draws `overlays/` in a full-window layer above
 //! the root, in order. Each overlay keeps whether it is open in an
@@ -32,6 +33,7 @@ use crate::{Component, ComponentRegistry, NodeState, NodeView, RenderCx};
 
 #[cfg(test)]
 mod tests;
+pub(crate) mod tooltip;
 
 pub fn register(reg: &mut ComponentRegistry) {
     reg.add(Overlay(Kind::Dialog));
@@ -40,6 +42,7 @@ pub fn register(reg: &mut ComponentRegistry) {
     reg.add(Overlay(Kind::Popover));
     reg.add(Overlay(Kind::HoverCard));
     reg.add(Overlay(Kind::ContextMenu));
+    tooltip::register(reg);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

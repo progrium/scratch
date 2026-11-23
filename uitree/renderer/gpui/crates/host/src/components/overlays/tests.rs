@@ -296,3 +296,108 @@ fn context_menu_on_right_click(cx: &mut TestAppContext) {
     );
     assert_eq!(open_file(&mut h, "menu"), "off");
 }
+
+fn away(h: &mut Harness) {
+    {
+        let mut v = h.visual("main");
+        v.simulate_mouse_move(point(px(700.), px(500.)), None, Modifiers::none());
+    }
+    h.settle();
+}
+
+fn node_tip_open(h: &mut Harness, path: &str) -> bool {
+    let n = h.node(path).node();
+    let inner = h.inner().clone();
+    h.cx.update(|cx| super::tooltip::node_tip_open(&inner, n, cx))
+}
+
+#[gpui::test]
+fn tooltip_overlay_opens_on_hover_with_no_events(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new button save label=Save");
+    h.ctl(O, "new tooltip tip anchor=save text='Save file' placement=bottom open-delay=200");
+    let mut ev = h.subscribe(&format!("{W}/events"));
+    h.events(&mut ev);
+    assert_eq!(open_file(&mut h, "tip"), "off");
+    h.hover(&format!("{R}/save"));
+    h.cx.executor().advance_clock(Duration::from_millis(250));
+    h.settle();
+    assert_eq!(open_file(&mut h, "tip"), "on");
+    // Placed below its anchor, and drawn.
+    let [_, ay, _, ah] = h.bounds(&format!("{R}/save"));
+    let [_, ty, tw, _] = h.bounds(&format!("{O}/tip"));
+    assert!(tw > 0. && ty >= ay + ah, "tip at {ty}, anchor ends at {}", ay + ah);
+    away(&mut h);
+    assert_eq!(open_file(&mut h, "tip"), "off");
+    // A press on the anchor hides it until the pointer leaves.
+    h.hover(&format!("{R}/save"));
+    h.cx.executor().advance_clock(Duration::from_millis(250));
+    h.settle();
+    assert_eq!(open_file(&mut h, "tip"), "on");
+    h.click(&format!("{R}/save"));
+    h.cx.executor().advance_clock(Duration::from_millis(250));
+    h.settle();
+    assert_eq!(open_file(&mut h, "tip"), "off");
+    // Opening and closing is the host's: no events beyond the button's click.
+    let lines = h.events(&mut ev);
+    assert!(lines.iter().all(|l| l.starts_with("click ")), "{lines:?}");
+}
+
+#[gpui::test]
+fn tooltip_overlay_verbs(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new div pane : w=80 h=24");
+    h.ctl(O, "new tooltip tip anchor=pane text=Hi");
+    h.write(&format!("{O}/tip/ctl"), "open");
+    assert_eq!(open_file(&mut h, "tip"), "on");
+    assert!(h.bounds(&format!("{O}/tip"))[2] > 0., "drawn");
+    h.write(&format!("{O}/tip/ctl"), "close");
+    assert_eq!(open_file(&mut h, "tip"), "off");
+    // No anchor at all: open still shows it.
+    h.ctl(O, "new tooltip free text=Floating");
+    h.write(&format!("{O}/free/ctl"), "open");
+    assert_eq!(open_file(&mut h, "free"), "on");
+    assert!(h.bounds(&format!("{O}/free"))[2] > 0., "drawn");
+}
+
+#[gpui::test]
+fn tooltip_file_is_a_tooltip_overlay_with_defaults(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new button save label=Save tooltip='Save file'\nnew div pane : w=80 h=24");
+    h.write(&format!("{R}/pane/tooltip"), "Drop files here");
+    h.settle();
+    let save = format!("{R}/save");
+    assert!(!node_tip_open(&mut h, &save));
+    h.hover(&save);
+    h.cx.executor().advance_clock(Duration::from_millis(600));
+    h.settle();
+    assert!(node_tip_open(&mut h, &save));
+    // Moving to another node with a tip moves the tip.
+    h.hover(&format!("{R}/pane"));
+    h.cx.executor().advance_clock(Duration::from_millis(600));
+    h.settle();
+    assert!(!node_tip_open(&mut h, &save));
+    assert!(node_tip_open(&mut h, &format!("{R}/pane")));
+    away(&mut h);
+    assert!(!node_tip_open(&mut h, &format!("{R}/pane")));
+    // An empty file removes the tip.
+    h.write(&format!("{R}/save/tooltip"), "\n");
+    assert_eq!(h.read(&format!("{R}/save/tooltip")).as_deref(), Some(""));
+    h.hover(&save);
+    h.cx.executor().advance_clock(Duration::from_millis(600));
+    h.settle();
+    assert!(!node_tip_open(&mut h, &save));
+}
+
+#[gpui::test]
+fn tooltip_overlay_wins_over_its_anchors_file(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new button save label=Save tooltip='Save file'");
+    h.ctl(O, "new tooltip tip anchor=save text='Save (cmd-s)'");
+    let save = format!("{R}/save");
+    h.hover(&save);
+    h.cx.executor().advance_clock(Duration::from_millis(600));
+    h.settle();
+    assert_eq!(open_file(&mut h, "tip"), "on");
+    assert!(!node_tip_open(&mut h, &save));
+}

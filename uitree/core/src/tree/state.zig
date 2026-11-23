@@ -614,7 +614,7 @@ fn freeNamed(gpa: Allocator, m: Named) void {
 
 /// Files every node has (core.md § Node files), beyond its type's props.
 /// The writable ones hold text the tree checks; the rest are computed.
-pub const common_writable = [_][]const u8{ "style", "tag", "on", "context", "drop", "drag-types" };
+pub const common_writable = [_][]const u8{ "style", "tag", "on", "context", "tooltip", "drop", "drag-types" };
 pub const common_special = [_][]const u8{ "type", "order", "ctl", "events", "tree", "bounds" };
 
 /// Files under a window directory that are the window's (core.md § Windows).

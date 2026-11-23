@@ -108,6 +108,10 @@ pub(crate) struct Inner {
     pub frames: RefCell<Vec<(std::time::Duration, std::time::Duration)>>,
     /// App assets read so far, dropped on `UIT_CMD_ASSETS`.
     pub assets: RefCell<HashMap<String, Rc<[u8]>>>,
+    /// Per window, the nodes drawn this frame that have a `tooltip` file.
+    pub frame_tips: RefCell<HashMap<String, Vec<Node>>>,
+    /// The tip state of each node with a `tooltip` file.
+    pub tips: RefCell<HashMap<Node, Entity<crate::components::overlays::tooltip::TipState>>>,
 }
 
 pub(crate) fn is_dark(a: gpui::WindowAppearance) -> bool {
@@ -171,7 +175,7 @@ impl Inner {
     }
 
     /// The window's overlays to draw, bottom first: the closed anchored
-    /// ones (popover, hover-card, context-menu), which draw only the
+    /// ones (popover, hover-card, context-menu, tooltip), which draw only the
     /// listeners that open them on their anchor, then the open ones in the
     /// core's order (`uit_overlays` lists only open overlays).
     pub fn overlay_views(self: &Rc<Self>, win: &str) -> Vec<NodeView> {
@@ -189,7 +193,7 @@ impl Inner {
             .into_iter()
             .map(|(_, n)| n)
             .filter_map(|k| self.view(k))
-            .filter(|v| matches!(v.ty(), "popover" | "hover-card" | "context-menu"))
+            .filter(|v| matches!(v.ty(), "popover" | "hover-card" | "context-menu" | "tooltip"))
             .chain(open.into_iter().filter_map(|k| self.view(k)))
             .collect()
     }
@@ -304,6 +308,7 @@ impl Inner {
         self.cache.borrow_mut().remove(&n);
         self.bounds.borrow_mut().remove(&n);
         self.states.borrow_mut().remove(&n);
+        self.tips.borrow_mut().remove(&n);
         self.focus.borrow_mut().remove(&n);
         self.scroll.borrow_mut().remove(&n);
     }
@@ -358,6 +363,8 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
         clipboard: Default::default(),
         frames: Default::default(),
         assets: Default::default(),
+        frame_tips: Default::default(),
+        tips: Default::default(),
     });
     crate::theme::init(&inner, cx);
     crate::actions::init(&inner, cx);

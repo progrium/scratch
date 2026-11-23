@@ -242,6 +242,42 @@ win=main n=N seq=...`, with the body in `message/N`. Both directories keep
 the last 64 entries. Message bodies are bytes the page chose, and a
 client treats them as untrusted input.
 
+### Tooltips
+
+`tooltip` (`overlay`) is a short text the host shows next to an anchor
+node while the pointer rests on it.
+
+```text
+type    tooltip  tier=overlay  profile=overlay  since=1.0
+prop    anchor      path
+prop    text        text  file
+prop    placement   enum=top-start,top,top-end,bottom-start,bottom,bottom-end,left-start,left,left-end,right-start,right,right-end  default=top
+prop    open-delay  number  default=500  min=0
+prop    open        bool  default=off  readonly
+verb    open   class=activate
+verb    close  class=activate
+child   none
+```
+
+- The host opens it `open-delay` milliseconds after the pointer enters
+  `anchor` and stays on it, and closes it as soon as the pointer leaves
+  the anchor or presses on it. A press hides it until the pointer leaves
+  and comes back. None of this is a round trip: the client sees no
+  events, and `open` reads `on` while it shows.
+- `open` and `close` on its `ctl` show and hide it at once, anchored or
+  not, until the pointer next enters or leaves the anchor.
+- With no `anchor`, or an anchor not drawn yet, `open` shows it near the
+  top of the window.
+- `text` is plain text. A host may wrap a long one.
+
+**The `tooltip` node file** ([core.md § Overlays](core.md#overlays)) is
+shorthand for this overlay: `echo 'Save file' >save/tooltip` behaves as
+`new tooltip ... anchor=save text='Save file'` with every other prop at
+its default, except that it has no `over/` node and no `open` file. A
+host draws both kinds with one code path, so they look and time the
+same. A node with a `tooltip` file and a `tooltip` overlay anchored to it
+shows the overlay.
+
 ## Degrading
 
 A document that must run on several hosts names alternatives with

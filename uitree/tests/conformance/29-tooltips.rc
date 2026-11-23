@@ -1,0 +1,61 @@
+#!/bin/rc
+# 29-tooltips: core.md § Node files and § Overlays (tooltips), and
+# components.md § Tooltips. The `tooltip` file every node has, in `new`,
+# `set` and documents, and the `tooltip` overlay's props and verbs. The
+# host opens either on hover with no round trip, so neither sends events.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile overlay
+mainwin
+r=$k/win/main
+o=$r/over
+
+echo '# every node has a tooltip file, empty until set'
+w $r/ctl new button save 'label=Save'
+exists $r/save/tooltip
+val $r/save/tooltip
+echo '# a write sets it; a read gives it back with one newline'
+w $r/save/tooltip Save file
+val $r/save/tooltip
+echo '# new and set take it as an attribute'
+w $r/ctl new icon gear 'name=settings' 'tooltip=''Open settings'''
+val $r/gear/tooltip
+w $r/ctl set gear 'tooltip=Settings'
+val $r/gear/tooltip
+echo '# documents carry it'
+cat $r/save/tree
+w $r/ctl new div pane
+echo 'div pane
+  text hint  text=Drop  tooltip=''Drop files here''' >$r/pane/tree
+val $r/pane/hint/tooltip
+echo '# an empty write removes it, from the document too'
+w $r/gear/tooltip ''
+val $r/gear/tooltip
+cat $r/gear/tree
+echo '# a child cannot be named tooltip'
+w $r/ctl new text tooltip 'text=x'
+val $r/tooltip
+
+echo '# the tooltip overlay: anchor, text, placement, open-delay'
+w $o/ctl new tooltip tip 'anchor=gear' 'text=''Open settings''' 'placement=bottom' 'open-delay=200'
+cat $o/tip/tree
+val $o/tip/text $o/tip/placement $o/tip/open-delay $o/tip/open
+echo '# defaults: placement=top open-delay=500'
+w $o/ctl new tooltip plain 'anchor=save' 'text=Save'
+val $o/plain/placement $o/plain/open-delay
+echo '# bad values'
+w $o/tip/placement under
+w $o/tip/open-delay -5
+w $o/ctl new tooltip lost 'anchor=nope'
+echo '# a tooltip holds no children'
+w $o/tip/ctl new text t 'text=x'
+echo '# open and close are the client verbs, and send no events'
+{
+	w $o/tip/ctl open
+	val $o/tip/open
+	w $o/tip/ctl close
+	val $o/tip/open
+	evs 'win=main'
+} <[3]$r/events
+echo '# open is read-only'
+w $o/tip/open on

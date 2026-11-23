@@ -132,8 +132,11 @@ impl Render for WindowView {
         let font_size = cx.theme().font_size;
         let app: &mut App = cx;
         let mut rcx = RenderCx::new(window, app, host.clone());
+        host.frame_tips.borrow_mut().remove(&self.win);
         let body: Option<AnyElement> = root.map(|n| rcx.render(&n));
-        let over: Vec<AnyElement> = overlays.iter().map(|n| rcx.render(n)).collect();
+        let mut over: Vec<AnyElement> = overlays.iter().map(|n| rcx.render(n)).collect();
+        // `tooltip` files of the nodes just drawn, above every overlay.
+        over.extend(crate::components::overlays::tooltip::node_tips(&mut rcx, &self.win, &overlays));
         drop(rcx);
 
         if let Ok(core) = host.core.try_borrow() {
