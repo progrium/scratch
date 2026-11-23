@@ -22,6 +22,8 @@ interface I3).
 
 80 types are uitreefs's `catalog` crate, renamed to 0.2. `icon-view`,
 `console` and `web` are copied from components.md § New in this spec.
+`tooltip` is new here, shaped like `hover-card` with a `text` prop, so the
+`overlay` profile is complete.
 
 How uitreefs's `TypeSpec`s map to descriptors:
 
@@ -52,8 +54,10 @@ Choices where 0.2 and uitreefs differ:
 - **`canvas`**'s `set id geometry` verb is `update`, because `set PATH` is
   one of the core four on every `ctl`. It also gets the read-only `scale`
   prop components.md asks for, and `img` gets `scale` (default 1).
-- **`progress`** `value` is `number`; uitreefs's 0..100 enum doesn't fit
-  the grammar. The tree should range-check it.
+- **`progress`** `value` is `number min=0 max=100` (uitreefs's 0..100
+  enum). `min=` and `max=` on a `number` prop are proposed for
+  components.md's `prop` line; `Catalog.checkProp` checks every number in
+  the value against them.
 - **Booleans** are `on` or `off` (and empty to clear). uitreefs also took
   `true` and `false`.
 - **`file`** is on every `text`, `bytes` and `data` prop, following
@@ -64,8 +68,8 @@ Choices where 0.2 and uitreefs differ:
   `diagnostics`, `selection`, `completions`, `messages`, `json`, `keymap`.
   `radio-group` uses `items`.
 - **Profiles.** `accordion-item` is tagged `layout` (an `accordion` holds
-  nothing else). `overlay` and `desktop` can't be claimed yet: `tooltip`
-  and `file-chooser` exist in neither uitreefs nor a spec descriptor.
+  nothing else). `desktop` can't be claimed yet: `file-chooser` exists in
+  neither uitreefs nor the spec.
 - Element events (`click hover mouse-down ...` from a node's `on` file)
   are not in descriptors; `types.element_events` lists them.
 - Request answers (`close`, `keep`, `accept`, `refuse` with `seq=`) are

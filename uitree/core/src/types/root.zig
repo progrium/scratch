@@ -102,6 +102,10 @@ pub const Prop = struct {
     file: bool = false,
     /// Only the host writes it.
     readonly: bool = false,
+    /// Bounds on a `number` prop (`min=0 max=100`), checked for every
+    /// number in the value.
+    min: ?f64 = null,
+    max: ?f64 = null,
 };
 
 pub const WordKind = enum { flag, variant, size };

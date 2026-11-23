@@ -61,10 +61,10 @@ test "profile types are tagged with their profile" {
 test "profiles the builtin catalog claims" {
     var c = try builtin();
     defer c.deinit();
-    for ([_][]const u8{ "core", "canvas", "form", "data", "nav", "layout", "feedback", "web" }) |p|
+    for ([_][]const u8{ "core", "canvas", "form", "data", "overlay", "nav", "layout", "feedback", "web" }) |p|
         try std.testing.expect(c.claims(p));
-    // No tooltip and no file-chooser yet (see core/types/README.md).
-    try std.testing.expect(!c.claims("overlay"));
+    try std.testing.expect(c.claims("overlay"));
+    // No file-chooser yet (see core/types/README.md).
     try std.testing.expect(!c.claims("desktop"));
     try std.testing.expect(!c.claims("nonsense"));
 }
@@ -159,6 +159,18 @@ test "checkbox, switch, rating, slider and number values" {
     try std.testing.expectError(error.BadValue, c.checkProp(sl, "value", "loud", &d));
     try std.testing.expectError(error.BadValue, c.checkProp(c.lookup("number-input").?, "value", "three", &d));
     try std.testing.expectError(error.NotFound, c.checkProp(sl, "volume", "1", &d));
+}
+
+test "number bounds: progress takes 0 to 100, or empty" {
+    var c = try builtin();
+    defer c.deinit();
+    var d: Diag = .{};
+    const p = c.lookup("progress").?;
+    for ([_][]const u8{ "0", "40", "100", "", "40\n" }) |v| try c.checkProp(p, "value", v, &d);
+    try std.testing.expectError(error.BadValue, c.checkProp(p, "value", "140", &d));
+    try std.testing.expectEqualStrings("value: 140 out of range", d.detail());
+    try std.testing.expectError(error.BadValue, c.checkProp(p, "value", "-1", &d));
+    try std.testing.expectError(error.BadValue, c.checkProp(p, "value", "half", &d));
 }
 
 test "date, color and readonly values" {

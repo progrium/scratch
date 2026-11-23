@@ -175,7 +175,22 @@ pub const Catalog = struct {
             Diag.set(diag, "read-only: {s}", .{name});
             return error.BadValue;
         }
-        return checkForm(p.form, name, value, diag);
+        return checkValue(p, value, diag);
+    }
+
+    /// The form and bounds check for a prop, without the readonly check
+    /// (for the host's own writes).
+    pub fn checkValue(p: *const types.Prop, value: []const u8, diag: ?*Diag) Error!void {
+        try checkForm(p.form, p.name, value, diag);
+        if (p.form != .number or (p.min == null and p.max == null)) return;
+        var it = std.mem.tokenizeAny(u8, value, " \t\r\n,");
+        while (it.next()) |x| {
+            const f = std.fmt.parseFloat(f64, x) catch unreachable; // checkForm passed
+            if ((p.min != null and f < p.min.?) or (p.max != null and f > p.max.?)) {
+                Diag.set(diag, "{s}: {s} out of range", .{ p.name, x });
+                return error.BadValue;
+            }
+        }
     }
 
     /// The form check alone, for callers that already hold the prop.

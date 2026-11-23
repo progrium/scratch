@@ -63,7 +63,7 @@ child   any
 | Line | Form | Meaning |
 | --- | --- | --- |
 | `type` | `type NAME tier=element\|component\|overlay profile=P since=V` | The type's name, its tier, the profile that defines it (absent for host extras), and the spec version it appeared in |
-| `prop` | `prop NAME FORM [default=V] [file] [readonly]` | A property. Every prop is settable with `set` and `new`; `file` means it is also a file under the node, `readonly` means only the host writes it |
+| `prop` | `prop NAME FORM [default=V] [min=N] [max=N] [file] [readonly]` | A property. Every prop is settable with `set` and `new`; `file` means it is also a file under the node, `readonly` means only the host writes it. `min` and `max` bound a `number` prop: every number in its value must be within them, or the write fails with `bad value` |
 | `word` | `word W ... kind=flag\|variant\|size` | Bare words the type takes in `new` lines and documents. A flag sets a boolean prop of the same name; a variant or size word picks one of a set |
 | `verb` | `verb NAME [ARGS] [class=C]` | A verb the node's `ctl` takes beyond the core four. `class` is the right it needs under [policy](policy.md#rights) |
 | `event` | `event NAME kind=state\|action\|request [attrs=a,b]` | An event the type sends, its queue kind, and the attributes it carries |

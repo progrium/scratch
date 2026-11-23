@@ -84,6 +84,7 @@ pub const specs = [_]Spec{
     .{ .name = "title-bar", .text = @embedFile("title-bar/spec") },
     .{ .name = "toggle", .text = @embedFile("toggle/spec") },
     .{ .name = "toolbar", .text = @embedFile("toolbar/spec") },
+    .{ .name = "tooltip", .text = @embedFile("tooltip/spec") },
     .{ .name = "tree", .text = @embedFile("tree/spec") },
     .{ .name = "virtual-list", .text = @embedFile("virtual-list/spec") },
     .{ .name = "web", .text = @embedFile("web/spec") },

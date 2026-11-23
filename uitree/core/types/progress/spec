@@ -1,5 +1,5 @@
 type    progress  tier=component  profile=feedback  since=1.0
-prop    value    number
+prop    value    number  min=0 max=100
 prop    variant  enum=bar,circle  default=bar
 word    xs sm md lg  kind=size
 child   none

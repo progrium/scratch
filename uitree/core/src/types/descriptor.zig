@@ -86,13 +86,19 @@ pub fn parse(arena: std.mem.Allocator, text: []const u8, diag: ?*Diag) ParseErro
             }
             for (args[2..]) |a| {
                 if (a.attr()) |kv| {
-                    if (std.mem.eql(u8, kv.key, "default")) p.default = kv.value;
+                    if (std.mem.eql(u8, kv.key, "default")) {
+                        p.default = kv.value;
+                    } else if (std.mem.eql(u8, kv.key, "min") or std.mem.eql(u8, kv.key, "max")) {
+                        const x = std.fmt.parseFloat(f64, kv.value) catch return fail(diag, n, "prop: bad bound");
+                        if (std.mem.eql(u8, kv.key, "min")) p.min = x else p.max = x;
+                    }
                 } else if (std.mem.eql(u8, a.text, "file")) {
                     p.file = true;
                 } else if (std.mem.eql(u8, a.text, "readonly")) {
                     p.readonly = true;
                 }
             }
+            if ((p.min != null or p.max != null) and p.form != .number) return fail(diag, n, "prop: bounds on a non-number");
             for (props.items) |q| if (std.mem.eql(u8, q.name, name)) return fail(diag, n, "prop: duplicate");
             try props.append(arena, p);
         } else if (std.mem.eql(u8, kw, "word")) {
@@ -271,6 +277,7 @@ test "enum forms, file lines, verb synopses" {
         \\file    items  format=icon-items
         \\prop    selection  text  readonly
         \\prop    arrange    enum=free,grid,list  default=free
+        \\prop    zoom       number  min=0.5 max=4
         \\prop    items      data  file
         \\verb    move     ID x,y                 class=edit
         \\verb    eval     n=N script=TEXT        class=author
@@ -279,6 +286,7 @@ test "enum forms, file lines, verb synopses" {
     , null);
     try std.testing.expectEqual(@as(usize, 3), t.prop("arrange").?.form.choice.len);
     try std.testing.expect(t.prop("selection").?.readonly);
+    try std.testing.expectEqual(@as(f64, 4), t.prop("zoom").?.max.?);
     try std.testing.expect(t.prop("items").?.file);
     try std.testing.expectEqualStrings("icon-items", t.format("items").?);
     try std.testing.expectEqualStrings("ID x,y", t.verb("move").?.args);
@@ -307,6 +315,8 @@ test "bad descriptors" {
         "type x tier=element\nverb v class=root\n",
         "type x tier=element\nprop t text default='oops\n",
         "type X tier=element\n",
+        "type x tier=element\nprop t text min=1\n",
+        "type x tier=element\nprop n number max=lots\n",
     };
     for (bad) |s| {
         if (parse(a, s, &d)) |_| {
