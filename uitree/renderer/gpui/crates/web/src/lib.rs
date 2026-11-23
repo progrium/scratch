@@ -20,3 +20,10 @@ pub fn start(argv: Vec<String>, title: Option<String>, assets: String) {
     let opts = host::Options { argv, title, ..Default::default() };
     host::run(opts);
 }
+
+/// Drops files on the window at `x`, `y` (window points): `paths` are
+/// where the page put them in the core's file system (gpui.js).
+#[wasm_bindgen]
+pub fn drop_files(paths: Vec<String>, x: f32, y: f32) {
+    host::web_drop(paths.into_iter().map(Into::into).collect(), x, y);
+}

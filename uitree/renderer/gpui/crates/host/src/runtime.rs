@@ -426,7 +426,70 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
     })
     .detach();
 
+    #[cfg(target_family = "wasm")]
+    web_drops(cx);
+
     Ok(inner)
+}
+
+/// A file drop from the page (uitree/web/gpui.js): the files' paths in
+/// the core's file system, and where they were dropped, in window points.
+#[cfg(target_family = "wasm")]
+type WebDrop = (Vec<std::path::PathBuf>, f32, f32);
+
+#[cfg(target_family = "wasm")]
+thread_local! {
+    static WEB_DROPS: RefCell<Option<futures::channel::mpsc::UnboundedSender<WebDrop>>> = const { RefCell::new(None) };
+}
+
+/// In the browser: drops `paths` at `x`, `y` on the window, as the
+/// platform's file drop would. gpui_web makes none: the browser gives
+/// `File`s, not paths, so the page puts each file in the core's own file
+/// system first (uit-web.js putFile), where `uit_drag`'s `file=` finds it.
+#[cfg(target_family = "wasm")]
+pub fn web_drop(paths: Vec<std::path::PathBuf>, x: f32, y: f32) {
+    WEB_DROPS.with(|d| {
+        if let Some(tx) = &*d.borrow() {
+            let _ = tx.unbounded_send((paths, x, y));
+        }
+    });
+}
+
+/// Delivers web_drop's drops to the window, from the app's own task.
+#[cfg(target_family = "wasm")]
+fn web_drops(cx: &mut App) {
+    use gpui::{point, px, ExternalPaths, FileDropEvent, Modifiers, MouseMoveEvent, PlatformInput};
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<WebDrop>();
+    WEB_DROPS.with(|d| *d.borrow_mut() = Some(tx));
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        while let Some((paths, x, y)) = rx.next().await {
+            let position = point(px(x), px(y));
+            // As a platform delivers them: entered, moved, dropped, each
+            // after a frame, since the drop target is hit-tested against
+            // the frame drawn while the drag was over it. First the pointer
+            // itself: the browser sends no mouse moves during a drag, and
+            // GPUI counts nothing as hovered while the last input was a
+            // key (a drop right after a key press would find no target).
+            let events = [
+                PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers: Modifiers::default() }),
+                PlatformInput::FileDrop(FileDropEvent::Entered { position, paths: ExternalPaths(paths.into()) }),
+                PlatformInput::FileDrop(FileDropEvent::Pending { position }),
+                PlatformInput::FileDrop(FileDropEvent::Submit { position }),
+            ];
+            for ev in events {
+                cx.update(|cx| {
+                    // gpui_web has one window: the canvas.
+                    let Some(w) = cx.active_window().or_else(|| cx.windows().first().copied()) else { return };
+                    let _ = w.update(cx, |_, window, cx| {
+                        window.dispatch_event(ev, cx);
+                        window.refresh();
+                    });
+                });
+                cx.background_executor().timer(std::time::Duration::from_millis(50)).await;
+            }
+        }
+    })
+    .detach();
 }
 
 /// In the browser: where GPUI Kit's icons are fetched from, as

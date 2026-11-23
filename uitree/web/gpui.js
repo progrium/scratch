@@ -5,7 +5,7 @@
 // instance before the renderer starts; the renderer calls uit_run_machine
 // itself, and the platform runs the app in h9's Worker.
 
-import init, { start } from './gpui/uitree_web.js';
+import init, { start, drop_files } from './gpui/uitree_web.js';
 import { core } from './uitcore-imports.js';
 
 /**
@@ -24,5 +24,31 @@ export async function startGpui({ argv, title, files = {}, log = console.error, 
   start(argv, title ?? null, new URL('.', import.meta.url).href.replace(/\/$/, ''));
   t.started = performance.now();
   onCore({ serve: (send, onClose) => core.connect(send, onClose) });
+  dropFiles(core);
   return { timings: t, memory: wasm.memory, core };
+}
+
+/**
+ * File drops: gpui_web makes none, since the browser gives `File`s and not
+ * paths. So each drop's files go in the core's own file system, as
+ * /drop/N/NAME, and the renderer gets those paths as a platform drop
+ * would bring them; the core opens them by path for `uit_drag`'s `file=`.
+ */
+function dropFiles(core) {
+  let n = 0;
+  const canvas = () => document.querySelector('canvas');
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (!files.length) return;
+    const dir = `/drop/${++n}`;
+    const paths = await Promise.all(files.map(async (f) => {
+      const p = `${dir}/${f.name.replaceAll('/', '_')}`;
+      core.putFile(p, new Uint8Array(await f.arrayBuffer()));
+      return p;
+    }));
+    const r = canvas()?.getBoundingClientRect() ?? { left: 0, top: 0 };
+    drop_files(paths, e.clientX - r.left, e.clientY - r.top);
+  });
 }

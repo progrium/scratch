@@ -202,7 +202,7 @@ cases.push(
     renderers: gpui,
   },
   {
-    app: 'tour', name: 'drop a file', skip: 'gpui_web makes no file drops (README.md)',
+    app: 'tour', name: 'drop a file',
     async run(t) {
       await t.ready('t');
       await t.retry('drop tab', () => t.press('Control+3'), async () => (await text(t, 't/value')) === 'files');

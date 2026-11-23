@@ -147,12 +147,12 @@ cd .. && node test/run.mjs        # --only APP,... --renderer gpui|tui --shots D
 `probe.js` is a 9P client of the page's core, a connection of its own
 beside the app's: a case finds a node by its `bounds` file, acts with
 the real mouse and keyboard, and checks the tree (`test/cases.mjs`).
-23 cases pass: clicks, key bindings, typing, Enter, exit status, field
+24 cases pass: clicks, key bindings, typing, Enter, exit status, field
 errors, a secret input, dialogs, sidebar pages, switch, number-input,
 the select popup, radio-group, slider, theme mode and name, table
 filter, sheet, context menu, alert dialog, checkbox, textarea, the
 clipboard both ways, tabs, markdown, editor and image, popover, toast,
-tooltip, links, and the menu bar. The terminal renderer draws a subset
+tooltip, links, the menu bar, and a file dropped from the page. The terminal renderer draws a subset
 of the components (no tables, sheets, sidebars or menus), so the cases
 for those run on GPUI only.
 
@@ -174,15 +174,18 @@ What the tests found, and fixed:
 - **Links on the terminal renderer** open in a new tab (`tui.open`).
 - **files.rc needs `walk`**, which h9's browser root leaves out
   (`root.list`).
+- **File drops on GPUI**: gpui_web makes none, since a browser drop
+  gives `File`s and no paths. `gpui.js` puts each dropped file in the
+  core's own WASI file system as `/drop/N/NAME` (the platform's
+  `putFile`) and calls the module's `drop_files`, which gives the window
+  a platform file drop with those paths (host `web_drop`); the core
+  opens them by path for `uit_drag`'s `file=`, as on the desktop. The
+  pointer moves to the drop first: GPUI counts nothing as hovered while
+  the last input was a key, and the browser sends no mouse moves during
+  a drag.
 
 Still not working, or not covered:
 
-- **File drops on GPUI** (files.rc, tour's Drop tab): gpui_web makes no
-  file drops, since a browser drop has no paths. The way in is for the
-  page to put the dropped files in the core's WASI file system and give
-  the host a FileDropEvent with those paths; the core already reads them
-  through its Io. That waits on how the core is instantiated settling
-  (it's moving into the GPUI module).
 - **Nodes drawn from data have no bounds**: sidebar items, menu items
   and context-menu items aren't nodes, so the tests press their keys or
   click where they're drawn (native too).
