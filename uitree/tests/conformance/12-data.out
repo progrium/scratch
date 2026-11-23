@@ -1,0 +1,42 @@
+# list items: groups, separators, icon= and disabled
+ok
+# Fruit
+apple	Apple	icon=apple
+pear	Pear	disabled
+-
+# Veg
+leek	Leek
+# a malformed items file is refused whole, reported, and the old one stays
+resync - -
+error - l/items code=bad-value win=main
+6
+# a table
+ok
+name	Name	280	sort
+size	Size	90	sort	align=right
+mod	Modified	160	sort	fixed
+1	a.txt	12	Nov 21 10:00
+2	b.txt	300	Nov 21 11:00
+# a column with a bad width or align
+resync - -
+error - files/columns code=bad-value win=main
+error - files/columns code=bad-value win=main
+3
+# select is a state event, sort an action
+resync - -
+select - files row=2 via=user win=main
+sort - files col=size dir=desc win=main
+# tree items: id parent label, parent - for a root
+ok
+src	-	src	icon=folder
+main	src	main.rs
+docs	-	docs
+# a parent that is not there
+resync - -
+error - tr/items code=not-found win=main
+3
+# description-list items: label value
+ok
+Name	uitree
+Version	0.2
+exit=0

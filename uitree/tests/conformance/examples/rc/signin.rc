@@ -1,0 +1,55 @@
+#!/bin/rc
+# Ported from uitreefs/examples to spec draft 0.2 (dashed names, bare
+# variant words, menu/bar) for the conformance suite's tree-building check.
+# signin.rc: a sign-in form built as one subtree document, with
+# validation errors on the fields and a welcome dialog.
+#
+#	uitree -t 'Sign in' rc signin.rc
+#
+# Shows: the tree file (the design doc's own sign-in screen), a tag set
+# once on the form and inherited by its inputs and button, field error
+# text, a secret input (its value never reaches the trace), a link the
+# host opens itself, one ctl write so errors appear in one frame, a dialog
+# in over/ with a footer slot.   Needs: M3
+. ./lib.rc
+m=$ui/win/main
+
+echo 'set . title=''Sign in'' size=400,440 pos=center resizable=off' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full p=24 gap=16 bg=background
+  text title  text='Sign in'  : text-xl font-semibold
+  form f  tag=login
+    field user  required  label=Email
+      input in  placeholder=you@example.com
+    field pass  required  label=Password
+      input in  secret
+    field go
+      button submit  primary  label='Sign in'  : w-full
+  link help  label='Forgot password?'  href=https://example.com/reset
+END
+echo f/user/in >$m/focus
+
+# The welcome dialog exists from the start, closed.
+echo 'new dialog hi title=Welcome width=320 keyboard overlay-closable
+new div hi/footer : h-flex justify-end
+new button hi/footer/ok primary label=Continue tag=ok' >$m/over/ctl
+
+cat $ui/events | while(ev=`{read}){
+	switch($ev(1)^:^$ev(2)){
+	case click:login submit:login
+		u=`{cat $m/f/user/in/value}
+		p=`{cat $m/f/pass/in/value}
+		ue=''
+		pe=''
+		if(! ~ $"u *@*.*) ue='Enter an email address, like you@example.com'
+		if(~ $#p 0) pe='Enter your password'
+		echo 'set f/user error='''$ue'''
+set f/pass error='''$pe'''' >$m/ctl
+		if(~ $"ue^$"pe ''){
+			echo 'Signed in as '^$"u >$m/over/hi/description
+			echo open >$m/over/hi/ctl
+		}
+	case click:ok
+		echo quit >$ui/ctl
+	}
+}

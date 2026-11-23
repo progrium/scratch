@@ -1,0 +1,49 @@
+ok
+ok
+ok
+# 1. mkdir and files
+ok
+ok
+ok
+ok
+div one
+  text hi  text=Hello  tag=greet  : font-bold
+# 2. new
+ok
+div two
+  text hi  text=Hello  tag=greet  : font-bold
+# 3. a tree document
+div three
+  text hi  text=Hello  tag=greet  : font-bold
+# 4. tree PATH <<END on a ctl
+ok
+ok
+div four
+  text hi  text=Hello  tag=greet  : font-bold
+# mkdir appends to order, as new does
+one two three four five
+|
+# new needs the parent to exist
+not found
+# a name in use
+in use
+in use
+# delete
+ok
+no
+one three four five
+|
+# delete of a name that is not there
+not found
+# rm -r
+no
+no
+three four five
+|
+# the name is free again
+ok
+text
+|
+back
+|
+exit=0

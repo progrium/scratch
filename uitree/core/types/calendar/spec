@@ -1,0 +1,12 @@
+type    calendar  tier=component  since=1.0
+prop    value        text  file
+prop    range        bool
+prop    min          text  file
+prop    max          text  file
+prop    presets      text  file
+prop    placeholder  text  file
+prop    disabled     bool
+prop    controlled   bool
+word    range disabled controlled  kind=flag
+event   change  kind=state
+child   none

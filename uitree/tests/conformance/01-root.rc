@@ -1,0 +1,32 @@
+#!/bin/rc
+# 01-root: core.md § The tree and § Version. The app directory, the
+# first line of version, the main window that exists from the start, and
+# a window as its own root node.
+# needs: W2 W3 W4
+. ./lib.rc
+
+echo '# the app directory has every core file'
+exists $k/version $k/ctl $k/events $k/trace $k/keys $k/menu $k/theme $k/asset $k/types $k/style/words $k/win $k/clip
+echo '# version: the protocol name and spec version, then kind value lines'
+sed 1q $k/version
+grep -c '^layer core ' $k/version
+grep -c '^layer components ' $k/version
+grep -c '^profile core$' $k/version
+grep -c '^cmdkey (cmd|ctrl|super)$' $k/version
+echo '# main exists from the start, hidden'
+names $k/win
+val $k/win/main/state
+echo '# the window verb takes main once'
+w $k/ctl window main 'title=''Root test'''
+names $k/win
+echo '# a window is its root node: node files and window files in one directory'
+m=$k/win/main
+exists $m/type $m/style $m/order $m/tag $m/ctl $m/events $m/tree $m/bounds $m/on
+exists $m/title $m/inner $m/state $m/focus $m/over
+val $m/type $m/title $m/order
+echo '# over/ starts empty'
+names $m/over
+echo '# a new window''s root is an empty div'
+w $k/ctl window two
+names $k/win
+val $k/win/two/type $k/win/two/order $k/win/two/title

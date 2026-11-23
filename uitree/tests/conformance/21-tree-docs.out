@@ -1,0 +1,63 @@
+# the sign-in document reads back as written
+div root  : v-flex size-full p=24 gap=16
+  text title  text='Sign in'  : text-xl font-semibold
+  form f
+    field user  label=Email
+      input in  placeholder=you@example.com
+    field pass  label=Password
+      input in  secret
+    field go
+      button submit  primary  label='Sign in'  tag=login  : w-full
+  link help  label='Forgot password?'  href=https://example.com/reset
+# the directory view is the same tree
+Sign in
+|
+you@example.com
+|
+login
+|
+title f help
+|
+user pass go
+|
+# the same document in other spacing and order reads back the same
+same
+# a save and restore round-trips
+same
+# a rewrite keeps children whose name and type match, so their state survives
+Ada
+|
+f/user/in
+|
+f title
+|
+no
+no
+# a child whose type changed is replaced, so its state goes
+textarea
+|
+|
+# a here-value in a document
+# Notes
+
+- one
+- two
+|
+div root
+  text notes  text=<<END
+# Notes
+
+- one
+- two
+END
+# a document with a bad line changes nothing
+yes
+no
+# indentation that skips a level
+yes
+no
+# the root line must match the node it is written to
+div
+|
+yes
+exit=0

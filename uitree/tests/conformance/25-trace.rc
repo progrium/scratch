@@ -1,0 +1,30 @@
+#!/bin/rc
+# 25-trace: core.md § Trace. Every applied write is one trace line and
+# every error one error line; secret values never appear; a batch timeout is
+# logged. Reads $ui/trace between two marker writes. The line format is
+# this suite's proposal (README.md § Proposed formats, GAPS.md).
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile form
+mainwin
+r=$k/win/main
+
+wq $r/ctl new div trace-start
+wq $r/ctl 'new text a text=hi
+new input pass secret'
+mkdir $r/b
+echo Hello >$r/a/text
+echo 'line one
+line two' >$r/a/text
+echo hunter2 >$r/pass/value
+wq $r/ctl 'new input pin secret value=1234'
+wq $r/ctl 'set pass value=swordfish'
+wq $k/ctl 'set win/main/pin value=0000'
+w $r/a/style flexx
+rm -r $r/b
+wq $k/ctl begin
+inj tick 2
+wq $r/ctl new div trace-end
+
+awk '/trace-start/ { on = 1; next } /trace-end/ { exit } on { print }' $k/trace |
+	sed 's/ err=''([a-z ]+)(:[^'']*)?''/ err=''\1''/'

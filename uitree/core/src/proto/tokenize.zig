@@ -95,6 +95,29 @@ pub fn needsQuote(s: []const u8) bool {
 /// Plan 9 `quote`: writes `s` unchanged when it needs no quoting.
 pub fn quote(w: *std.Io.Writer, s: []const u8) std.Io.Writer.Error!void {
     if (!needsQuote(s)) return w.writeAll(s);
+    return quoteAlways(w, s);
+}
+
+/// `quote`, plus quoting a word that would otherwise read as something
+/// else on a `ctl` line: one with `=` (an attribute), a lone `:` (the style
+/// separator) or a leading `<<` (a here-value). For verbs, paths, types and
+/// other positional words.
+pub fn quoteWord(w: *std.Io.Writer, s: []const u8) std.Io.Writer.Error!void {
+    if (needsQuote(s) or std.mem.indexOfScalar(u8, s, '=') != null or
+        std.mem.eql(u8, s, ":") or std.mem.startsWith(u8, s, "<<"))
+        return quoteAlways(w, s);
+    return w.writeAll(s);
+}
+
+/// `quote`, plus quoting a value starting `<<`, which would read as a
+/// here-value. For the value of a `name=value` attribute.
+pub fn quoteValue(w: *std.Io.Writer, s: []const u8) std.Io.Writer.Error!void {
+    if (std.mem.startsWith(u8, s, "<<")) return quoteAlways(w, s);
+    return quote(w, s);
+}
+
+/// Always quotes.
+pub fn quoteAlways(w: *std.Io.Writer, s: []const u8) std.Io.Writer.Error!void {
     try w.writeByte('\'');
     for (s) |c| {
         if (c == '\'') try w.writeByte('\'');

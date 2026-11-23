@@ -1,0 +1,64 @@
+# each open is a subscription that starts with resync - - seq=N
+resync - - seq=N
+# grains: a node's events hold it and its descendants, a window's, the app's
+-- node a
+resync - -
+click open:42 a win=main
+click open:42 a/c win=main
+-- window main
+resync - -
+click open:42 a win=main
+click open:42 a/c win=main
+click - b win=main
+-- app
+resync - -
+click open:42 a win=main
+click open:42 a/c win=main
+click - b win=main
+click - . win=other
+# two subscriptions to one file see the same lines
+resync - -
+click - b win=main
+-- second
+resync - -
+click - b win=main
+# the key is the tag file at the time of the event
+resync - -
+click open:42 a win=main
+click open:43 a win=main
+# a state event replaces a queued one with the same name and node, and moves to the back
+resync - -
+click - b win=main
+hover open:43 a value=off via=user win=main
+hover - b value=on via=user win=main
+# never a change after the submit that came from it
+resync - -
+submit - in win=main
+change - in via=user win=main
+# action events are never coalesced
+resync - -
+click - b win=main
+click - b win=main
+click - b win=main
+# one seq counter: increasing, and the same event has the same seq in every file
+increasing
+3
+same
+# seq= comes last
+0
+# values with blanks are quoted, once
+resync - -
+action save . label='Save all' note='it''s' win=main
+# a failed write is an error event with its code
+resync - -
+error - ctl code=not-found win=main
+error - a/ctl code=unknown-command win=main
+# removing a node ends its stream with gone, then end of file
+resync - -
+gone - -
+eof
+# destroying a window ends its stream the same way
+resync - -
+gone - -
+eof
+exit=0

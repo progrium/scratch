@@ -1,0 +1,11 @@
+type    otp-input  tier=component  since=1.0
+prop    length      number  default=6
+prop    value       text  file
+prop    secret      bool
+prop    disabled    bool
+prop    controlled  bool
+word    secret disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change    kind=state
+event   complete  kind=action
+child   none

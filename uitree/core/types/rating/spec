@@ -1,0 +1,9 @@
+type    rating  tier=component  since=1.0
+prop    max         number  default=5
+prop    value       number  default=0
+prop    disabled    bool
+prop    controlled  bool
+word    disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none

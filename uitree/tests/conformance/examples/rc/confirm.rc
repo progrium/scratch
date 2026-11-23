@@ -1,0 +1,47 @@
+#!/bin/rc
+# Ported from uitreefs/examples to spec draft 0.2 (dashed names, bare
+# variant words, menu/bar) for the conformance suite's tree-building check.
+# confirm.rc: a zenity-style question box for shell scripts.
+#
+#	uitree -t Confirm rc confirm.rc 'Delete 3 files?' 'This cannot be undone.' && rm *.tmp
+#
+# Exits '' (success) on Delete, 'cancel' on Keep, Escape or the close button.
+# The answer leaves the event loop on standard output, because the loop runs
+# in a pipe and can't set the script's own status. Closing the window quits
+# the app by itself, which ends the loop with no answer: that is a cancel.
+#
+# Shows: a one-window utility built in one ctl write, Enter and Escape bound
+# in keys, a client that decides its own exit status.   Needs: M2
+. ./lib.rc
+m=$ui/win/main
+
+q=$1
+d=$2
+if(~ $#q 0) q='Are you sure?'
+if(~ $#d 0) d=''
+btn='px=14 py=6 rounded-md text-sm cursor-pointer'
+
+# One write: the window appears complete, in one frame.
+echo 'set . title=Confirm size=380,150 pos=center resizable=off : v-flex size-full p=20 gap=8 bg=background
+new text q : text-base font-semibold
+new text d : text-sm text-color=muted-foreground
+new spacer s
+new div bar : h-flex gap=8 justify-end
+new div bar/no tag=no on=click : '$btn' border-1 border-color=border hover:bg=accent
+new div bar/yes tag=yes on=click : '$btn' bg=danger text-color=danger-foreground hover:opacity=0.9
+new text bar/no/t text=Keep
+new text bar/yes/t text=Delete' >$m/ctl
+echo $q >$m/q/text
+echo $d >$m/d/text
+
+echo 'enter   yes
+escape  no' >$ui/keys
+
+a=`{cat $ui/events | while(ev=`{read}){
+	switch($ev(2)){
+	case yes no
+		echo $ev(2); echo quit >$ui/ctl
+	}
+}}
+if(~ $a yes) exit ''
+exit cancel

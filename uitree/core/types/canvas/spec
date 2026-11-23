@@ -1,0 +1,16 @@
+type    canvas  tier=element  profile=canvas  since=1.0
+prop    ops     data  file
+prop    pixels  bytes  file
+prop    scale   number  readonly
+verb    update  ID GEOMETRY... [ATTR=VALUE...]  class=edit
+verb    add     KIND ID GEOMETRY... [ATTR=VALUE...]  class=edit
+verb    del     ID...  class=edit
+verb    raise   ID  class=edit
+verb    lower   ID  class=edit
+event   mouse-down  kind=action
+event   mouse-up    kind=action
+event   click       kind=action
+event   move        kind=state
+event   drag        kind=state
+child   none
+file    ops  format=ops

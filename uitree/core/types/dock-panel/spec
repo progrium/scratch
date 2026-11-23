@@ -1,0 +1,11 @@
+type    dock-panel  tier=component  since=1.0
+prop    title     text  file
+prop    icon      word
+prop    zone      enum=center,left,right,bottom  default=center
+prop    closable  bool  default=off
+prop    zoomable  bool  default=on
+word    closable zoomable  kind=flag
+verb    activate  class=activate
+event   activate  kind=action
+event   close     kind=action
+child   any

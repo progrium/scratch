@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
     });
     core.addAnonymousImport("uitcore.h", .{ .root_source_file = b.path("include/uitcore.h") });
     core.addIncludePath(b.path("include"));
+    // W1: every descriptor in types/, compiled in (src/types/embedded.zig).
+    core.addAnonymousImport("uit_types", .{ .root_source_file = b.path("types/embed.zig") });
 
     if (with_h9) {
         if (b.lazyDependency("h9", .{
@@ -64,7 +66,16 @@ pub fn build(b: *std.Build) void {
     // builds for x86_64-windows-msvc, which is what a Rust MSVC build links.
     if (target.result.abi != .msvc) b.installArtifact(headless);
 
+    // W4: src/ninep/wire.zig is hyper9's dotl/wire.zig, vendored (see its
+    // header). This fails when the submodule's copy has moved on.
+    const check_wire = b.addSystemCommand(&.{ "sh", "-c", "tail -n +6 src/ninep/wire.zig | cmp -s - ../third_party/hyper9/src/dotl/wire.zig || { echo 'src/ninep/wire.zig differs from hyper9 src/dotl/wire.zig: re-vendor it' >&2; exit 1; }" });
+    check_wire.setCwd(b.path("."));
+    b.step("check-wire", "Check the vendored wire.zig matches the hyper9 submodule").dependOn(&check_wire.step);
+
     const tests = b.addTest(.{ .root_module = core });
     const test_step = b.step("test", "Run the core's unit tests");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+    // W4: uitree-headless's own tests (argument parsing).
+    const headless_tests = b.addTest(.{ .root_module = headless.root_module });
+    test_step.dependOn(&b.addRunArtifact(headless_tests).step);
 }

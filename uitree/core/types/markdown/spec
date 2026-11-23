@@ -1,0 +1,6 @@
+type    markdown  tier=component  since=1.0
+prop    text        bytes  file
+prop    selectable  bool  default=off
+word    selectable  kind=flag
+event   link  kind=action
+child   none

@@ -1,0 +1,33 @@
+#!/bin/rc
+# Ported from uitreefs/examples to spec draft 0.2 (dashed names, bare
+# variant words, menu/bar) for the conformance suite's tree-building check.
+# hello.rc: the design doc's Greeter. Type a name, press Greet or Enter.
+#
+#	uitree -t Greeter rc hello.rc
+#
+# Shows: the default main window, a subtree document, input + button
+# sharing one inherited tag, submit and click routed by the event's second
+# word, reading an input's value file.   Needs: M3
+. ./lib.rc
+m=$ui/win/main
+
+echo 'set . title=Greeter size=360,170 pos=center resizable=off' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full p=20 gap=12 bg=background
+  div row  tag=greet  : h-flex gap=8
+    input name  placeholder='Your name'  : flex-1
+    button go  primary  label=Greet
+  text out  text='Who are you?'  : text-lg text-color=muted-foreground
+END
+echo row/name >$m/focus
+
+# rc's read takes the events file directly: no cat needed.
+{ while(ev=`{read}){
+	switch($ev(1)^:^$ev(2)){
+	case click:greet submit:greet
+		n=`{cat $m/row/name/value}
+		if(~ $#n 0) n=stranger
+		echo 'Hello, '^$"n^'!' >$m/out/text
+		echo 'set out : text-lg font-semibold text-color=foreground' >$m/ctl
+	}
+} } <$ui/events

@@ -1,0 +1,15 @@
+unknown style word
+ctl path=win/main/ctl cmd='new text a text=hi'
+ctl path=win/main/ctl cmd='new input pass secret'
+mkdir path=win/main/b
+write path=win/main/a/text value=Hello
+write path=win/main/a/text len=17
+write path=win/main/pass/value value=<secret>
+ctl path=win/main/ctl cmd='new input pin secret value=<secret>'
+ctl path=win/main/ctl cmd='set pass value=<secret>'
+ctl path=ctl cmd='set win/main/pin value=<secret>'
+error path=win/main/a/style err='unknown style word'
+remove path=win/main/b
+ctl path=ctl cmd=begin
+batch timeout
+exit=0

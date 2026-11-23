@@ -1,0 +1,36 @@
+#!/bin/rc
+# 19-focus: core.md § Windows (the focus file and focus=). Reading and
+# moving focus, focus and blur as state events, and focus= on the window.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wn=$k/win/main
+wq $wn/ctl 'new div a
+new div b
+new div b/inner'
+
+echo '# nothing focused'
+val $wn/focus
+echo '# writing a path moves focus, and echoes with via=ctl'
+{
+	w $wn/focus b
+	val $wn/focus
+	evs 'win=main'
+} <[3]$wn/events
+echo '# a path that is not there'
+w $wn/focus nope
+val $wn/focus
+echo '# focus= on the window ctl'
+w $wn/ctl set . 'focus=b/inner'
+val $wn/focus
+echo '# the user moves focus'
+{
+	inj event blur 'win=main' 'node=b/inner'
+	inj event focus 'win=main' 'node=a'
+	inj mirror 'win=main' 'file=focus' 'value=a'
+	evs 'win=main'
+} <[3]$wn/events
+val $wn/focus
+echo '# deleting the focused node leaves nothing focused'
+wq $wn/ctl delete a
+val $wn/focus

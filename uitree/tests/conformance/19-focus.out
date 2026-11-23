@@ -1,0 +1,25 @@
+# nothing focused
+|
+# writing a path moves focus, and echoes with via=ctl
+ok
+b
+|
+resync - -
+focus - b via=ctl win=main
+# a path that is not there
+not found
+b
+|
+# focus= on the window ctl
+ok
+b/inner
+|
+# the user moves focus
+resync - -
+blur - b/inner via=user win=main
+focus - a via=user win=main
+a
+|
+# deleting the focused node leaves nothing focused
+|
+exit=0
