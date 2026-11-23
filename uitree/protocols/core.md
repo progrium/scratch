@@ -19,7 +19,7 @@ $ui/
     trace          every applied write and every error, streamed
     keys           key bindings (§ Keys, actions and menus)
     menu/          bar, the host's default menus (app edit window), and the app's own
-    theme/         mode  pref  tokens  name
+    theme/         mode  pref  tokens  name  names
     asset/         named files a node can refer to as @name
     types/         the component types this host builds (components.md)
     style/words    the style words this host accepts
@@ -183,6 +183,7 @@ file can still do everything. It also takes:
 | `set ID enabled=on\|off` / `set ID check=on\|off\|mixed` | Change every menu item, button and binding for action `ID`. A first word that isn't a path (doesn't start with `win/`) names an action |
 | `ask close quit open` / `ask none` | Opt into answering requests (§ Requests); `open` is defined by the shell layer |
 | `begin` / `commit` / `abort` | A batch on this connection (§ Batches) |
+| `theme name NAME` | The same as writing `NAME` to `theme/name` |
 | `theme load PATH` | Load a theme file in the host's format |
 | `quit` | Quit now |
 
@@ -260,9 +261,8 @@ uitreefs), always in the dashed spelling: uitreefs maps `flex-col` to GPUI's
 exists.
 
 **Theme.** `theme/tokens` holds `name value` lines; writing a line
-changes one token everywhere at once. `theme/name` selects a named theme
-the host has. Light and dark are split into what the app asked for and
-what is drawn:
+changes one token everywhere at once. Light and dark are split into what
+the app asked for and what is drawn:
 
 | File | Read | Write |
 | --- | --- | --- |
@@ -279,6 +279,41 @@ settings may appear later as read-only tokens (`system-accent`,
 are `background foreground muted muted-foreground primary
 primary-foreground accent accent-foreground border ring danger success
 warning radius`.
+
+**Named themes.** A named theme is a palette: a value for some of the
+color tokens, for one mode. The host lists the ones it has in
+`theme/names`, read-only, one line per theme: its name (quoted when it
+has blanks), then `mode=light` or `mode=dark`, then `family=NAME` when it
+belongs to a family, a set of themes that go together.
+
+```text
+'Catppuccin Latte' mode=light family=Catppuccin
+'Catppuccin Mocha' mode=dark family=Catppuccin
+'Tokyo Night' mode=dark family=Tokyo
+```
+
+Writing a theme's name or a family's name to `theme/name` selects it;
+writing nothing goes back to the host's default look. A name that is
+neither is refused with `not found` and changes nothing. Reading
+`theme/name` gives what was written.
+
+- A **family** name picks the family's first theme for each mode, and
+  follows `theme/mode`: `Catppuccin` draws Latte in light mode and Frappe
+  in dark.
+- A **theme** name picks that theme whatever the preference.
+- If what was picked has no theme for the preferred mode (`Tokyo Night`,
+  or `Tokyo`, while `pref` is `light`), the mode in effect becomes the one
+  it has. `theme/mode` reads that mode, the `theme` event follows as for
+  any change to the mode in effect (`via=ctl`), and `theme/pref` keeps
+  what the app asked for, so going back to the default restores it.
+
+A token's value is, first, what the app wrote to `theme/tokens`; then the
+named theme's; then the host's default for the mode. `theme/tokens`
+reads the values in effect, so an app reads a theme's colors there. The
+names are the host's: hosts that share a theme set (the GPUI and terminal
+hosts both have GPUI Kit's) share its names, and an app written for one
+runs on the other. A host with no named themes has an empty
+`theme/names`, and `theme/name` takes only the empty name.
 
 ## Windows
 

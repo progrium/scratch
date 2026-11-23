@@ -86,6 +86,70 @@ pub fn parseTokens(arena: std.mem.Allocator, text: []const u8) error{ BadSyntax,
     return out.toOwnedSlice(arena);
 }
 
+/// One named theme (core.md § Style, Theme): a palette for one mode. Its
+/// tokens are the ones whose value differs from that mode's default.
+pub const Theme = struct {
+    name: []const u8,
+    /// The set it belongs to (`Catppuccin` for `Catppuccin Mocha`), which
+    /// `theme/name` also takes. Empty: none.
+    family: []const u8 = "",
+    dark: bool,
+    tokens: []const Pair,
+
+    pub fn token(t: *const Theme, name: []const u8) ?[]const u8 {
+        for (t.tokens) |p| if (std.mem.eql(u8, p.name, name)) return p.value;
+        return null;
+    }
+};
+
+pub const Pair = struct { name: []const u8, value: []const u8 };
+
+/// Parses `themes` text: a `theme NAME` line starts a theme; the lines
+/// after it, up to the next `theme` line, are `mode light|dark`,
+/// `family NAME` and `TOKEN #rrggbb[aa]`. A name is the rest of its line.
+/// Blank lines and `#` comments are skipped. Every theme needs a mode.
+pub fn parseThemes(arena: std.mem.Allocator, text: []const u8) error{ BadSyntax, OutOfMemory }![]Theme {
+    var out: std.ArrayList(Theme) = .empty;
+    var toks: std.ArrayList(Pair) = .empty;
+    var cur: ?Theme = null;
+    var have_mode = false;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        if (line.len == 0 or line[0] == '#') continue;
+        const sp = std.mem.indexOfAny(u8, line, " \t") orelse return error.BadSyntax;
+        const key = line[0..sp];
+        const rest = std.mem.trim(u8, line[sp..], " \t");
+        if (rest.len == 0) return error.BadSyntax;
+        if (std.mem.eql(u8, key, "theme")) {
+            if (cur) |*t| {
+                if (!have_mode) return error.BadSyntax;
+                t.tokens = try toks.toOwnedSlice(arena);
+                try out.append(arena, t.*);
+            }
+            cur = .{ .name = rest, .dark = false, .tokens = &.{} };
+            have_mode = false;
+            continue;
+        }
+        const t = if (cur) |*t| t else return error.BadSyntax;
+        if (std.mem.eql(u8, key, "mode")) {
+            if (std.mem.eql(u8, rest, "dark")) t.dark = true else if (std.mem.eql(u8, rest, "light")) t.dark = false else return error.BadSyntax;
+            have_mode = true;
+        } else if (std.mem.eql(u8, key, "family")) {
+            t.family = rest;
+        } else {
+            if (!isColor(rest)) return error.BadSyntax;
+            try toks.append(arena, .{ .name = key, .value = rest });
+        }
+    }
+    if (cur) |*t| {
+        if (!have_mode) return error.BadSyntax;
+        t.tokens = try toks.toOwnedSlice(arena);
+        try out.append(arena, t.*);
+    }
+    return out.toOwnedSlice(arena);
+}
+
 pub fn lookup(entries: []const Entry, name: []const u8) ?Entry {
     const i = std.sort.binarySearch(Entry, entries, name, struct {
         fn cmp(n: []const u8, e: Entry) std.math.Order {

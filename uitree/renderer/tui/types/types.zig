@@ -39,3 +39,4 @@ pub const descriptors = "" ++ @embedFile("div/spec") ++ @embedFile("text/spec") 
 
 pub const style_words = @embedFile("style-words");
 pub const theme_tokens = @embedFile("theme-tokens");
+pub const themes = @embedFile("themes");

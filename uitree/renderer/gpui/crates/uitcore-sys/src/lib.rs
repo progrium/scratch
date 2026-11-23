@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 2;
+pub const UIT_ABI_VERSION: u32 = 3;
 
 #[repr(C)]
 pub struct UitCore {
@@ -284,6 +284,7 @@ unsafe extern "C" {
     pub fn uit_theme_dark(c: *mut UitCore) -> u32;
     pub fn uit_token(c: *mut UitCore, name: UitStr, rgba: *mut u32) -> c_int;
     pub fn uit_asset(c: *mut UitCore, name: UitStr, out: *mut UitStr) -> c_int;
+    pub fn uit_themes(c: *mut UitCore, text: UitStr) -> c_int;
 
     pub fn uit_emit(c: *mut UitCore, n: UitNode, name: UitStr, attrs: *const UitAttr, len: usize) -> c_int;
     pub fn uit_request(c: *mut UitCore, n: UitNode, name: UitStr, attrs: *const UitAttr, len: usize, default_answer: UitStr) -> u64;

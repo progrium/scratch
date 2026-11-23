@@ -26,6 +26,7 @@ test {
 
 const Catalog_ = @import("catalog.zig");
 pub const Catalog = Catalog_.Catalog;
+pub const ThemePick = Catalog_.ThemePick;
 
 // ---------------------------------------------------------------- errors
 

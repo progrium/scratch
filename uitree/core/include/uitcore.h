@@ -1,7 +1,8 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
- * Version 2: version 1 (frozen by the spike, W0) plus uit_asset. A change after the freeze bumps
+ * Version 3: version 1 (frozen by the spike, W0) plus uit_asset (2) and
+ * uit_themes (3). A change after the freeze bumps
  * UIT_ABI_VERSION and is announced to W3 (tree), W6 (GPUI) and W7 (TUI).
  * Adding a UIT_CMD_* tag, a UIT_ARG_* kind or a UitErr code is not a
  * change: a renderer ignores tags and kinds it doesn't know.
@@ -40,7 +41,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 2u
+#define UIT_ABI_VERSION 3u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -106,6 +107,16 @@ typedef struct {
 
 /* Makes a core. The calling thread becomes the owner thread. */
 int uit_create(const UitConfig *cfg, UitCore **out);
+
+/* Registers the named themes the renderer draws, replacing any before:
+ * text in core/types/themes's format (a `theme NAME` line, then `mode
+ * light|dark`, `family NAME` and `TOKEN #rrggbb[aa]` lines, each token one
+ * the catalog has). $ui/theme/name then takes their names and family
+ * names, and $ui/theme/names lists them; uit_token and theme/tokens resolve
+ * through the selected palette. Call after uit_create and before serving
+ * (UIT_EINUSE after uit_serve_fd, uit_listen or uit_run_machine).
+ * UIT_EBADVALUE if the text doesn't parse. Since version 3. */
+int uit_themes(UitCore *, UitStr text);
 
 /* Serves $ui over 9P2000 on a connected fd (a socket or a pipe pair end)
  * until it closes. The core takes the fd. */

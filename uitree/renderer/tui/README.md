@@ -24,7 +24,8 @@ cd ../../third_party/hyper9 && scripts/fetch.sh isoamd64 &&
 
 Ctrl-C or Ctrl-Q closes the window. The app's output and the host's log
 go to `--log FILE` (default `/tmp/uitree-tui.log`), since the terminal
-belongs to the UI. `--dark` starts in the dark theme.
+belongs to the UI. `--dark` starts in the dark theme. `--colors
+truecolor|256|16` overrides the color depth `COLORTERM` suggests.
 
 ## The boundary
 
@@ -46,7 +47,9 @@ belongs to the UI. `--dark` starts in the dark theme.
 from W1's `core/types/` ([types/gen.sh](types/gen.sh) copies them and
 writes `types.zig`), plus `style-words` and `theme-tokens`, which it
 passes to `uit_create` unchanged so the core accepts the same style
-vocabulary as GPUI and an app runs on either host.
+vocabulary as GPUI and an app runs on either host, and `themes`, GPUI
+Kit's theme set as palettes, which it registers with `uit_themes`: an
+app's `theme/name Catppuccin` picks the same colors here as on GPUI.
 
 | Profile | Types |
 | --- | --- |
@@ -75,9 +78,13 @@ max, padding, margin, gap, `absolute` with insets, `overflow-*` and
 `hidden` map one to one. The window's root fills the terminal under a
 one-row title bar (the root's `title`).
 
-**Looks.** Colors arrive as RGBA with theme tokens already resolved; the
-grid blends translucent ones over what is under them and draws 24-bit
-color. `text-color`, `font-semibold`/`font-bold`, `italic`, `underline`,
+**Looks.** Colors arrive as RGBA with theme tokens already resolved
+(through the named theme's palette, when the app picked one); the grid
+blends translucent ones over what is under them and draws them at the
+terminal's depth ([src/color.zig](src/color.zig)): 24-bit when
+`COLORTERM` is `truecolor` or `24bit`, else the nearest xterm-256 color
+(the cube and the gray ramp, never the 16 the user's terminal theme
+redefines), or the nearest ANSI color with `--colors 16`. `text-color`, `font-semibold`/`font-bold`, `italic`, `underline`,
 `line-through`, `font-light` (dim), `text-center`/`text-right`,
 `truncate` and `whitespace-nowrap` inherit down the tree like GPUI's text
 style. `hover:`, `active:`, `focus:` and `disabled:` words apply when the

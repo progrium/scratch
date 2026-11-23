@@ -289,6 +289,8 @@ pub fn main(init: std.process.Init) !u8 {
     var h: Headless = .{ .io = io };
 
     var cat = core.types.Catalog.builtin(gpa) catch |e| return fail("types: {t}", .{e});
+    // The named themes a renderer registers with uit_themes: GPUI Kit's set.
+    cat.loadThemes(core.types.embedded.themes, null) catch |e| return fail("themes: {t}", .{e});
     var errw = std.Io.File.stderr().writerStreaming(io, &.{});
     // README.md § The host: light until `appearance` changes it.
     const t = Tree.create(gpa, io, &cat, .{

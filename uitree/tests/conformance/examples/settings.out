@@ -1,0 +1,103 @@
+-- window main Settings
+div root  : h-flex items-stretch size-full bg=background
+  sidebar nav  collapsible=off  : w=220
+    sidebar-group g  label=Settings
+      sidebar-item general  active  label=General  icon=settings  tag=page:general
+      sidebar-item look  label=Appearance  icon=palette  tag=page:look
+      sidebar-item account  label=Account  icon=user  tag=page:account
+      sidebar-item keys  label=Shortcuts  icon=keyboard  tag=page:keys
+  scroll page  order=general  : flex-1 overflow-y-scroll p=32
+    div general  : v-flex gap=24 max-w=560
+      text h  text=General  : text-xl font-semibold
+      group-box startup  title=Startup
+        div rows  : v-flex gap=12
+          switch login  label='Open at login'  tag=set:login
+          switch restore  label='Reopen windows from last time'  value=on  tag=set:restore
+          switch updates  label='Check for updates automatically'  value=on  tag=set:updates
+      group-box lang  title=Language
+        form f  labels=side  label-width=140
+          field l  label='Interface language'
+            select in  value=en  tag=set:lang  items=<<END
+en English
+fr Français
+de Deutsch
+ja 日本語
+END
+          field n  label='Recent items'  description='How many files Open Recent lists.'
+            number-input in  value=10  min=0  max=50  tag=set:recent
+    div look  : v-flex gap=24 max-w=560
+      text h  text=Appearance  : text-xl font-semibold
+      group-box theme  title=Theme
+        form f  labels=side  label-width=140
+          field mode  label=Mode
+            radio-group in  value=light  dir=row  tag=set:mode  items=<<END
+light Light
+dark Dark
+END
+          field name  label=Theme
+            select in  searchable  value=Default  tag=set:theme  items=<<END
+Default Default
+Adventure Adventure
+Alduin Alduin
+Asciinema Asciinema
+Aurora Aurora
+Ayu Ayu
+Catppuccin Catppuccin
+Everforest Everforest
+Fahrenheit Fahrenheit
+Flexoki Flexoki
+Gruvbox Gruvbox
+Harper Harper
+Hybrid Hybrid
+Jellybeans Jellybeans
+Kibble Kibble
+'macOS Classic' 'macOS Classic'
+Mellifluous Mellifluous
+Molokai Molokai
+Solarized Solarized
+Spaceduck Spaceduck
+Tokyo Tokyo
+Twilight Twilight
+END
+          field radius  label='Corner radius'
+            slider in  max=16  value=6  tag=set:radius
+          field size  label='Font size'
+            slider in  min=11  max=18  value=14  tag=set:font-size
+      alert note  title='Changes apply right away'  text='Every style that names a theme token re-resolves on the next frame.'
+    div account  : v-flex gap=24 max-w=560
+      text h  text=Account  : text-xl font-semibold
+      div who  : h-flex items-center gap=12
+        avatar a  lg  name='Ada Lovelace'
+        div n  : v-flex
+          text name  text='Ada Lovelace'  : font-semibold
+          text mail  text=ada@example.com  : text-sm text-color=muted-foreground
+      form f  labels=top
+        field name  label='Display name'
+          input in  value='Ada Lovelace'  tag=set:name
+        field mail  label=Email
+          input in  value=ada@example.com  tag=set:email
+      div danger  : h-flex gap=8
+        button out  outline  label='Sign out'  tag=signout
+        button del  ghost  label='Delete account'  tag=delete
+    div keys  : v-flex gap=24 flex-1
+      text h  text=Shortcuts  : text-xl font-semibold
+      table t  stripe  sortable  sorted  columns=<<END  rows=<<END2  : h=320
+key Shortcut 160 sort
+id Action 240 sort
+END
+1 cmd-, settings
+2 cmd-w close-window
+3 cmd-1 page:general
+4 cmd-2 page:look
+5 cmd-3 page:account
+6 cmd-4 page:keys
+END2
+-- menu/bar
+-- keys
+cmd-,        settings
+cmd-w        close-window
+cmd-1        page:general
+cmd-2        page:look
+cmd-3        page:account
+cmd-4        page:keys
+-- stderr

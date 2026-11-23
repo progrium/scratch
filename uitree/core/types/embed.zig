@@ -92,3 +92,4 @@ pub const specs = [_]Spec{
 
 pub const style_words = @embedFile("style-words");
 pub const theme_tokens = @embedFile("theme-tokens");
+pub const themes = @embedFile("themes");

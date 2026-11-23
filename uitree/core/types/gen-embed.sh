@@ -18,4 +18,5 @@ cd "$(dirname "$0")"
 	echo
 	echo 'pub const style_words = @embedFile("style-words");'
 	echo 'pub const theme_tokens = @embedFile("theme-tokens");'
+	echo 'pub const themes = @embedFile("themes");'
 } >embed.zig

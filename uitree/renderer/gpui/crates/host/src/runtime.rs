@@ -329,7 +329,7 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
     let mut components = ComponentRegistry::default();
     crate::register_all(&mut components);
     let types = crate::spec::registration(&components.names());
-    let core = Core::new(
+    let mut core = Core::new(
         &uitcore::Config {
             types: &types,
             style_words: crate::spec::STYLE_WORDS,
@@ -338,6 +338,10 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
         },
         waker,
     )?;
+    // GPUI Kit's theme set, as the core's renderer-neutral palettes: the
+    // core resolves tokens through the one `theme/name` picks, and
+    // theme::apply copies them into GPUI Kit's ThemeColor.
+    core.themes(crate::spec::THEMES)?;
     let inner = Rc::new(Inner {
         core: RefCell::new(core),
         input,

@@ -225,8 +225,6 @@ pub const Config = struct {
     cmdkey: []const u8 = "ctrl",
     host: []const u8 = "uitree-core 0.2",
     system_dark: bool = false,
-    /// Named themes `theme/name` takes.
-    theme_names: []const []const u8 = &.{},
     /// Where loud errors go (`uitree: write PATH: ...`), besides trace and
     /// the `error` event. Null: nowhere.
     stderr: ?*Writer = null,
@@ -985,6 +983,7 @@ pub const Tree = struct {
                 tx.st.system_dark = dk;
                 if (before != tx.st.dark()) {
                     tx.st.theme_ver = tx.gen;
+                    tx.st.tokens_ver = tx.gen;
                     try tx.themeEvent("system");
                     try tx.cmd(.{ .tag = .theme });
                 }
@@ -1279,7 +1278,7 @@ const Tx = struct {
             .type_file => return tx.fail(.bad_value, "read-only: {s}", .{p}),
             .app => |f| switch (f) {
                 .ctl => return tx.ctlApp(data),
-                .version, .events, .trace, .style_words => return tx.fail(.bad_value, "read-only: {s}", .{p}),
+                .version, .events, .trace, .style_words, .theme_names => return tx.fail(.bad_value, "read-only: {s}", .{p}),
                 .keys => return tx.writeKeys(data),
                 .clip => {
                     if (data.len > proto.limits.text_prop) return tx.fail(.too_large, "clip", .{});
@@ -1534,11 +1533,27 @@ const Tx = struct {
     }
 
     fn writeThemeName(tx: *Tx, name: []const u8) Error!void {
-        if (name.len > 0 and !state.inList(tx.t.cfg.theme_names, name)) return tx.fail(.not_found, "theme: {s}", .{name});
+        const pick = try tx.pickTheme(name);
         try tx.logWrite("theme/name", name, false);
+        try tx.setTheme(name, pick);
+    }
+
+    /// A theme or family name the renderer registered; empty is none.
+    fn pickTheme(tx: *Tx, name: []const u8) Error!types.ThemePick {
+        if (name.len == 0) return .{};
+        return tx.t.cat.pickTheme(name) orelse return tx.fail(.not_found, "theme: {s}", .{name});
+    }
+
+    /// Selects a named theme. The mode in effect may change with it (a
+    /// theme with only a dark palette), and a `theme` event says so.
+    fn setTheme(tx: *Tx, name: []const u8, pick: types.ThemePick) Error!void {
+        const before = tx.st.dark();
         state.unrefOpt(tx.st.theme_name, tx.gpa());
         tx.st.theme_name = if (name.len > 0) try tx.blob(name) else null;
+        tx.st.theme = pick;
         tx.st.theme_ver = tx.gen;
+        tx.st.tokens_ver = tx.gen;
+        if (before != tx.st.dark()) try tx.themeEvent("ctl");
         try tx.cmd(.{ .tag = .theme });
     }
 
@@ -1556,6 +1571,7 @@ const Tx = struct {
         tx.st.pref = pref;
         tx.st.theme_ver = tx.gen;
         if (before != tx.st.dark()) {
+            tx.st.tokens_ver = tx.gen;
             try tx.themeEvent("ctl");
             try tx.cmd(.{ .tag = .theme });
         }
@@ -1719,13 +1735,7 @@ const Tx = struct {
             const pref = std.meta.stringToEnum(state.Pref, arg) orelse return tx.fail(.bad_value, "mode: {s}", .{arg});
             return tx.setPref(pref);
         }
-        if (std.mem.eql(u8, sub, "name")) {
-            if (!state.inList(tx.t.cfg.theme_names, arg)) return tx.fail(.not_found, "theme: {s}", .{arg});
-            state.unrefOpt(tx.st.theme_name, tx.gpa());
-            tx.st.theme_name = try tx.blob(arg);
-            tx.st.theme_ver = tx.gen;
-            return tx.cmd(.{ .tag = .theme });
-        }
+        if (std.mem.eql(u8, sub, "name")) return tx.setTheme(arg, try tx.pickTheme(arg));
         return tx.fail(.bad_syntax, usage, .{});
     }
 

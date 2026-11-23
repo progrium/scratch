@@ -106,7 +106,8 @@ files (format). `Catalog.checkProp(type, name, value) !void` and
 `checkStyle(words) !void` return `proto.err` codes. `Catalog.specText(name)`
 gives the text `$ui/types/NAME/spec` serves. Style words and theme tokens
 are separate tables parsed from `core/types/style-words` and
-`theme-tokens`.
+`theme-tokens`. Named themes are a third, `core/types/themes`, loaded by
+`Catalog.loadThemes` when a renderer registers them (`uit_themes`).
 
 **I4. `tree` (W3 → W4, abi).**
 - `Tree.init(gpa, *const Catalog)`; `apply(op) !Changes` on the owner
@@ -132,7 +133,18 @@ draw.
 
 **I7. Style words (W1 → W2, W6).** `style-gen` reads GPUI and writes
 `core/types/style-words` (`name argkind`, dashed) and the renderer's
-dispatch table from the same list, so the two cannot drift.
+dispatch table from the same list, so the two cannot drift. It also
+writes `theme-tokens` and `themes`: every theme in GPUI Kit's set,
+resolved as GPUI Kit applies it, as a renderer-neutral palette (the
+tokens that differ from the mode's default).
+
+**I8. Named themes (W1 → W6, W7).** A renderer registers the palettes it
+draws with `uit_themes` after `uit_create` and before serving. The core
+owns the selection: `theme/name` takes the registered names and family
+names, `theme/names` lists them, and `uit_token` (so `uit_style`'s colors
+and `theme/tokens`) resolves through the selected palette. A renderer
+needs no theme logic of its own: on `UIT_CMD_THEME` it re-reads the mode
+and tokens. Both renderers register all of `core/types/themes`.
 
 ## Working on a workstream
 

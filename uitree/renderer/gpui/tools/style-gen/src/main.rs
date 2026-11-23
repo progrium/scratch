@@ -8,6 +8,9 @@
 //!   `size` / `variant` for GPUI Kit words that mean something only on a
 //!   type whose descriptor lists them.
 //! * `core/types/theme-tokens`: `name light dark` per line.
+//! * `core/types/themes`: every theme GPUI Kit ships, as a palette: the
+//!   tokens whose resolved value differs from the default for its mode
+//!   (the renderer-neutral form renderers register with `uit_themes`).
 //! * `table.rs` and `theme.rs`: the renderer's dispatch table, each wire
 //!   name with the GPUI method it calls, plus theme defaults and sets.
 //!
@@ -100,7 +103,7 @@ fn main() {
     let src = locate_sources();
 
     let (table, words) = build_table(&src);
-    let (theme, tokens) = build_theme(&src);
+    let (theme, tokens, palettes) = build_theme(&src);
 
     let pins = format!("gpui-pre {} · gpui-component {}", src.gpui_version, src.kit_rev);
     let header = format!(
@@ -120,11 +123,35 @@ fn main() {
         writeln!(w, "{name} {kind}").unwrap();
     }
     std::fs::write(types_dir.join("style-words"), w).unwrap();
-    let mut t = text_header;
+    let mut t = text_header.clone();
     for (name, light, dark) in &tokens {
         writeln!(t, "{name} {light} {dark}").unwrap();
     }
     std::fs::write(types_dir.join("theme-tokens"), t).unwrap();
+    let mut p = text_header;
+    p.push_str(PALETTE_HEADER);
+    for pal in &palettes {
+        writeln!(p, "\ntheme {}\n\tmode {}\n\tfamily {}", pal.name, pal.mode, pal.family).unwrap();
+        for (name, value) in &pal.tokens {
+            writeln!(p, "\t{name} {value}").unwrap();
+        }
+    }
+    std::fs::write(types_dir.join("themes"), p).unwrap();
+}
+
+const PALETTE_HEADER: &str = "\
+# Named themes, renderer-neutral: one `theme NAME` block per theme, then
+# its `mode` (light or dark), its `family` (the GPUI Kit theme set it
+# came from), and each theme token whose value differs from that mode's
+# default in theme-tokens. Renderers register this text with uit_themes.
+";
+
+/// One theme as a palette: the tokens that differ from its mode's default.
+struct Palette {
+    name: String,
+    mode: &'static str,
+    family: String,
+    tokens: Vec<(String, String)>,
 }
 
 /// The wire spelling of a GPUI name: `flex_col` is `flex-col` (protocols
@@ -709,8 +736,8 @@ fn struct_fields(text: &str, header: &str) -> Vec<(String, String)> {
 
 // ---------------------------------------------------------------- theme
 
-fn build_theme(src: &Sources) -> (String, Vec<(String, String, String)>) {
-    use gpui_component::ThemeColor;
+fn build_theme(src: &Sources) -> (String, Vec<(String, String, String)>, Vec<Palette>) {
+    use gpui_component::{Theme, ThemeColor, ThemeSet};
 
     let fields = struct_fields(&read(src.component.join("src/theme/theme_color.rs")), "pub struct ThemeColor ");
     for (name, ty) in &fields {
@@ -736,6 +763,7 @@ fn build_theme(src: &Sources) -> (String, Vec<(String, String, String)>) {
         "ThemeColor serializes fields the struct scan missed");
 
     let mut sets: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut palettes: Vec<Palette> = Vec::new();
     let mut theme_files: Vec<_> = std::fs::read_dir(src.kit_repo.join("themes"))
         .expect("themes/ in gpui-component checkout")
         .map(|e| e.unwrap().path())
@@ -744,8 +772,30 @@ fn build_theme(src: &Sources) -> (String, Vec<(String, String, String)>) {
     theme_files.sort();
     let default_set = src.component.join("src/theme/default-theme.json");
     for path in std::iter::once(default_set).chain(theme_files) {
-        let v: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
+        let text = read(&path);
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         let set = v["name"].as_str().unwrap().to_string();
+        // Each theme resolved the way GPUI Kit applies it (missing colors
+        // fall back to, or are derived from, the mode's defaults).
+        let parsed: ThemeSet = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        for cfg in parsed.themes {
+            let dark_mode = cfg.mode.is_dark();
+            let mut t = Theme::default();
+            t.apply_config(&std::rc::Rc::new(cfg.clone()));
+            let got = values(&t.colors);
+            let base = if dark_mode { &dark } else { &light };
+            let tokens = names
+                .iter()
+                .filter(|n| got[**n] != base[**n])
+                .map(|n| (dash(n), got[*n].clone()))
+                .collect();
+            palettes.push(Palette {
+                name: cfg.name.to_string(),
+                mode: if dark_mode { "dark" } else { "light" },
+                family: set.clone(),
+                tokens,
+            });
+        }
         let themes = v["themes"]
             .as_array()
             .unwrap()
@@ -790,7 +840,7 @@ fn build_theme(src: &Sources) -> (String, Vec<(String, String, String)>) {
     }
     o.push_str("];\n");
     let tokens = names.iter().map(|n| (dash(n), light[*n].clone(), dark[*n].clone())).collect();
-    (o, tokens)
+    (o, tokens, palettes)
 }
 
 fn hex(c: gpui::Rgba) -> String {

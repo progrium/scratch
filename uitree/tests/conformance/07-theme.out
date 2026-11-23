@@ -3,6 +3,7 @@ yes
 yes
 yes
 yes
+yes
 # tokens has every portable token (missing ones are printed)
 checked
 # writing one line changes one token
@@ -58,6 +59,66 @@ light
 resync - -
 # a theme name the host does not have
 not found
+# theme/names: one theme per line, name then mode= and family=
+some themes
+'Catppuccin Latte' mode=light family=Catppuccin
+'Catppuccin Mocha' mode=dark family=Catppuccin
+'Tokyo Night' mode=dark family=Tokyo
+permission denied
+# from here the system is light and pref is system
+light
+|
+# a theme name picks that theme and brings its mode; pref is kept
+ok
+Tokyo Night
+|
+system
+|
+dark
+|
+resync - -
+theme - - mode=dark via=ctl
+background #1a1b26
+foreground #c0caf5
+# a family name follows the mode: Catppuccin is Latte in light
+ok
+light
+|
+resync - -
+theme - - mode=light via=ctl
+background #e5e9ef
+foreground #4c4f69
+# and its first dark theme in dark
+dark
+|
+resync - -
+theme - - mode=dark via=system
+background #232634
+foreground #c6d0f5
+# an app token wins over the palette
+ok
+background #123456
+# the ctl verb with a quoted name, and names that are neither a theme nor a family
+ok
+Catppuccin Mocha
+|
+not found
+not found
+Catppuccin Mocha
+|
+# a family with only dark themes brings dark
+ok
+Tokyo
+|
+dark
+|
+# empty goes back to the default look and the preferred mode
+ok
+|
+light
+|
+resync - -
+theme - - mode=light via=ctl
 # theme load with a missing file
 not found
 exit=0

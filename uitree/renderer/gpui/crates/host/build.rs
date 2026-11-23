@@ -22,7 +22,7 @@ fn main() {
         out.push_str(&format!("    ({n:?}, include_str!({:?})),\n", p.display().to_string()));
     }
     out.push_str("];\n");
-    for f in ["style-words", "theme-tokens"] {
+    for f in ["style-words", "theme-tokens", "themes"] {
         let p = dir.join(f);
         println!("cargo:rerun-if-changed={}", p.display());
         let id = f.replace('-', "_").to_uppercase();

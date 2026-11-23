@@ -386,6 +386,9 @@ pub const State = struct {
     pref: Pref = .system,
     system_dark: bool = false,
     theme_name: ?*Blob = null,
+    /// What `theme_name` selected (catalog palettes, which outlive every
+    /// State). Both null: the catalog's defaults.
+    theme: types.ThemePick = .{},
     theme_ver: u32 = 0,
     asks: Asks = .{},
     /// The app quit: every later op fails with `app gone`.
@@ -521,13 +524,31 @@ pub const State = struct {
         return null;
     }
 
-    /// The mode in effect.
+    /// The mode in effect: the preference's, unless the named theme has a
+    /// palette only for the other mode.
     pub fn dark(s: *const State) bool {
-        return switch (s.pref) {
+        const want = switch (s.pref) {
             .system => s.system_dark,
             .light => false,
             .dark => true,
         };
+        if (want and s.theme.dark == null and s.theme.light != null) return false;
+        if (!want and s.theme.light == null and s.theme.dark != null) return true;
+        return want;
+    }
+
+    /// The named theme drawn now, if any.
+    pub fn palette(s: *const State) ?*const types.style.Theme {
+        return if (s.dark()) s.theme.dark else s.theme.light;
+    }
+
+    /// A catalog token's value now: the client's `theme/tokens`, then the
+    /// named theme's palette, then the catalog's default for the mode.
+    pub fn tokenValue(s: *const State, t: types.style.Token) []const u8 {
+        if (s.token(t.name)) |v| return v;
+        const dk = s.dark();
+        if (if (dk) s.theme.dark else s.theme.light) |p| if (p.token(t.name)) |v| return v;
+        return if (dk) t.dark else t.light;
     }
 
     /// Whether `a` is `h` or one of its ancestors.

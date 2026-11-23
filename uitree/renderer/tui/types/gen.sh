@@ -9,7 +9,7 @@ button checkbox radio-group switch select input textarea number-input slider for
 link tabs tab empty separator badge kbd progress spinner alert dialog"
 src=../../../core/types
 for t in $TYPES; do mkdir -p "$t"; cp "$src/$t/spec" "$t/spec"; done
-cp "$src/style-words" "$src/theme-tokens" .
+cp "$src/style-words" "$src/theme-tokens" "$src/themes" .
 {
 	echo '//! The descriptors of the types uitree-tui draws, copied from'
 	echo '//! core/types/ (interface I6), and the style words and theme tokens it'
@@ -25,5 +25,6 @@ cp "$src/style-words" "$src/theme-tokens" .
 	echo
 	echo 'pub const style_words = @embedFile("style-words");'
 	echo 'pub const theme_tokens = @embedFile("theme-tokens");'
+	echo 'pub const themes = @embedFile("themes");'
 } >types.zig
 zig fmt types.zig >/dev/null 2>&1 || true

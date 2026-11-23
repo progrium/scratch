@@ -141,7 +141,7 @@ pub const Snapshot = struct {
                 .ctl => .ctl,
                 .events => .events,
                 .trace => .trace,
-                .version, .style_words => .readonly,
+                .version, .style_words, .theme_names => .readonly,
                 .keys, .theme_tokens => .data,
                 .clip => .bytes,
                 else => .text,
@@ -186,6 +186,7 @@ pub const Snapshot = struct {
                 .clip => st.clip_ver,
                 .theme_tokens => st.tokens_ver,
                 .theme_name, .theme_pref, .theme_mode => st.theme_ver,
+                .theme_names => 0,
                 .ctl, .events, .trace, .version, .style_words => 0,
             },
             .menu => |m| if (std.mem.eql(u8, m, "bar")) st.bar_ver else if (st.menu(m)) |x| x.ver else 0,
@@ -280,11 +281,8 @@ pub const Snapshot = struct {
                 .keys => return line(arena, Blob.str(st.keys)),
                 .clip => return Blob.str(st.clip),
                 .theme_tokens => {
-                    const dark = st.dark();
-                    for (t.cat.theme_tokens) |tk| {
-                        const v = st.token(tk.name) orelse if (dark) tk.dark else tk.light;
-                        w.print("{s} {s}\n", .{ tk.name, v }) catch |e| return out(e);
-                    }
+                    for (t.cat.theme_tokens) |tk|
+                        w.print("{s} {s}\n", .{ tk.name, st.tokenValue(tk) }) catch |e| return out(e);
                     for (treem.length_tokens) |l| w.print("{s} {s}\n", .{ l.name, st.token(l.name) orelse l.value }) catch |e| return out(e);
                     if (t.cat.theme_tokens.len == 0) for (st.tokens.items) |tk| {
                         if (state.inList(&.{ "radius", "radius-lg" }, tk.name.bytes)) continue;
@@ -292,6 +290,15 @@ pub const Snapshot = struct {
                     };
                 },
                 .theme_name => return line(arena, Blob.str(st.theme_name)),
+                .theme_names => for (t.cat.themes) |th| {
+                    proto.tokenize.quoteWord(w, th.name) catch |e| return out(e);
+                    w.print(" mode={s}", .{if (th.dark) "dark" else "light"}) catch |e| return out(e);
+                    if (th.family.len > 0) {
+                        w.writeAll(" family=") catch |e| return out(e);
+                        proto.tokenize.quoteValue(w, th.family) catch |e| return out(e);
+                    }
+                    w.writeByte('\n') catch |e| return out(e);
+                },
                 .theme_pref => return line(arena, @tagName(st.pref)),
                 .theme_mode => return line(arena, if (st.dark()) "dark" else "light"),
                 .style_words => t.cat.writeStyleWords(w) catch |e| return out(e),

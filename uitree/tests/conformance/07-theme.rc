@@ -1,12 +1,15 @@
 #!/bin/rc
-# 07-theme: core.md § Style (Theme). tokens lines, pref and mode, the theme
-# event, named themes and theme load.
+# 07-theme: core.md § Style (Theme, Named themes). tokens lines, pref and
+# mode, the theme event, named themes (theme/names, theme and family names,
+# their palettes and the mode they bring) and theme load. uitree-headless
+# registers GPUI Kit's theme set (core/types/themes), as the GPUI and
+# terminal hosts do.
 # needs: W1 W2 W3 W4
 . ./lib.rc
 t=$k/theme
 
 echo '# the theme directory'
-exists $t/tokens $t/name $t/pref $t/mode
+exists $t/tokens $t/name $t/names $t/pref $t/mode
 echo '# tokens has every portable token (missing ones are printed)'
 awk 'NR == FNR { have[$1] = 1; next }
 	{ for(i = 1; i <= NF; i++) if(!($i in have)) print "missing", $i }' $t/tokens - <<'END'
@@ -68,5 +71,55 @@ w $t/pref light
 
 echo '# a theme name the host does not have'
 w $t/name 'No Such Theme'
+
+echo '# theme/names: one theme per line, name then mode= and family='
+awk '$0 !~ / mode=(light|dark)( family=.*)?$/ { print "bad line:", $0 }
+	END { if(NR > 0) print "some themes" }' $t/names
+grep '^(''Tokyo Night''|''Catppuccin Latte''|''Catppuccin Mocha'') ' $t/names
+w $t/names 'Mine mode=dark'
+echo '# from here the system is light and pref is system'
+wq $t/pref system
+inj appearance 'mode=light'
+val $t/mode
+echo '# a theme name picks that theme and brings its mode; pref is kept'
+{
+	w $t/name 'Tokyo Night'
+	val $t/name $t/pref $t/mode
+	evs
+} <[3]$k/events
+grep '^(background|foreground) ' $t/tokens
+echo '# a family name follows the mode: Catppuccin is Latte in light'
+{
+	w $t/name Catppuccin
+	val $t/mode
+	evs
+} <[3]$k/events
+grep '^(background|foreground) ' $t/tokens
+echo '# and its first dark theme in dark'
+{
+	inj appearance 'mode=dark'
+	val $t/mode
+	evs
+} <[3]$k/events
+grep '^(background|foreground) ' $t/tokens
+echo '# an app token wins over the palette'
+w $t/tokens 'background #123456'
+grep '^background ' $t/tokens
+echo '# the ctl verb with a quoted name, and names that are neither a theme nor a family'
+w $k/ctl theme name '''Catppuccin Mocha'''
+val $t/name
+w $k/ctl theme name Catppucin
+w $t/name 'Catppuccin Mocha Latte'
+val $t/name
+echo '# a family with only dark themes brings dark'
+inj appearance 'mode=light'
+w $t/name Tokyo
+val $t/name $t/mode
+echo '# empty goes back to the default look and the preferred mode'
+{
+	w $k/ctl theme name ''''''
+	val $t/name $t/mode
+	evs
+} <[3]$k/events
 echo '# theme load with a missing file'
 w $k/ctl theme load /nonexistent/theme.json

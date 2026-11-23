@@ -1,6 +1,6 @@
 //! uitree-tui: the uitree terminal host.
 //!
-//!     uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] PROG [ARGS...]
+//!     uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
 //!
 //! Starts the core (libuitcore, through uitcore.h), runs PROG in h9 with
 //! $ui mounted, and draws the app's `main` window in the terminal with
@@ -9,7 +9,9 @@
 //! screen.
 //!
 //! --root is the 9front root for h9 (default $H9ROOT, else h9's built-in
-//! root).
+//! root). --colors is the terminal's color depth (color.zig; default from
+//! $COLORTERM). The host registers GPUI Kit's theme set (core/types/themes),
+//! so an app's `theme/name` works here as on GPUI.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -19,6 +21,7 @@ const core = @import("core.zig");
 const source = @import("source.zig");
 const uimod = @import("ui.zig");
 const gridmod = @import("grid.zig");
+const colormod = @import("color.zig");
 
 pub const panic = vaxis.panic_handler;
 
@@ -47,7 +50,7 @@ const App = struct {
 };
 
 const usage =
-    \\usage: uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] PROG [ARGS...]
+    \\usage: uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
     \\
 ;
 
@@ -60,6 +63,7 @@ pub fn main(init: std.process.Init) !u8 {
     var root: []const u8 = init.environ_map.get("H9ROOT") orelse "";
     var log_path: []const u8 = "/tmp/uitree-tui.log";
     var dark = false;
+    var depth = colormod.detect(init.environ_map.get("COLORTERM"));
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -74,6 +78,12 @@ pub fn main(init: std.process.Init) !u8 {
             log_path = args[i];
         } else if (std.mem.eql(u8, a, "--dark")) {
             dark = true;
+        } else if (std.mem.eql(u8, a, "--colors") and i + 1 < args.len) {
+            i += 1;
+            depth = colormod.parse(args[i]) orelse {
+                std.debug.print("{s}", .{usage});
+                return 2;
+            };
         } else if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
             std.debug.print("{s}", .{usage});
             return 0;
@@ -115,6 +125,10 @@ pub fn main(init: std.process.Init) !u8 {
         return 1;
     };
     defer k.destroy();
+    k.themes(types.themes) catch |e| {
+        std.debug.print("uitree-tui: uit_themes: {t} {s}\n", .{ e, k.lastError() });
+        return 1;
+    };
 
     var ui = uimod.Ui.init(gpa, source.fromCore(k));
     defer ui.deinit();
@@ -200,7 +214,7 @@ pub fn main(init: std.process.Init) !u8 {
             ui.title = std.mem.trimEnd(u8, t, "\n");
         };
         ui.frame(g) catch |e| std.log.warn("frame: {t}", .{e});
-        blit(&vx, g);
+        blit(&vx, g, depth);
         try vx.render(writer);
         try writer.flush();
         k.frameDrawn("main");
@@ -235,7 +249,7 @@ fn redirectStderr(fd: c_int) void {
 }
 
 /// Copies the grid to vaxis's screen.
-fn blit(vx: *vaxis.Vaxis, g: *const gridmod.Grid) void {
+fn blit(vx: *vaxis.Vaxis, g: *const gridmod.Grid, depth: colormod.Depth) void {
     const win = vx.window();
     win.clear();
     var y: u16 = 0;
@@ -248,8 +262,8 @@ fn blit(vx: *vaxis.Vaxis, g: *const gridmod.Grid) void {
             win.writeCell(x, y, .{
                 .char = .{ .grapheme = cell.ch, .width = @intCast(@max(1, w)) },
                 .style = .{
-                    .fg = rgb(cell.fg),
-                    .bg = rgb(cell.bg),
+                    .fg = termColor(depth, cell.fg),
+                    .bg = termColor(depth, cell.bg),
                     .bold = cell.attrs.bold,
                     .dim = cell.attrs.dim,
                     .italic = cell.attrs.italic,
@@ -267,8 +281,11 @@ fn blit(vx: *vaxis.Vaxis, g: *const gridmod.Grid) void {
     } else win.hideCursor();
 }
 
-fn rgb(v: u32) vaxis.Color {
-    return .{ .rgb = .{ @intCast((v >> 16) & 0xff), @intCast((v >> 8) & 0xff), @intCast(v & 0xff) } };
+fn termColor(depth: colormod.Depth, v: u32) vaxis.Color {
+    return switch (colormod.map(depth, v)) {
+        .rgb => |x| .{ .rgb = x },
+        .index => |n| .{ .index = n },
+    };
 }
 
 fn translateMouse(m: vaxis.Mouse) ?uimod.Ui.Mouse {
@@ -344,6 +361,7 @@ fn translateKey(k: vaxis.Key) uimod.Ui.Key {
 
 test {
     _ = @import("grid.zig");
+    _ = @import("color.zig");
     _ = @import("style.zig");
     _ = @import("core.zig");
     _ = @import("ui.zig");
@@ -361,6 +379,7 @@ test "the core accepts the descriptors, words and tokens this host registers" {
         .wake_ctx = null,
     });
     defer k.destroy();
+    try k.themes(types.themes);
     try std.testing.expect(k.windowRoot("main") != 0);
     try std.testing.expectEqual(@as(u32, 0xffffffff), k.token("background").?);
     _ = builtin;

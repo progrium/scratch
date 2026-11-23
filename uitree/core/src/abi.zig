@@ -25,7 +25,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 2;
+pub const abi_version: u32 = 3;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -423,6 +423,27 @@ export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
     return UIT_OK;
 }
 
+/// Registers the named themes this renderer draws (`themes` text, the
+/// format of core/types/themes), replacing any registered before.
+/// `theme/name` then takes their names and family names, and
+/// `theme/names` lists them. Before any client: once the core serves 9P
+/// (uit_serve_fd, uit_listen, uit_run_machine) it is `in use`. Since 3.
+export fn uit_themes(c: *Core, text: UitStr) c_int {
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    if (c.host != null) {
+        c.setText("themes: register before serving");
+        return UIT_EINUSE;
+    }
+    var d: types.Diag = .{};
+    c.cat.loadThemes(text.slice(), &d) catch |e| {
+        if (e == error.OutOfMemory) return UIT_ENOMEM;
+        c.setText(d.detail());
+        return UIT_EBADVALUE;
+    };
+    c.tree.publish() catch return UIT_ENOMEM;
+    return UIT_OK;
+}
+
 /// From the machine's thread when the client ends.
 fn onExit(ctx: *anyopaque, status: []const u8) void {
     const c: *Core = @ptrCast(@alignCast(ctx));
@@ -660,11 +681,11 @@ fn parseColor(s: []const u8) ?u32 {
 }
 
 /// A theme token's value for the mode in effect: the app's `theme/tokens`
-/// first, then the catalog's.
+/// first, then the named theme's palette, then the catalog's.
 fn tokenText(c: *Core, name: []const u8) ?[]const u8 {
     const s = c.st();
     if (s.token(name)) |v| return v;
-    for (c.cat.theme_tokens) |t| if (std.mem.eql(u8, t.name, name)) return if (s.dark()) t.dark else t.light;
+    for (c.cat.theme_tokens) |t| if (std.mem.eql(u8, t.name, name)) return s.tokenValue(t);
     return null;
 }
 
@@ -1111,6 +1132,25 @@ test "window props, lines, overlays, menus, keys, tokens" {
     var rgba: u32 = 0;
     try std.testing.expectEqual(@as(c_int, 1), uit_token(core, UitStr.lit("primary"), &rgba));
     try std.testing.expectEqual(@as(u32, 0x0b5cffff), rgba);
+}
+
+test "uit_themes registers palettes that uit_token resolves through" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    try std.testing.expectEqual(UIT_EBADVALUE, uit_themes(core, UitStr.lit("theme A\n")));
+    try std.testing.expectEqual(UIT_OK, uit_themes(core, UitStr.lit("theme Deep\n\tmode dark\n\tfamily Sea\n\tprimary #102030\n")));
+    try write(core, "theme/name", "Sea");
+    var ch: UitChanges = .{};
+    try std.testing.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try std.testing.expectEqual(@as(u32, 1), uit_theme_dark(core));
+    var rgba: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, 1), uit_token(core, UitStr.lit("primary"), &rgba));
+    try std.testing.expectEqual(@as(u32, 0x102030ff), rgba);
+    // Once serving, the set is fixed.
+    if (builtin.os.tag == .windows) return;
+    var dial: UitStr = .{};
+    try std.testing.expectEqual(UIT_OK, uit_listen(core, .{}, &dial));
+    try std.testing.expectEqual(UIT_EINUSE, uit_themes(core, UitStr.lit("")));
 }
 
 test "requests: a tab close answered by the client" {

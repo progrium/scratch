@@ -17,10 +17,10 @@ crates/uitcore-sys/    hand-written bindings to ../../core/include/uitcore.h;
                        Cargo's target and links libuitcore.a
 crates/uitcore/        the safe wrapper: borrowed reads, UitChanges, input
 crates/host/           components, materialize, style dispatch (from uitreefs/crates/host);
-                       build.rs embeds core/types/*/spec, style-words, theme-tokens
+                       build.rs embeds core/types/*/spec, style-words, theme-tokens, themes
 crates/uitree/         ~50-line main: create the core, hand control to GPUI
 tools/style-gen/       from uitreefs/crates/style/gen; emits the dispatch table
-                       here and core/types/style-words, theme-tokens (W1)
+                       here and core/types/style-words, theme-tokens, themes (W1)
 ```
 
 Build and run (Linux needs `libxkbcommon-dev libxkbcommon-x11-dev`):
@@ -56,6 +56,13 @@ to the core in order on the main thread. Host commands from the pump
 (`UIT_CMD_*`) open windows, run window and component verbs, set menus,
 keys and the theme. The renderer holds no protocol error strings and no
 ctl parser: `Ctl` is the core's already-parsed command.
+
+Themes: the host registers GPUI Kit's whole theme set with `uit_themes`,
+as the palettes `tools/style-gen` resolves from gpui-component's
+`themes/*.json` (`core/types/themes`). The core owns `theme/name` and
+resolves every token through the selected palette; `theme.rs` copies the
+tokens into GPUI Kit's `ThemeColor` on `UIT_CMD_THEME`, as it does for
+`theme/tokens`. `theme load PATH` still loads a GPUI Kit JSON file directly.
 
 Style: the core hands over parsed words (`uit_style`), tokens already
 resolved to RGBA. `styling.rs` maps them with the dispatch table that

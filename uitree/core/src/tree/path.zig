@@ -36,6 +36,7 @@ pub const AppFile = enum {
     theme_name,
     theme_pref,
     theme_mode,
+    theme_names,
     style_words,
 };
 
@@ -62,7 +63,7 @@ pub const Loc = union(enum) {
     win_file: struct { root: Handle, name: []const u8 },
 };
 
-pub const theme_files = [_][]const u8{ "tokens", "name", "pref", "mode" };
+pub const theme_files = [_][]const u8{ "tokens", "name", "names", "pref", "mode" };
 
 fn fail(d: ?*Diag, arena: Allocator, code: proto.Code, comptime fmt: []const u8, args: anytype) proto.err.ProtoError {
     return proto.err.fail(d, arena, code, fmt, args);
@@ -124,6 +125,7 @@ pub fn resolve(st: *const State, cat: *const Catalog, arena: Allocator, path_in:
     if (eq(u8, first, "theme")) {
         if (eq(u8, rest, "tokens")) return .{ .app = .theme_tokens };
         if (eq(u8, rest, "name")) return .{ .app = .theme_name };
+        if (eq(u8, rest, "names")) return .{ .app = .theme_names };
         if (eq(u8, rest, "pref")) return .{ .app = .theme_pref };
         if (eq(u8, rest, "mode")) return .{ .app = .theme_mode };
         return nf(d, arena, path);

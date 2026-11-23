@@ -249,6 +249,12 @@ pub const Core = struct {
         return c.uit_theme_dark(k.p) != 0;
     }
 
+    /// Registers the named themes this host draws (core/types/themes
+    /// text): `theme/name` takes their names. Before runMachine.
+    pub fn themes(k: Core, text: []const u8) Error!void {
+        try check(c.uit_themes(k.p, str(text)));
+    }
+
     pub fn token(k: Core, name: []const u8) ?u32 {
         var rgba: u32 = 0;
         if (c.uit_token(k.p, str(name), &rgba) != 1) return null;

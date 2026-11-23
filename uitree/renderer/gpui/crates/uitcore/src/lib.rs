@@ -576,6 +576,12 @@ impl Core {
         unsafe { sys::uit_frame_drawn(self.raw, s(win)) };
     }
 
+    /// Registers the named themes this renderer draws (`core/types/themes`
+    /// text). Before `listen`, `serve_fd` or `run_machine`.
+    pub fn themes(&mut self, text: &str) -> Result<(), Error> {
+        self.check(unsafe { sys::uit_themes(self.raw, s(text)) })
+    }
+
     /// An app asset's bytes (`$ui/asset/NAME`), borrowed until the next pump.
     pub fn asset(&self, name: &str) -> Option<&[u8]> {
         let mut out = UitStr::EMPTY;
@@ -668,6 +674,20 @@ mod tests {
             b.extend(st(n));
         }
         rpc(c, msg(110, 2, &b));
+    }
+
+    /// The bundled theme set registers, and bad text is refused.
+    #[test]
+    fn themes_register() {
+        let mut core = Core::new(
+            &Config { types: "", style_words: "", theme_tokens: include_str!("../../../../../core/types/theme-tokens"), system_dark: false },
+            Box::new(|| {}),
+        )
+        .unwrap();
+        assert!(core.themes("theme A\n").is_err());
+        core.themes(include_str!("../../../../../core/types/themes")).unwrap();
+        core.listen().unwrap();
+        assert_eq!(core.themes("").unwrap_err().code, sys::UIT_EINUSE);
     }
 
     /// The whole path the counter takes, with no GPU: a 9P client writes

@@ -248,6 +248,27 @@ fn theme_mode_and_tokens(cx: &mut TestAppContext) {
     assert!(rgba.r > 0.99 && rgba.g < 0.01, "{rgba:?}");
 }
 
+/// GPUI Kit's theme set is registered: a name the core takes, its
+/// palette in GPUI Kit's ThemeColor, and the mode it brings.
+#[gpui::test]
+fn named_themes(cx: &mut TestAppContext) {
+    use gpui_component::ActiveTheme as _;
+    let mut h = window(cx);
+    let hex = |h: &mut crate::testing::Harness, t: &str| {
+        let c: gpui::Rgba = h.cx.update(|cx| crate::theme::token(cx, t)).unwrap().into();
+        let b = |x: f32| (x * 255.).round() as u8;
+        format!("#{:02x}{:02x}{:02x}", b(c.r), b(c.g), b(c.b))
+    };
+    h.write("theme/name", "Tokyo Night");
+    assert!(h.cx.update(|cx| cx.theme().mode.is_dark()));
+    assert_eq!(hex(&mut h, "background"), "#1a1b26");
+    h.write("theme/name", "Catppuccin");
+    assert!(!h.cx.update(|cx| cx.theme().mode.is_dark()));
+    assert_eq!(hex(&mut h, "foreground"), "#4c4f69");
+    h.write("theme/mode", "dark");
+    assert_eq!(hex(&mut h, "background"), "#232634");
+}
+
 #[gpui::test]
 fn tree_document_renders(cx: &mut TestAppContext) {
     let mut h = window(cx);

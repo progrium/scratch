@@ -1256,6 +1256,89 @@ test "theme tokens, pref, mode and name" {
     try tt.expectEqual(Code.not_found, try f.code("ctl", "theme load /nonexistent/theme.json"));
 }
 
+const test_themes =
+    \\# two families: one with both modes, one dark only
+    \\theme Sun Light
+    \\  mode light
+    \\  family Sun
+    \\  primary #ff8800
+    \\theme Sun Dark
+    \\  mode dark
+    \\  family Sun
+    \\  primary #884400
+    \\theme Night Owl
+    \\  mode dark
+    \\  family Owl
+    \\  background #011627
+    \\
+;
+
+test "named themes: names, families, palettes and the mode" {
+    var f: Fx = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.cat.loadThemes(test_themes, null);
+    try tt.expectEqualStrings("tokens name names pref mode", try listNames(&f, "theme"));
+    try f.expectRead("theme/names",
+        \\'Sun Light' mode=light family=Sun
+        \\'Sun Dark' mode=dark family=Sun
+        \\'Night Owl' mode=dark family=Owl
+        \\
+    );
+    try tt.expectEqual(Code.bad_value, try f.code("theme/names", "x"));
+    const s = try f.sub(.app);
+    defer s.close();
+    // A family follows the mode.
+    try f.ok("theme/name", "Sun");
+    try f.expectRead("theme/name", "Sun\n");
+    try tt.expect(std.mem.indexOf(u8, try f.read("theme/tokens"), "primary #ff8800\n") != null);
+    try f.ok("theme/pref", "dark");
+    try tt.expect(std.mem.indexOf(u8, try f.read("theme/tokens"), "primary #884400\n") != null);
+    try tt.expectEqualStrings("theme - - mode=dark via=ctl\n", try noSeq(f.a(), try f.drain(s)));
+    // A theme's own name: its palette and its mode, whatever the preference.
+    try f.ok("theme/pref", "light");
+    _ = try f.drain(s);
+    try f.ok("theme/name", "Night Owl");
+    try f.expectRead("theme/mode", "dark\n");
+    try f.expectRead("theme/pref", "light\n");
+    try tt.expectEqualStrings("theme - - mode=dark via=ctl\n", try noSeq(f.a(), try f.drain(s)));
+    const toks = try f.read("theme/tokens");
+    try tt.expect(std.mem.indexOf(u8, toks, "background #011627\n") != null);
+    // Tokens the palette doesn't set are the dark defaults.
+    const dflt = for (f.cat.theme_tokens) |t| {
+        if (std.mem.eql(u8, t.name, "foreground")) break t.dark;
+    } else unreachable;
+    try tt.expect(std.mem.indexOf(u8, toks, try std.fmt.allocPrint(f.a(), "foreground {s}\n", .{dflt})) != null);
+    // The client's own tokens win over the palette.
+    try f.ok("theme/tokens", "background #123456");
+    try tt.expect(std.mem.indexOf(u8, try f.read("theme/tokens"), "background #123456\n") != null);
+    // Unknown names are refused and change nothing; empty goes back to
+    // the defaults, and the preference's mode.
+    try tt.expectEqual(Code.not_found, try f.code("theme/name", "Night"));
+    try f.expectRead("theme/name", "Night Owl\n");
+    try f.ok("ctl", "theme name ''");
+    try f.expectRead("theme/name", "");
+    try f.expectRead("theme/mode", "light\n");
+    try f.ok("ctl", "theme name 'Sun Dark'");
+    try f.expectRead("theme/mode", "dark\n");
+    try tt.expectEqual(Code.not_found, try f.code("ctl", "theme name Moon"));
+}
+
+test "themes text is checked" {
+    var c = try types.Catalog.builtin(tt.allocator);
+    defer c.deinit();
+    for ([_][]const u8{
+        "mode dark\n", // before any theme
+        "theme A\n", // no mode
+        "theme A\n\tmode dusk\n",
+        "theme A\n\tmode dark\n\tprimary blue\n",
+        "theme A\n\tmode dark\n\tno-such-token #000000\n",
+        "theme A\n\tmode dark\ntheme A\n\tmode light\n",
+    }) |bad| try tt.expectError(error.BadSyntax, c.loadThemes(bad, null));
+    try c.loadThemes(types.embedded.themes, null);
+    try tt.expect(c.themes.len > 0);
+}
+
 // ---------------------------------------------------------------- odds and ends
 
 test "design state names coalesce even as actions" {

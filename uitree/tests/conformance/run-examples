@@ -28,6 +28,7 @@ hello|examples/rc|hello.rc
 counter|examples/rc|counter.rc
 confirm|examples/rc|confirm.rc Delete?
 signin|examples/rc|signin.rc
+settings|examples/rc|settings.rc
 csvview|examples/awk|awk -f csvview.awk planets.csv
 END
 }

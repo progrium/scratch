@@ -16,6 +16,13 @@ pub const max_text: usize = 16 << 20;
 pub const max_data: usize = 64 << 20;
 pub const max_bytes: usize = 16 << 20;
 
+/// A `theme/name` selection: the palette for each mode, either may be
+/// null (the mode then falls to the one the selection has).
+pub const ThemePick = struct {
+    light: ?*const style.Theme = null,
+    dark: ?*const style.Theme = null,
+};
+
 pub const Catalog = struct {
     arena: std.heap.ArenaAllocator,
     /// Types in name order. Pointers are stable until `deinit`.
@@ -24,6 +31,9 @@ pub const Catalog = struct {
     style_words: []const style.Entry = &.{},
     /// In file order.
     theme_tokens: []const style.Token = &.{},
+    /// The named themes the renderer registered (`uit_themes`), in its
+    /// order. `theme/name` takes their names and family names.
+    themes: []const style.Theme = &.{},
 
     /// An empty catalog.
     pub fn init(gpa: std.mem.Allocator) Catalog {
@@ -90,6 +100,44 @@ pub const Catalog = struct {
     pub fn loadThemeTokens(c: *Catalog, text: []const u8) Error!void {
         const a = c.arena.allocator();
         c.theme_tokens = try style.parseTokens(a, try a.dupe(u8, text));
+    }
+
+    /// Replaces the named themes with those in `text` (style.parseThemes).
+    /// `BadSyntax` if it doesn't parse, a name is given twice, or a theme
+    /// sets a token the catalog doesn't have.
+    pub fn loadThemes(c: *Catalog, text: []const u8, diag: ?*Diag) Error!void {
+        const a = c.arena.allocator();
+        const ts = style.parseThemes(a, try a.dupe(u8, text)) catch |e| {
+            if (e == error.BadSyntax) Diag.set(diag, "themes: bad syntax", .{});
+            return e;
+        };
+        for (ts, 0..) |t, i| {
+            for (ts[0..i]) |u| if (std.mem.eql(u8, u.name, t.name)) {
+                Diag.set(diag, "themes: {s}: named twice", .{t.name});
+                return error.BadSyntax;
+            };
+            if (c.theme_tokens.len > 0) for (t.tokens) |p| if (!c.isThemeToken(p.name)) {
+                Diag.set(diag, "themes: {s}: no token {s}", .{ t.name, p.name });
+                return error.BadSyntax;
+            };
+        }
+        c.themes = ts;
+    }
+
+    /// What `theme/name NAME` selects: a theme's own name picks that theme,
+    /// whatever the mode; a family name picks the family's first light
+    /// theme and its first dark one, and the mode chooses between them.
+    /// Null: no theme or family has that name.
+    pub fn pickTheme(c: *const Catalog, name: []const u8) ?ThemePick {
+        for (c.themes) |*t| if (std.mem.eql(u8, t.name, name))
+            return if (t.dark) .{ .dark = t } else .{ .light = t };
+        var p: ThemePick = .{};
+        for (c.themes) |*t| if (t.family.len > 0 and std.mem.eql(u8, t.family, name)) {
+            if (t.dark) {
+                if (p.dark == null) p.dark = t;
+            } else if (p.light == null) p.light = t;
+        };
+        return if (p.light == null and p.dark == null) null else p;
     }
 
     fn index(c: *const Catalog, name: []const u8) struct { i: usize, found: bool } {
