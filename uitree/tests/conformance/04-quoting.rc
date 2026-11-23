@@ -1,0 +1,65 @@
+#!/bin/rc
+# 04-quoting: README.md § Shared conventions (Tokens) and core.md § Words
+# and quoting, § Commands. One rule, Plan 9 tokenize; text files are never
+# parsed; here-values; a ctl write's lines apply together or not at all.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+
+echo '# single quotes group a word; '''' is a literal quote'
+w $r/ctl 'new text a text=''it''''s here'''
+val $r/a/text
+echo '# tokenize drops the quotes, so a quoted prop=value is still a prop'
+w $r/ctl 'new text b ''text=also grouped'''
+val $r/b/text
+echo '# a lone : starts the style; a : inside a word does not'
+w $r/ctl 'new div c tag=open:42 : h-flex gap=8 p=12 hover:bg=accent'
+val $r/c/tag $r/c/style
+echo '# style is a file, so style= sets it too, quoted'
+w $r/ctl 'new div c2 style=''v-flex gap=4'''
+val $r/c2/style
+echo '# = inside a value is kept'
+w $r/ctl 'new text d text=a=b'
+val $r/d/text
+echo '# blanks: spaces and tabs split words, runs count once'
+w $r/ctl 'new	text   e    text=x'
+val $r/e/text
+echo '# an unterminated quote'
+w $r/ctl 'new text f text=''oops'
+exists $r/f
+echo '# a bare word the type does not take'
+w $r/ctl new text f2 shiny
+exists $r/f2
+echo '# text files are raw bytes, never parsed'
+w $r/a/text 'quote '' and = and '''' and : stay'
+val $r/a/text
+echo '# a here-value takes the lines up to its word'
+w $r/ctl 'new text p text=<<END
+two
+lines
+END'
+val $r/p/text
+echo '# a here-value with no end line'
+w $r/ctl 'new text q text=<<END
+never ends'
+exists $r/q
+echo '# several lines in one write apply together'
+w $r/ctl 'new text g text=1
+new text h text=2
+new text i text=3'
+val $r/order
+echo '# one bad line and none apply'
+w $r/ctl 'new text j text=1
+new nosuchtype k
+new text l text=3'
+exists $r/j $r/k $r/l
+val $r/order
+echo '# a duplicate inside one write is in use, and nothing applies'
+w $r/ctl 'new text m
+new text m'
+exists $r/m
+echo '# a later line can use a node an earlier line made'
+w $r/ctl 'new div n
+new text n/t text=inner'
+val $r/n/t/text

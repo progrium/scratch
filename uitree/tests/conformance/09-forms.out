@@ -1,0 +1,97 @@
+# a form
+form prefs
+  field name  label=Name
+    input in  placeholder='Your name'
+  field lang  label=Language
+    select in  items=<<END
+rs	Rust
+go	Go
+c	C
+END
+  field ok
+    button save  primary  label=Save  tag=save
+# items read back as written
+rs	Rust
+go	Go
+c	C
+# items lines without a tab are words
+rs Rust
+go Go
+cpp 'C++' disabled
+# a select takes only ids in its items
+ok
+go
+|
+not found
+go
+|
+# user events: an input says only that it changed; coalesced; never after its submit
+resync - -
+change - prefs/name/in via=user win=main
+submit - prefs/name/in win=main
+change - prefs/lang/in value=rs via=user win=main
+click save prefs/ok/save win=main
+# the client reads the text from value
+Ada
+|
+rs
+|
+# checkbox values
+off
+|
+ok
+ok
+mixed
+|
+bad value
+mixed
+|
+# a client write is an echo with via=ctl
+ok
+resync - -
+change - cb value=off via=ctl win=main
+# secret is a flag word; the value stays readable to the client
+hunter2
+|
+input pass  secret
+# switch, slider, number-input, textarea
+ok
+ok
+on
+|
+ok
+ok
+40
+|
+bad value
+ok
+ok
+bad value
+ok
+two
+lines
+|
+# radio-group items
+ok
+m
+|
+# variant and size are bare words on a component that has them
+ok
+bad value
+bad value
+bad value
+yes
+no
+no
+no
+# a variant word replaces the one before it
+ok
+button b  ghost  sm  label=Go
+# the click verb; a disabled button refuses it
+ok
+resync - -
+click - b via=ctl win=main
+ok
+disabled
+unknown command
+exit=0

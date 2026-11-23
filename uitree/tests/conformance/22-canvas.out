@@ -1,0 +1,30 @@
+ok
+# ops: kind id geometry attrs, decimals allowed
+6
+# ctl: set, add, del, raise, lower by id
+ok
+ok
+ok
+ok
+ok
+circle dot2
+path spark
+circle dot
+text lbl
+image logo
+rect bg
+# an id that is not there, and one in use
+not found
+in use
+# a bad kind in ops is refused whole and the list stays
+resync - -
+error - chart/ops code=bad-value win=main
+6
+# scale is read-only
+bad value
+# pointer events name the item; move is coalesced
+ok
+resync - -
+mouse-down - chart button=left item=dot win=main x=141 y=150
+move - chart via=user win=main x=300 y=10
+exit=0

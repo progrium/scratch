@@ -1,0 +1,35 @@
+# unknown command
+unknown command: detail
+# bad syntax
+bad syntax
+# bad value
+bad value
+# unknown type
+unknown type: detail
+# unknown style word
+unknown style word: detail
+# type is fixed
+type is fixed
+# not found
+not found
+# in use
+in use
+# no batch
+no batch
+# the error events, one per failure, in order
+resync - -
+error - ctl code=unknown-command win=main
+error - ctl code=bad-syntax win=main
+error - card/style code=bad-value win=main
+error - ctl code=unknown-type win=main
+error - card/style code=unknown-style-word win=main
+error - card/type code=type-is-fixed win=main
+error - ctl code=not-found win=main
+error - ctl code=in-use win=main
+# gone: the node went away while its file was open
+gone
+# app-level files: errors without win= have paths from $ui
+unknown command
+resync - -
+error - ctl code=unknown-command
+exit=0

@@ -95,7 +95,11 @@ Every node has these files. Its type adds more ([components.md](components.md)).
 Text-valued properties (`text`, `value`, `label`, `placeholder`, `title`)
 are files of their own. A write is the whole value, raw bytes, with no
 quoting. A one-line value is read back followed by one newline, which is
-not part of the value.
+not part of the value, and a write drops one trailing newline, so `echo x
+>text` stores `x`. An empty value reads as nothing. Every file that holds
+one line follows the same rule: `type`, `order`, `tag`, `style`, `on`,
+and the window's `title`, `state`, `focus`, `bounds` and `inner`. Data
+files are lines and follow it too.
 
 ## Coordinates
 
@@ -150,8 +154,11 @@ no frame shows half of them. A `ctl` written in several 9P writes (as
 first error and changes nothing.
 
 **Here-values.** A line ending in `prop=<<WORD` takes the following
-lines, up to a line holding only `WORD`, as that prop's value. This is
-how multi-line values (`items`, `rows`, `text`) travel through a `ctl`.
+lines, up to a line holding only `WORD`, as that prop's value: the lines
+joined with newlines, with no trailing newline. In a document the value's
+lines and `WORD` are not indented, and a line with several here-values
+takes their bodies in order (`columns=<<END rows=<<END2`). This is how
+multi-line values (`items`, `rows`, `text`) travel through a `ctl`.
 
 ```rc
 m=$ui/win/main
@@ -303,6 +310,9 @@ h` in desktop space (writable with the shell layer: two words move, `- -
 w h` resizes); `inner`, the content size `w h`; `state` (read); `focus`
 (the focused node's path; write a path to move focus).
 
+A change of `state` sends `state - . win=main value=max via=V`, a state
+event, with `via=ctl` when the client caused it.
+
 The [shell layer](shell.md) adds platform window features (frameless,
 always on top, tray, native dialogs) in this same tree.
 
@@ -331,7 +341,7 @@ name  key  path  attr=value ...  seq=N
 
 ```text
 click save f/ok/save win=main seq=118
-change - prefs/lang/in win=main value=go seq=119
+change - prefs/lang/in win=main value=go via=user seq=119
 action save src win=main via=key seq=120
 close - . win=main via=titlebar seq=121
 ```
@@ -524,13 +534,21 @@ div root  : v-flex size-full p=24 gap=16
     field user  label=Email
       input in  placeholder=you@example.com
     field go
-      button submit  label='Sign in'  tag=login  : primary w-full
+      button submit  primary  label='Sign in'  tag=login  : w-full
 ```
 
 Each line is `TYPE NAME [word ...] [prop=value ...] [: style ...]`, two
 spaces of indent per level, with here-values for long text. Reading a
 `tree` gives back the same format, so `cat tree >screen.ui` saves a
 screen and writing it back restores it. A `.ui` file is this format.
+
+A host prints a node as `TYPE NAME`, then its bare words (booleans that
+are on, flags, variant and size words) in the order they were first set,
+then every other prop not at its default as `prop=value` in the order it
+was first set, data files included as here-values, then `: style`, with
+two spaces between groups. A window's root is named `root`. Printing the
+same tree twice gives the same text, so a saved screen compares with
+`cmp`.
 
 ## Clipboard
 
@@ -544,6 +562,21 @@ representations.
 `trace` streams every applied write and every error: a reader gets
 recent history first, then each new line as it happens. It is the main
 debugging tool. Values of `secret` inputs are logged as `value=<secret>`.
+A reader gets at least the last 1,000 lines of history.
+
+Each line has the event-line style, with paths from `$ui`:
+
+```text
+ctl path=win/main/ctl cmd='new text a text=hi'   one per command line of a ctl write
+write path=win/main/a/text value=Hello          a file write
+mkdir path=win/main/b
+remove path=win/main/b
+batch timeout
+error path=win/main/a/style err='unknown style word: flexx'
+```
+
+A value with a newline, or over 64 bytes, is written `len=N` instead. A
+secret value is `value=<secret>`, in a `write` and inside `cmd=`.
 
 ## Errors
 
@@ -633,3 +666,14 @@ window positions in desktop space). Readers ignore kinds they don't know.
 4. **`@name` and `@asset`.** The same sigil names a node and an asset.
 5. **Portable style words.** Is the list above enough to lay out the 24
    uitreefs examples on a libdraw host?
+6. **Echoes from verbs.** Which client verbs send their event with
+   `via=ctl` (a window's `close` does; a button's `click`?), and which
+   send none (an overlay's `open` and `close`)? The conformance suite
+   assumes the first two do and the last doesn't.
+7. **Phrases the table doesn't name.** An unknown prop (`not found`?), a
+   child the parent can't hold (`unknown type`, though the type exists),
+   `begin` inside a batch (`in use`?), an answer to no request (`not
+   found`?), a readonly prop (`bad value: read-only`?). The suite's
+   assumptions are in tests/conformance/GAPS.md item 26.
+8. **`on=` with several events.** The `on` file is blank-separated; is
+   `on=click,hover` (the list form) how to set two at creation?

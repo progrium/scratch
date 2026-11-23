@@ -1,0 +1,98 @@
+#!/bin/sh
+# run: the uitree conformance suite for spec draft 0.2 (interface I5).
+#
+#	tests/conformance/run [-u] [-t secs] [NAME...]
+#
+# Runs each NN-name.rc as `$UITREE_HEADLESS rc ./NN-name.rc` in this
+# directory, appends an `exit=N` line to its standard output, removes seq=
+# attributes (their numbering isn't fixed), and compares the result with
+# NN-name.out. If NN-name.err exists, the `uitree: ` lines the host wrote
+# to standard error (core.md § Errors: errors are loud), cut after the
+# error phrase, are compared with it too. A run whose first line starts
+# with `skip` is a skip: the host doesn't claim the layer or profile the
+# script needs.
+#
+#	-u   rewrite the goldens from this run instead of comparing; review the diff
+#	-t   per-test timeout in seconds (default 60)
+#
+# UITREE_HEADLESS defaults to ../../core/zig-out/bin/uitree-headless, from
+# this directory. Exit status 0 when every test that ran passed. Actual
+# outputs and diffs are kept in ./out/, which git ignores.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$here"
+
+update=0
+secs=60
+while getopts ut: o; do
+	case $o in
+	u) update=1 ;;
+	t) secs=$OPTARG ;;
+	*) sed -n '4p' "$0" >&2; exit 2 ;;
+	esac
+done
+shift $((OPTIND - 1))
+
+host=${UITREE_HEADLESS:-../../core/zig-out/bin/uitree-headless}
+if [ ! -x "$host" ] && ! command -v "$host" >/dev/null 2>&1; then
+	echo "run: no uitree-headless at $host (zig build in core/, or set UITREE_HEADLESS)" >&2
+	exit 2
+fi
+
+if [ $# -eq 0 ]; then
+	set -- $(ls [0-9][0-9]-*.rc | sed 's/\.rc$//')
+else
+	set -- $(for t; do basename "$t" .rc; done)
+fi
+
+mkdir -p out
+strip() { sed 's/ seq=[0-9][0-9]*//g' "$1"; }
+# The loud error lines, cut after the phrase, since core.md lets the detail grow.
+loud() {
+	grep '^uitree: ' "$1" |
+		sed -E 's/^(uitree: [a-z]+ [^:]*: (unknown command|bad syntax|bad value|unknown type|unknown style word|type is fixed|not found|in use|disabled|permission denied|unsupported|too large|no batch|app gone|gone)).*/\1/' || true
+}
+timeout_cmd=$(command -v timeout || command -v gtimeout || true)
+
+pass=0 fail=0 skip=0
+for t; do
+	if [ ! -f "$t.rc" ]; then
+		echo "FAIL $t (no $t.rc)"
+		fail=$((fail + 1))
+		continue
+	fi
+	if [ -n "$timeout_cmd" ]; then
+		"$timeout_cmd" "$secs" "$host" rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
+	else
+		"$host" rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
+	fi
+	echo "exit=$?" >>"out/$t.out"
+
+	if sed 1q "out/$t.out" | grep -q '^skip'; then
+		echo "skip $t ($(sed 1q "out/$t.out"))"
+		skip=$((skip + 1))
+		continue
+	fi
+
+	if [ $update -eq 1 ]; then
+		strip "out/$t.out" >"$t.out"
+		[ -f "$t.err" ] && loud "out/$t.stderr" >"$t.err"
+		echo "updated $t"
+		continue
+	fi
+
+	ok=1
+	if ! strip "out/$t.out" | diff -u "$t.out" - >"out/$t.diff"; then ok=0; fi
+	if [ -f "$t.err" ] && ! loud "out/$t.stderr" | diff -u "$t.err" - >>"out/$t.diff"; then ok=0; fi
+	if [ $ok -eq 1 ]; then
+		echo "pass $t"
+		pass=$((pass + 1))
+	else
+		echo "FAIL $t"
+		sed 's/^/	/' "out/$t.diff"
+		fail=$((fail + 1))
+	fi
+done
+
+echo "$pass passed, $fail failed, $skip skipped"
+[ $fail -eq 0 ]

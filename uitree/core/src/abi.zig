@@ -15,6 +15,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const spike = @import("spike/root.zig");
 const machine = @import("machine/root.zig");
+const ninep = @import("ninep/root.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -239,7 +240,9 @@ pub const Core = struct {
     gone: std.atomic.Value(bool) = .init(false),
     err_buf: [512]u8 = undefined,
     err_len: usize = 0,
-    server: ?*spike.ninep.Server = null,
+    /// The 9P server, listeners and mounts (W4), made on first use.
+    host: ?*ninep.host.Host = null,
+    spike_fs: spike.fs.SpikeFs = undefined,
     runner: ?*machine.Runner = null,
     exit_status: ?[]u8 = null,
     /// Borrowed results of tree reads, freed at the next pump.
@@ -286,6 +289,15 @@ pub const Core = struct {
             }
             c.cond.waitUncancelable(c.io(), &c.mu);
         }
+    }
+
+    /// The core's 9P host, serving the tree. A host (uitree-headless)
+    /// mounts its own directories on it before anything connects.
+    pub fn getHost(c: *Core) !*ninep.host.Host {
+        if (c.host) |h| return h;
+        c.spike_fs = .{ .core = c };
+        c.host = try ninep.host.Host.create(c.gpa, c.io(), c.spike_fs.fs());
+        return c.host.?;
     }
 
     fn setErr(c: *Core, comptime fmt: []const u8, args: anytype) c_int {
@@ -356,19 +368,20 @@ export fn uit_create(cfg: ?*const UitConfig, out: ?*?*Core) c_int {
 
 export fn uit_serve_fd(c: *Core, fd: c_int) c_int {
     if (comptime builtin.os.tag == .windows) return UIT_ENOTSUP;
-    spike.ninep.serveFd(c, fd) catch return UIT_EIO;
+    const h = c.getHost() catch return UIT_ENOMEM;
+    h.serveFd(fd) catch return UIT_EIO;
     return UIT_OK;
 }
 
 export fn uit_listen(c: *Core, addr: UitStr, dial: ?*UitStr) c_int {
     if (comptime builtin.os.tag == .windows) return UIT_ENOTSUP;
     if (!c.checkOwner()) return UIT_ETHREAD;
-    if (addr.len != 0) {
-        c.err_len = setText(&c.err_buf, "spike: only a private unix socket");
-        return UIT_ENOTSUP;
-    }
-    if (c.server == null) c.server = spike.ninep.Server.start(c) catch return UIT_EIO;
-    if (dial) |d| d.* = UitStr.of(c.server.?.dial);
+    const h = c.getHost() catch return UIT_ENOMEM;
+    const ds = (if (addr.len == 0) h.privateDial() else h.listen(addr.slice())) catch |e| {
+        c.err_len = if (std.fmt.bufPrint(&c.err_buf, "listen: {t}", .{e})) |m| m.len else |_| 0;
+        return UIT_EIO;
+    };
+    if (dial) |d| d.* = UitStr.of(ds);
     return UIT_OK;
 }
 
@@ -380,8 +393,9 @@ export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
         return UIT_ENOTSUP;
     }
     if (c.runner != null) return UIT_EINUSE;
-    if (c.server == null) c.server = spike.ninep.Server.start(c) catch return UIT_EIO;
-    c.runner = machine.Runner.start(c.gpa, a, c.server.?.path, @ptrCast(c), onExit) catch |e| {
+    const h = c.getHost() catch return UIT_ENOMEM;
+    const sock = h.privatePath() catch return UIT_EIO;
+    c.runner = machine.Runner.start(c.gpa, a, sock, @ptrCast(c), onExit) catch |e| {
         c.err_len = if (std.fmt.bufPrint(&c.err_buf, "machine: {t}", .{e})) |s| s.len else |_| 0;
         return UIT_EIO;
     };
@@ -408,7 +422,9 @@ export fn uit_shutdown(c: *Core) void {
 export fn uit_destroy(c: *Core) void {
     uit_shutdown(c);
     if (c.runner) |r| r.join();
-    if (c.server) |s| s.stop();
+    // Hangs up every connection and waits for them: nothing holds a
+    // subscription after this.
+    if (c.host) |h| h.destroy();
     c.lock();
     for (c.queue.items) |op| {
         if (op.ack) |a| a.done = true;
@@ -416,9 +432,7 @@ export fn uit_destroy(c: *Core) void {
     }
     c.queue.deinit(c.gpa);
     c.unlock();
-    // Connections still open hold subscriptions; the spike leaks the tree
-    // rather than free it under them when any are left.
-    if (spike.ninep.live.load(.acquire) == 0) c.tree.deinit();
+    c.tree.deinit();
     if (c.exit_status) |s| c.gpa.free(s);
     c.reads.deinit();
     c.threaded.deinit();

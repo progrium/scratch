@@ -1,0 +1,216 @@
+# lib.rc: helpers for the conformance scripts.  Use: . ./lib.rc
+#
+# Every script runs as   uitree-headless rc ./NN-name.rc   in this
+# directory, so it sees the tree at $ui and /debug/inject is there
+# (README.md). Scripts use only h9's built-in root (no printf, head, dd,
+# hoc, seq or kill), read events in blocks, quote every = in rc arguments,
+# and keep here documents at the top level.
+#
+# A script prints what it checks on standard output; the runner compares
+# that with NN-name.out. Anything printed by a step that should succeed is
+# a failure, so the helpers print "ok" or the error phrase and nothing else.
+
+k=$ui
+if(~ $#k 0) k=/mnt/ui
+inject=$k/debug/inject
+
+# The error phrases of core.md § Errors, except the two that end in
+# "gone", which phrase checks first.
+phrases='unknown command|bad syntax|bad value|unknown type|unknown style word|type is fixed|not found|in use|disabled|permission denied|unsupported|too large|no batch'
+
+# phrase: read error text on stdin and print only its core.md phrase, so a
+# golden doesn't depend on the detail after the colon (which may grow) or
+# on the prefix echo or cat put in front of it. The leftmost phrase wins.
+# The 9front kernel reports a walk that fails as "file does not exist",
+# whatever the server said (GAPS.md), so that reads as not found.
+fn phrase {
+	sed 's/file does not exist/not found/' >/tmp/ph
+	if(grep -s 'app gone' /tmp/ph) echo 'app gone'
+	if not {
+		sed -n 's/('^$phrases^').*/\1/; s/.*('^$phrases^')$/\1/p' /tmp/ph | sed 1q >/tmp/ph2
+		if(test -s /tmp/ph2) cat /tmp/ph2
+		if not if(grep -s gone /tmp/ph) echo gone
+	}
+}
+
+# _write words...: write the words to $_f as one write (echo joins them with
+# blanks) in a subshell, leaving the error text in /tmp/w.err. A failed
+# write leaves echo's message on its stderr; a failed open leaves rc's
+# message on rc's own stderr, which a redirection doesn't catch, but it is
+# also the subshell's exit status, so that goes in too.
+fn _write {
+	@{echo $* >$_f} >[2]/tmp/w.err
+	_st=$status
+	if(~ $_st '') status=''
+	if not {
+		echo $_st >>/tmp/w.err
+		status=$_st
+	}
+}
+
+# w file words...: write, then print "ok" or the error phrase.
+fn w {
+	_f=$1
+	shift
+	if(_write $*) echo ok
+	if not phrase </tmp/w.err
+}
+
+# wq file words...: write and print nothing on success, the phrase on
+# failure. For setup steps that should just work.
+fn wq {
+	_f=$1
+	shift
+	if(! _write $*) phrase </tmp/w.err
+}
+
+# wd file words...: as w, but print the error as "phrase: detail" when the
+# host gave detail, and just the phrase when it didn't. The detail itself is
+# replaced by the word "detail", since core.md lets it grow.
+fn wd {
+	_f=$1
+	shift
+	if(_write $*) echo ok
+	if not {
+		_p=`{phrase </tmp/w.err}
+		if(grep -s $"_p^': .' /tmp/w.err) echo $"_p^': detail'
+		if not echo $_p
+	}
+}
+
+# wn file word words...: as w, then also print "names WORD" if the error's
+# detail names WORD, for the errors core.md says name what was wrong.
+fn wn {
+	_f=$1
+	_n=$2
+	shift 2
+	if(_write $*) echo ok
+	if not {
+		phrase </tmp/w.err
+		if(grep -s ': .*'^$_n /tmp/w.err) echo names $_n
+	}
+}
+
+# val file...: print a file's bytes followed by | so a golden shows whether
+# a trailing newline is there. A one-line value reads back as the value and
+# one newline (core.md § Node files); an empty one reads as nothing.
+fn val {
+	for(_f) {
+		cat $_f
+		echo '|'
+	}
+}
+
+# rd path: read a file or list a directory, print "ok" if it's there or the
+# error phrase if not. cat reports its own open errors, so this works where
+# an rc redirection's error text couldn't be caught.
+fn rd {
+	if(cat $1 >[2]/tmp/w.err >/dev/null) echo ok
+	if not phrase </tmp/w.err
+}
+
+# exists path...: print "yes" or "no" for each path.
+fn exists {
+	for(_f) {
+		if(test -e $_f) echo yes
+		if not echo no
+	}
+}
+
+# names dir: the directory's entries, one per line, sorted (ls sorts).
+fn names {
+	ls -p $1
+}
+
+# inj line...: write one /debug/inject line (README.md).
+fn inj {
+	wq $inject $*
+}
+
+# Event subscriptions. A script opens an events file on fd 3 around a
+# block, so the subscription exists before the events it wants:
+#
+#	{
+#		...writes and injects...
+#		evs 'win=main'
+#	} <[3]$k/win/main/events
+#
+# evs injects a "sync" event (with the attributes given, so it reaches the
+# file being read), then prints every line before it in normal form (evnorm).
+# awk reads in blocks; since sync is the last event queued, nothing after it
+# is consumed. evraw is the same with lines as the host sent them, for
+# answering requests by seq= (seqof reads it back from /tmp/ev).
+fn evraw {
+	inj event sync $*
+	awk '/^sync( |$)/ { exit } { print }' <[0=3]
+}
+fn evs {
+	evraw $* | evnorm
+}
+
+# evnorm: put event lines in a form a golden can pin. core.md lets the
+# attributes after the three-word head come in any order, and seq= numbers
+# aren't fixed, so this drops seq= and sorts the other attributes, keeping
+# quoted values whole. gen= on clip events is a counter too: it becomes N.
+fn evnorm {
+	awk '
+	function tok(s,   n, i, c, t, q, have) {
+		n = 0; t = ""; q = 0; have = 0
+		for(i = 1; i <= length(s); i++) {
+			c = substr(s, i, 1)
+			if(q) {
+				t = t c
+				if(c == "\047") {
+					if(substr(s, i+1, 1) == "\047") { t = t "\047"; i++ }
+					else q = 0
+				}
+			} else if(c == " " || c == "\t") {
+				if(have) { w[++n] = t; t = ""; have = 0 }
+			} else {
+				if(c == "\047") q = 1
+				t = t c; have = 1
+			}
+		}
+		if(have) w[++n] = t
+		return n
+	}
+	{
+		n = tok($0)
+		m = 0
+		for(i = 1; i <= n; i++) {
+			if(i > 3 && w[i] ~ /^seq=/) continue
+			if(i > 3 && w[i] ~ /^gen=[0-9]+$/) w[i] = "gen=N"
+			v[++m] = w[i]
+		}
+		for(i = 5; i <= m; i++)
+			for(j = i; j > 4 && v[j-1] > v[j]; j--) { x = v[j]; v[j] = v[j-1]; v[j-1] = x }
+		out = v[1]
+		for(i = 2; i <= m; i++) out = out " " v[i]
+		print out
+	}'
+}
+
+# seqof name: the seq= of the first line of /tmp/ev that starts with name.
+fn seqof {
+	sed -n 's/^'^$1^' .* seq=([0-9]+).*/\1/p' /tmp/ev | sed 1q
+}
+
+# need layer|profile NAME: stop the script with "skip: ..." if the host
+# doesn't claim that layer or profile in version. The runner counts a run
+# whose first line starts with "skip" as skipped.
+fn need {
+	if(! grep -s '^'^$1^' '^$2^'( |$)' $k/version) {
+		echo skip: no $1 $2
+		exit
+	}
+}
+
+# A window most scripts start with.
+fn mainwin {
+	wq $k/ctl window main 'title=Conformance' 'size=640,480'
+}
+
+# count: the number of lines on stdin, with no padding (Plan 9 wc pads).
+fn count {
+	awk 'END { print NR }'
+}

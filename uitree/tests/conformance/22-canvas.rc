@@ -1,0 +1,47 @@
+#!/bin/rc
+# 22-canvas: components.md § Profiles (canvas) and § Data file formats
+# (ops). The ops display list, changes by item id on the ctl, the scale
+# prop, and pointer events that name the item under the pointer.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile canvas
+mainwin
+wn=$k/win/main
+r=$wn
+w $r/ctl new canvas chart : 'w=400' 'h=300'
+c=$r/chart
+
+echo '# ops: kind id geometry attrs, decimals allowed'
+echo 'rect   bg      0 0 400 300   fill=background
+rect   card    20 20 160 90  fill=muted radius=8 border=border
+path   spark   M20,200 L60,180 L100,190 L140,150  stroke=primary width=1.5
+circle dot     140.5 150 4   fill=primary
+text   lbl     28 44         ''Revenue''  size=13 color=muted-foreground
+image  logo    360 12 24 24  src=@logo' >$c/ops
+cat $c/ops | count
+echo '# ctl: set, add, del, raise, lower by id'
+w $c/ctl set dot 150 140
+w $c/ctl 'add circle dot2 10 10 3 fill=accent'
+w $c/ctl del card
+w $c/ctl raise bg
+w $c/ctl lower dot2
+awk '{ print $1, $2 }' $c/ops
+echo '# an id that is not there, and one in use'
+w $c/ctl set nope 1 1
+w $c/ctl 'add rect dot 0 0 1 1'
+echo '# a bad kind in ops is refused whole and the list stays'
+{
+	echo 'blob x 1 2' >$c/ops
+	evs 'win=main'
+} <[3]$wn/events
+cat $c/ops | count
+echo '# scale is read-only'
+w $r/ctl set chart 'scale=3'
+echo '# pointer events name the item; move is coalesced'
+w $c/on mouse-down move click
+{
+	inj event mouse-down 'win=main' 'node=chart' 'item=dot' 'x=141' 'y=150' 'button=left'
+	inj event move 'win=main' 'node=chart' 'item=dot' 'x=142' 'y=150'
+	inj event move 'win=main' 'node=chart' 'x=300' 'y=10'
+	evs 'win=main'
+} <[3]$wn/events

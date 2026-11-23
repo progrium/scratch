@@ -1,0 +1,78 @@
+#!/bin/rc
+# 16-transfer: transfer.md. A drop target's drop file, the drop request
+# and $ui/drag/N, accept and refuse, starting a drag, and a typed copy to
+# clipdata/. The headless host makes a drag's offer with /debug/inject
+# drag (README.md).
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need layer transfer
+mainwin
+wn=$k/win/main
+r=$wn
+wq $r/ctl new div notes 'tag=pick'
+
+echo '# the drop file lists the types a node takes'
+w $r/notes/drop file text
+val $r/notes/drop
+echo '# a drop is a request; the offer is in drag/N'
+{
+	inj drag 'n=7' 'type=text' 'data=''hello world'''
+	inj drag 'n=7' 'type=uri' 'data=https://example.com/'
+	inj event drop 'win=main' 'node=notes' 'drag=7' 'types=text,uri' 'pt=40,212'
+	evraw 'win=main' >/tmp/ev
+	evnorm </tmp/ev
+	cat $k/drag/7/types
+	cat $k/drag/7/data/text
+	echo
+	s=`{seqof drop}
+	w $r/notes/ctl accept 'seq='^$s 'op=copy'
+	echo '# drag/7 goes once the request is answered and the reads are done'
+	exists $k/drag/7
+} <[3]$wn/events
+echo '# refuse'
+{
+	inj drag 'n=8' 'type=text' 'data=x'
+	inj event drop 'win=main' 'node=notes' 'drag=8' 'types=text' 'pt=1,1'
+	evraw 'win=main' >/tmp/ev
+	s=`{seqof drop}
+	w $r/notes/ctl refuse 'seq='^$s
+	exists $k/drag/8
+} <[3]$wn/events
+echo '# a drop with no answer is refused after the timeout'
+{
+	inj drag 'n=9' 'type=text' 'data=x'
+	inj event drop 'win=main' 'node=notes' 'drag=9' 'types=text' 'pt=1,1'
+	evraw 'win=main' >/tmp/ev
+	inj tick 5
+	exists $k/drag/9
+} <[3]$wn/events
+
+echo '# starting a drag: dragstart, the client writes the offer, dragend'
+wq $r/ctl new div card
+w $r/card/on drag
+w $r/card/drag-types text
+val $r/card/drag-types
+{
+	inj event dragstart 'win=main' 'node=card' 'drag=10'
+	evs 'win=main'
+	echo note-42 >$k/drag/10/data/text
+	cat $k/drag/10/data/text
+	inj event dragend 'win=main' 'node=card' 'drag=10' 'result=dropped' 'op=move'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# copy lines in one write make one clipboard of several types'
+{
+	w $k/ctl 'copy text=<<END
+Quarterly report
+END
+copy x.conformance.card=<<END
+card id=42
+END'
+	evs
+} <[3]$k/events
+awk '$1 != "gen" { print $1 }' $k/clipdata/types | sort
+val $k/clip $k/clipdata/x.conformance.card
+echo '# writing one clipdata file makes the clipboard just that type'
+echo 'plain' >$k/clipdata/text
+awk '$1 != "gen" { print $1 }' $k/clipdata/types

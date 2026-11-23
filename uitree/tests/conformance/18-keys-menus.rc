@@ -1,0 +1,79 @@
+#!/bin/rc
+# 18-keys-menus: core.md § Keys, actions and menus. The keys file, key
+# contexts, actions from keys and menus, the menu/ item grammar, roles,
+# and set ID enabled= check= on the app ctl.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wn=$k/win/main
+wq $wn/ctl 'new div src context=editor on=focus
+new div other on=focus'
+
+echo '# core.md''s keys'
+echo 'cmd-s            save
+cmd-shift-p      palette
+escape           dismiss   context=editor' >$k/keys
+cat $k/keys
+echo '# a bad keystroke: refused whole, reported, and the old keys stay'
+{
+	echo 'cmd-s save
+cmd-wibble-q quit' >$k/keys
+	evs
+} <[3]$k/events
+cat $k/keys | count
+echo '# a node''s context file'
+val $wn/src/context
+w $wn/other/context viewer
+val $wn/other/context
+
+echo '# a key binding comes as action ID PATH via=key, PATH the focused node'
+wq $wn/focus src
+{
+	inj key 'win=main' 'stroke=cmd-s'
+	inj key 'win=main' 'stroke=escape'
+	evs
+} <[3]$k/events
+echo '# a context binding applies only while focus is inside that context'
+wq $wn/focus other
+{
+	inj key 'win=main' 'stroke=escape'
+	inj key 'win=main' 'stroke=cmd-shift-p'
+	evs
+} <[3]$k/events
+
+echo '# menu/bar and a menu file in core.md''s grammar'
+exists $k/menu/bar
+echo 'item new    label=New      key=cmd-n
+item open   label=Open…    key=cmd-o
+sep
+sub recent  label=''Open Recent''
+  item a    label=a.txt
+sub share   label=Share    menu=share
+item quit   label=Quit     key=cmd-q   enabled=off' >$k/menu/file
+cat $k/menu/file
+echo 'item mail label=Mail' >$k/menu/share
+echo 'file' >$k/menu/bar
+val $k/menu/bar
+echo '# choosing an item sends action ID - via=menu'
+{
+	inj menu 'item=new'
+	inj menu 'item=a'
+	evs
+} <[3]$k/events
+echo '# an unknown role is refused; an item with an ID and a role is fine'
+{
+	echo 'item - role=undo
+item quit role=quit
+item - role=sideways' >$k/menu/edit
+	evs
+} <[3]$k/events
+echo 'item - role=undo
+item quit role=quit' >$k/menu/edit
+cat $k/menu/edit
+
+echo '# set ID enabled= check= on the app ctl'
+w $k/ctl set save 'enabled=off'
+w $k/ctl set save 'check=on' 'enabled=on'
+w $k/ctl set new 'check=mixed'
+w $k/ctl set save 'enabled=maybe'
+w $k/ctl set nosuch 'enabled=off'

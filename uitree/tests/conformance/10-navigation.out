@@ -1,0 +1,46 @@
+# a settings sidebar
+ok
+ok
+ok
+ok
+div root  : h-flex size-full
+  sidebar nav
+    sidebar-group g  label=Settings
+      sidebar-item general  active  label=General  icon=settings  tag=page:general
+      sidebar-item account  label=Account  icon=user  tag=page:account
+      sidebar-item keys  label=Shortcuts  icon=keyboard  tag=page:keys
+  div page  : flex-1 p=24
+# a sidebar takes sidebar-group children and its header and footer slots
+unknown type
+ok
+# sidebar items click with their tag
+resync - -
+click page:account nav/g/account win=settings
+# tabs: value is the selected tab's name
+ok
+ok
+ok
+ok
+b
+|
+not found
+b
+|
+# tabs take only tab children
+unknown type
+# a user switch is a change
+resync - -
+change - page/t value=a via=user win=settings
+a
+|
+# breadcrumb items
+ok
+home	Home
+docs	Docs
+# a toolbar's slots
+ok
+bad value
+# a link
+ok
+link help  label=Help  href=https://example.com/help
+exit=0

@@ -1,0 +1,97 @@
+#!/bin/rc
+# 15-requests: core.md § Requests. Opt-in with ask; a request waits for an
+# answer by seq= on the node's or app's ctl; the default after 5 seconds or
+# at once when no events file is open; a late or unknown answer is not
+# found. Time is the headless fake clock, moved with tick.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wq $k/ctl window two
+wq $k/ctl window three
+wn=$k/win/main
+
+echo '# requests are opt-in: without ask, close closes at once, even with a reader'
+wq $k/ctl window zero
+{
+	w $k/win/zero/ctl close
+	exists $k/win/zero
+	evs
+} <[3]$k/events
+echo '# ask takes close, quit and open, or none'
+w $k/ctl ask close quit
+w $k/ctl ask close sideways
+
+echo '# close on a window ctl asks; keep seq= says no'
+{
+	w $wn/ctl close
+	evraw 'win=main' >/tmp/ev
+	evnorm </tmp/ev
+	s=`{seqof close}
+	w $wn/ctl keep 'seq='^$s
+	exists $wn
+	echo '# answering twice'
+	w $wn/ctl keep 'seq='^$s
+} <[3]$k/events
+
+echo '# the user''s close button, answered close seq='
+{
+	inj event close 'win=two' 'via=titlebar'
+	evraw 'win=two' >/tmp/ev
+	evnorm </tmp/ev
+	s=`{seqof close}
+	w $k/win/two/ctl close 'seq='^$s
+	exists $k/win/two
+} <[3]$k/events
+
+echo '# no answer in 5 seconds: the default, close'
+{
+	inj event close 'win=three' 'via=titlebar'
+	evraw 'win=three' >/tmp/ev
+	s=`{seqof close}
+	inj tick 4
+	exists $k/win/three
+	inj tick 1
+	exists $k/win/three
+	echo '# a late answer'
+	w $wn/ctl close 'seq='^$s
+} <[3]$k/events
+
+echo '# an answer to a seq that was never a request'
+w $wn/ctl keep 'seq=999999'
+
+echo '# no events file open: the default applies at once'
+wq $k/ctl window four
+w $k/win/four/ctl close
+exists $k/win/four
+
+echo '# ask none on one window opts it out'
+wq $k/ctl window five
+w $k/win/five/ctl ask none
+{
+	w $k/win/five/ctl close
+	exists $k/win/five
+	evs
+} <[3]$k/events
+
+echo '# quit is a request too; its default is to quit, so answer keep on the app ctl'
+{
+	inj event quit 'via=menu'
+	evraw >/tmp/ev
+	evnorm </tmp/ev
+	s=`{seqof quit}
+	w $k/ctl keep 'seq='^$s
+	names $k/win
+} <[3]$k/events
+
+echo '# a window opts in on its own ctl'
+w $k/ctl ask none
+wq $k/ctl window six
+w $k/win/six/ctl ask close
+{
+	inj event close 'win=six' 'via=titlebar'
+	evraw 'win=six' >/tmp/ev
+	evnorm </tmp/ev
+	s=`{seqof close}
+	w $k/win/six/ctl keep 'seq='^$s
+	exists $k/win/six
+} <[3]$k/events

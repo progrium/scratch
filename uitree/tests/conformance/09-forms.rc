@@ -1,0 +1,112 @@
+#!/bin/rc
+# 09-forms: components.md § Profiles (form) and § The descriptor. A form
+# built from core.md's document, items files, values and their events,
+# echoes, variant and size words, the click verb and the disabled phrase.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile form
+mainwin
+wn=$k/win/main
+w=$wn
+
+echo '# a form'
+wq $w/ctl new form prefs
+wq $w/prefs/ctl 'new field name label=Name
+new field lang label=Language
+new field ok'
+wq $w/prefs/name/ctl 'new input in placeholder=''Your name'''
+wq $w/prefs/lang/ctl 'new select in'
+echo 'rs|Rust
+go|Go
+c|C' | tr '|' '	' >$w/prefs/lang/in/items
+wq $w/prefs/ok/ctl 'new button save label=Save primary tag=save'
+cat $w/prefs/tree
+echo '# items read back as written'
+cat $w/prefs/lang/in/items
+echo '# items lines without a tab are words'
+echo 'rs Rust
+go Go
+cpp ''C++'' disabled' >$w/prefs/lang/in/items
+cat $w/prefs/lang/in/items
+
+echo '# a select takes only ids in its items'
+w $w/prefs/lang/in/value go
+val $w/prefs/lang/in/value
+w $w/prefs/lang/in/value fortran
+val $w/prefs/lang/in/value
+
+echo '# user events: an input says only that it changed; coalesced; never after its submit'
+{
+	inj mirror 'win=main' 'node=prefs/name/in' 'file=value' 'value=''Ada Lovelace'''
+	inj event change 'win=main' 'node=prefs/name/in'
+	inj mirror 'win=main' 'node=prefs/name/in' 'file=value' 'value=Ada'
+	inj event change 'win=main' 'node=prefs/name/in'
+	inj event submit 'win=main' 'node=prefs/name/in'
+	inj mirror 'win=main' 'node=prefs/lang/in' 'file=value' 'value=rs'
+	inj event change 'win=main' 'node=prefs/lang/in' 'value=rs'
+	inj event click 'win=main' 'node=prefs/ok/save'
+	evs 'win=main'
+} <[3]$wn/events
+echo '# the client reads the text from value'
+val $w/prefs/name/in/value
+val $w/prefs/lang/in/value
+
+echo '# checkbox values'
+wq $w/ctl new checkbox cb 'label=''Remember me'''
+val $w/cb/value
+w $w/cb/value on
+w $w/cb/value mixed
+val $w/cb/value
+w $w/cb/value yes
+val $w/cb/value
+echo '# a client write is an echo with via=ctl'
+{
+	w $w/cb/value off
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# secret is a flag word; the value stays readable to the client'
+wq $w/ctl new input pass secret
+echo hunter2 >$w/pass/value
+val $w/pass/value
+cat $w/pass/tree
+echo '# switch, slider, number-input, textarea'
+w $w/ctl new switch sw 'label=Wi-Fi'
+w $w/sw/value on
+val $w/sw/value
+w $w/ctl new slider vol 'min=0' 'max=100' 'step=5'
+w $w/vol/value 40
+val $w/vol/value
+w $w/vol/value loud
+w $w/ctl new number-input n 'min=1' 'max=9'
+w $w/n/value 3
+w $w/n/value three
+w $w/ctl new textarea notes
+echo 'two
+lines' >$w/notes/value
+val $w/notes/value
+echo '# radio-group items'
+wq $w/ctl new radio-group size
+echo 's|Small
+m|Medium' | tr '|' '	' >$w/size/items
+w $w/size/value m
+val $w/size/value
+
+echo '# variant and size are bare words on a component that has them'
+w $w/ctl new button b 'label=Go' primary sm
+w $w/ctl new button b2 'label=Go' sideways
+w $w/ctl new checkbox cb2 danger
+w $w/ctl new div d2 primary
+exists $w/b $w/b2 $w/cb2 $w/d2
+echo '# a variant word replaces the one before it'
+w $w/ctl set b ghost
+cat $w/b/tree
+
+echo '# the click verb; a disabled button refuses it'
+{
+	w $w/b/ctl click
+	evs 'win=main'
+} <[3]$wn/events
+w $w/ctl set b 'disabled=on'
+w $w/b/ctl click
+w $w/b/ctl explode

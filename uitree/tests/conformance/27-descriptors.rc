@@ -1,0 +1,85 @@
+#!/bin/rc
+# 27-descriptors: components.md § The catalog in the tree, § The
+# descriptor and § Profiles. Reads every $ui/types/NAME/spec and checks the
+# host accepts what it lists and refuses what it doesn't (descriptors.awk
+# writes the checks), that each profile in version has all its types, and
+# that a type not listed is refused. Prints only what fails, so the golden
+# is the same on every host.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+r=$k/win/main
+wq $r/ctl new div dc
+nfail=0
+
+fn fail {
+	echo FAIL $*
+	nfail=`{echo $nfail | awk '{ print $1 + 1 }'}
+}
+
+# expect WANT LABEL FILE WORDS...
+fn expect {
+	_want=$1
+	_label=$2
+	_f=$3
+	shift 3
+	if(_write $*) _got=ok
+	if not _got=`{phrase </tmp/w.err}
+	if(! ~ $"_got $_want) fail $_label: got $"_got, want $_want
+}
+# expectfile LABEL PATH
+fn expectfile {
+	if(! test -e $2) fail $1: no file $2
+}
+# expectval VALUE LABEL PATH
+fn expectval {
+	_v=`{cat $3}
+	if(! ~ $"_v $1) fail $2: got $"_v, want $1
+}
+# expectverb VERB LABEL PATH
+fn expectverb {
+	if(! grep -s '^'^$1^'( |$)' $3) fail $2: $3 does not list $1
+}
+
+echo '# types/ is a directory per type, each with a spec and a version'
+for(t in `{ls -p $k/types}) {
+	if(! test -e $k/types/$t/spec) fail $t: no spec
+	if(test -e $k/types/$t/version && ! grep -s '^'^$t^' [0-9]+\.[0-9]+$' $k/types/$t/version)
+		fail $t: version is not NAME major.minor
+	if(test -e $k/types/$t/spec && ! grep -s '^type[ 	]+'^$t^'([ 	]|$)' $k/types/$t/spec)
+		fail $t: spec does not start with type $t
+}
+
+echo '# every descriptor'
+awk -f descriptors.awk $k/types/*/spec >/tmp/checks.rc
+. /tmp/checks.rc
+if(~ $#ntypes 0 || ~ $"ntypes '' 0) fail no descriptors read
+
+echo '# a profile in version has every type of components.md''s table'
+awk '$1 == "profile" { print $2 }' $k/version >/tmp/profiles
+awk 'NR == FNR { claimed[$1] = 1; next }
+	($1 in claimed) { for(i = 2; i <= NF; i++) print $1, $i }' /tmp/profiles - >/tmp/need <<'END'
+core div text styled-text img svg icon scroll spacer
+canvas canvas
+form button checkbox radio-group switch select input textarea number-input slider form field
+data list table tree description-list
+overlay dialog alert-dialog sheet popover tooltip context-menu
+nav tabs tab sidebar sidebar-group sidebar-item breadcrumb toolbar link
+layout grid resizable panel separator group-box accordion collapsible
+feedback progress spinner badge alert empty kbd tag
+desktop icon-view console file-chooser
+web web
+END
+for(p in `{cat /tmp/profiles}) {
+	for(t in `{awk '$1 == "'^$p^'" { print $2 }' /tmp/need}) {
+		if(! test -d $k/types/$t) fail profile $p: no type $t
+		if not if(! grep -s '^type[ 	]+'^$t^'[ 	].*profile='^$p^'([ 	]|$)' $k/types/$t/spec)
+			fail profile $p: $t does not say profile'='$p
+	}
+}
+grep -s '^profile core$' $k/version || fail version does not claim profile core
+
+echo '# a type not in types/ is refused'
+expect 'unknown type' 'unlisted type' $r/ctl 'new zzqq-nosuch dc/u'
+
+echo '# checked; failures:' $nfail

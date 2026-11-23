@@ -1,0 +1,63 @@
+# the theme directory
+yes
+yes
+yes
+yes
+# tokens has every portable token (missing ones are printed)
+checked
+# writing one line changes one token
+ok
+primary #0b5cff
+ok
+radius 6
+# several lines in one write
+ok
+accent #445566
+primary #112233
+# an unknown token and a bad color: refused, reported, and nothing changes
+resync - -
+error - theme/tokens code=not-found
+error - theme/tokens code=bad-value
+error - theme/tokens code=bad-value
+accent #445566
+primary #112233
+# the preference starts at system; headless reports a light system
+system
+|
+light
+|
+# pref and mode, and the theme event that follows the mode in effect
+ok
+dark
+|
+resync - -
+theme - - mode=dark via=ctl
+ok
+light
+|
+ok
+system
+|
+light
+|
+bad value
+bad value
+resync - -
+theme - - mode=light via=ctl
+error - theme/mode code=bad-value
+error - theme/pref code=bad-value
+# the system changes while pref is system
+dark
+|
+resync - -
+theme - - mode=dark via=system
+# and while pref is light, nothing changes
+ok
+light
+|
+resync - -
+# a theme name the host does not have
+not found
+# theme load with a missing file
+not found
+exit=0
