@@ -49,6 +49,10 @@ fn main() {
             .arg("build")
             .arg(format!("-Doptimize={optimize}"))
             .arg(format!("-Dtarget={target}"))
+            // Rust builds for the target's baseline CPU, and so does this:
+            // `native` alone would use the build machine's CPU features, and
+            // a cached build then dies with SIGILL on an older runner.
+            .arg("-Dcpu=baseline")
             .arg(format!("-Dh9={h9}"))
             .arg("--prefix")
             .arg(&prefix)
