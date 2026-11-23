@@ -1,0 +1,14 @@
+type    dialog  tier=overlay  profile=overlay  since=1.0
+prop    title             text  file
+prop    description       text  file
+prop    width             number
+prop    modal             bool
+prop    overlay-closable  bool
+prop    keyboard          bool
+prop    open              bool  default=off  readonly
+word    modal overlay-closable keyboard  kind=flag
+verb    open   class=activate
+verb    close  class=activate
+event   open   kind=action
+event   close  kind=request
+child   any

@@ -1,0 +1,5 @@
+type    toolbar  tier=component  profile=nav  since=1.0
+prop    disabled  bool
+word    disabled  kind=flag
+word    xs sm md lg  kind=size
+child   any

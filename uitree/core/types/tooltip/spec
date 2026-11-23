@@ -1,0 +1,9 @@
+type    tooltip  tier=overlay  profile=overlay  since=1.0
+prop    anchor      path
+prop    text        text  file
+prop    placement   enum=top-start,top,top-end,bottom-start,bottom,bottom-end,left-start,left,left-end,right-start,right,right-end  default=top
+prop    open-delay  number  default=500  min=0
+prop    open        bool  default=off  readonly
+verb    open   class=activate
+verb    close  class=activate
+child   none

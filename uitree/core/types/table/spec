@@ -1,0 +1,23 @@
+type    table  tier=component  profile=data  since=1.0
+prop    columns     data  file
+prop    rows        data  file
+prop    value       text  file
+prop    sort        text  file
+prop    widths      text  file
+prop    stripe      bool  default=off
+prop    selectable  enum=row,cell,off  default=row
+prop    resizable   bool  default=off
+prop    sortable    bool  default=off
+prop    sorted      bool  default=off
+prop    loading     bool  default=off
+prop    bordered    bool  default=on
+word    stripe resizable sortable sorted loading bordered  kind=flag
+word    xs sm md lg  kind=size
+event   select           kind=state
+event   sort             kind=action
+event   open             kind=action
+event   resize           kind=state
+event   scrolled-to-end  kind=action
+child   none
+file    columns  format=columns
+file    rows  format=rows

@@ -1,0 +1,13 @@
+type    icon-view  tier=component  profile=desktop  since=1.0
+file    items  format=icon-items
+prop    selection  text  readonly
+prop    arrange    enum=free,grid,list  default=free
+verb    select   ID...                  class=activate
+verb    open     ID...                  class=activate
+verb    move     ID x,y                 class=edit
+verb    rename   ID TEXT                class=edit
+event   select   kind=state   attrs=sel
+event   move     kind=state   attrs=item,pos
+event   open     kind=action  attrs=items
+event   rename   kind=action  attrs=item
+event   drop     kind=request attrs=drag,item

@@ -1,0 +1,9 @@
+type    pagination  tier=component  since=1.0
+prop    page      number  default=1
+prop    total     number  default=0
+prop    per-page  number  default=10
+prop    disabled  bool
+word    disabled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none

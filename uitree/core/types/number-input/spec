@@ -1,0 +1,17 @@
+type    number-input  tier=component  profile=form  since=1.0
+prop    value        number
+prop    min          number
+prop    max          number
+prop    step         number  default=1
+prop    placeholder  text  file
+prop    disabled     bool
+prop    controlled   bool
+word    disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+event   submit  kind=action
+event   focus   kind=state
+event   blur    kind=state
+slot    prefix
+slot    suffix
+child   none

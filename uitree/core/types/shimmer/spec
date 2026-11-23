@@ -1,0 +1,4 @@
+type    shimmer  tier=component  since=1.0
+prop    text  text  file
+word    xs sm md lg  kind=size
+child   none
