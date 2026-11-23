@@ -116,15 +116,18 @@ fn editor_client_writes_are_not_user_changes(cx: &mut TestAppContext) {
     assert_eq!(sel, 4..7);
 }
 
+/// The platform save key the editor takes (`secondary-s`): cmd on macOS.
+const SAVE: &str = if cfg!(target_os = "macos") { "cmd-s" } else { "ctrl-s" };
+
 #[gpui::test]
 fn editor_save_comes_from_the_client_binding(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(R, "new editor e context=editor : h=200 w-full");
     let e = format!("{R}/e");
-    h.write("keys", "ctrl-s save context=editor\n");
+    h.write("keys", &format!("{SAVE} save context=editor\n"));
     let mut ev = h.subscribe("events");
     h.click(&e);
-    h.keys("main", "ctrl-s");
+    h.keys("main", SAVE);
     let lines = h.events(&mut ev);
     // 0.2: the core matches `keys` and names the focused editor.
     assert!(has(&lines, "action save e win=main", &["via=key"]), "{lines:?}");
@@ -138,7 +141,7 @@ fn editor_save_falls_back_to_the_platform_key(cx: &mut TestAppContext) {
     let e = format!("{R}/e");
     let mut ev = h.subscribe("events");
     h.click(&e);
-    h.keys("main", "ctrl-s");
+    h.keys("main", SAVE);
     let lines = h.events(&mut ev);
     assert!(has(&lines, "save ", &[" e win="]), "{lines:?}");
 }
