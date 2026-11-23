@@ -8,3 +8,8 @@ description = "Safe wrapper over uitcore.h: borrowed reads tied to the pump, inp
 
 [dependencies]
 uitcore-sys.workspace = true
+
+[features]
+# `uitcore::client`: a small blocking 9P2000 client, for tests that drive
+# the core the way an app would.
+test-client = []

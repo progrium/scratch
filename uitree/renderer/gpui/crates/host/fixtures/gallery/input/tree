@@ -1,0 +1,12 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : v-flex gap=12 max-w=420
+    input plain  placeholder='Type something'
+    input search  cleanable  placeholder=Search…
+      icon prefix  name=search
+    input pw  secret  placeholder=Password
+    input phone  placeholder='(000) 000-0000'  mask='(999) 999-9999'
+    input url  placeholder=example.com
+      text prefix  text=https://  : text-color=muted-foreground
+    number-input n  value=3  min=0  max=10
+    otp-input otp  length=6
+    textarea notes  placeholder='Longer text…'  auto-grow=3,8

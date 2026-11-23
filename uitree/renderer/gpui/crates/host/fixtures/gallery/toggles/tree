@@ -1,0 +1,8 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : v-flex gap=12
+    checkbox a  label='Remember me'
+    checkbox b  label=Indeterminate  value=mixed
+    checkbox c  disabled  label=Disabled
+    switch d  label='Airplane mode'
+    switch e  label=Wi-Fi  value=on
+    radio-group f  value=md  dir=row

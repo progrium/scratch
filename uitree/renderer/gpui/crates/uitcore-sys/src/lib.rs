@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 1;
+pub const UIT_ABI_VERSION: u32 = 2;
 
 #[repr(C)]
 pub struct UitCore {
@@ -109,6 +109,7 @@ pub const UIT_CMD_COMPONENT_VERB: u32 = 11;
 pub const UIT_CMD_ANSWER: u32 = 12;
 pub const UIT_CMD_REDRAW: u32 = 13;
 pub const UIT_CMD_THEME_LOAD: u32 = 14;
+pub const UIT_CMD_ASSETS: u32 = 15;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -282,6 +283,7 @@ unsafe extern "C" {
     pub fn uit_menu(c: *mut UitCore, name: UitStr, out: *mut *const UitMenuItem, n: *mut usize) -> c_int;
     pub fn uit_theme_dark(c: *mut UitCore) -> u32;
     pub fn uit_token(c: *mut UitCore, name: UitStr, rgba: *mut u32) -> c_int;
+    pub fn uit_asset(c: *mut UitCore, name: UitStr, out: *mut UitStr) -> c_int;
 
     pub fn uit_emit(c: *mut UitCore, n: UitNode, name: UitStr, attrs: *const UitAttr, len: usize) -> c_int;
     pub fn uit_request(c: *mut UitCore, n: UitNode, name: UitStr, attrs: *const UitAttr, len: usize, default_answer: UitStr) -> u64;

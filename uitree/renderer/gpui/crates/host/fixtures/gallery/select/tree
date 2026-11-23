@@ -1,0 +1,5 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : v-flex gap=12 max-w=320
+    select fruit  placeholder='Pick a fruit'
+    select lang  searchable  placeholder=Language
+    combobox tags  multiple  placeholder=Tags

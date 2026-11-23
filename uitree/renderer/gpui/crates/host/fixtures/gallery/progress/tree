@@ -1,0 +1,13 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : v-flex gap=16 max-w=420
+    progress a  value=30
+    progress b  value=72  variant=circle
+    progress c
+    div spin  : h-flex gap=16
+      spinner s1 sm
+      spinner s2
+      spinner s3 lg
+    skeleton line1  : h=16 w-full
+    skeleton line2  : h=16 w=60%
+    alert ok  variant=success  title=Uploaded  text='3 files, 12 MB.'
+    alert bad  closable  variant=error  title='Upload failed'  text='The server said no.'

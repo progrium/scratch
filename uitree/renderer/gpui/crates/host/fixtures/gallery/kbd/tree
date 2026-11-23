@@ -1,0 +1,11 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : v-flex gap=12
+    div a  : h-flex items-center gap=8
+      kbd k  key=cmd-shift-p
+      text t  text='Command palette'
+    div b  : h-flex items-center gap=8
+      kbd k  key=cmd-s
+      text t  text=Save
+    div c  : h-flex items-center gap=8
+      kbd k  key=ctrl-tab
+      text t  text='Next tab'

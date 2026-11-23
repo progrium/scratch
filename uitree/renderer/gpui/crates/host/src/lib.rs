@@ -1,356 +1,427 @@
-//! The GPUI host, cut down for the spike to `div`, `text` and `button`.
+//! The GPUI host: app, windows, root view, materialize, style dispatch,
+//! theme, actions, menus, and every component, drawing the core's committed
+//! tree through `uitcore.h`.
 //!
-//! It holds no tree of its own. Each frame it walks the core's committed
-//! tree through `uitcore` (children, type, style, props), builds GPUI
-//! elements, and posts input back with `emit` and `key`. It never parses
-//! `ctl` and never produces a protocol error: the core validated every
-//! word and value before the pump that made it visible.
+//! # How it fits together
 //!
-//! The core's 9P threads call the waker, which sends on a channel; a task
-//! on GPUI's main thread drains it and calls `pump`. W6 grows this into
-//! the full host (uitreefs/crates/host's components on this same path).
+//! - [`run`] starts GPUI and makes the core ([`uitcore::Core`]) on GPUI's
+//!   main thread, which is the ABI's owner thread. The core's 9P threads
+//!   call the waker; a task on the main thread then calls `uit_pump` and
+//!   acts on the returned changes (`runtime::pump`).
+//! - Each window has one root view (`window::WindowView`). Its `render`
+//!   walks the window's committed tree through the ABI and builds elements
+//!   with [`RenderCx`]; the element tier lives in [`elements`], every other
+//!   type is a [`Component`].
+//! - The renderer holds no tree. It keeps, per node handle, only what
+//!   drawing needs to be fast: the node's type and path (fixed for its
+//!   life), prop text it already copied, and the parsed style, each dropped
+//!   when a pump reports the node's prop changed or the theme changed.
+//! - GPUI listeners send input with an [`Emitter`] (`uit_emit`,
+//!   `uit_request`, `uit_mirror`); the core queues it and applies it at the
+//!   next pump, in order with the client's ops.
+//! - The renderer never parses `ctl`, never validates, and never produces a
+//!   protocol error. If a component needs one, the core is missing
+//!   something.
+//!
+//! # For component code
+//!
+//! Implement [`Component`] and `reg.add(...)` it in your group's
+//! `register`. In `render`, start from [`RenderCx::element`] when your
+//! component is a box (it applies style words, `on`, `context`, `tooltip`,
+//! `bounds`), or build a GPUI Kit element and pass it through
+//! [`RenderCx::styled`]. Read props with [`NodeView::text`] /
+//! [`NodeView::prop`]; data files with [`NodeView::lines`]; size and
+//! variant words with [`RenderCx::style_of`]. Send events with
+//! [`RenderCx::emitter`].
+//!
+//! A request opened with [`Emitter::request`] is answered (by the client,
+//! or by its default) by calling your [`Component::verb`] with the answer,
+//! for example `close seq=12` or `keep seq=12`.
+#![allow(clippy::too_many_arguments, unused_variables)]
 
-use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::{Duration, Instant};
 
-use futures::StreamExt as _;
-use futures::channel::mpsc;
-use gpui::{
-    AnyElement, AnyWindowHandle, App, AppContext as _, AsyncApp, Bounds, Context, ElementId, Entity, FocusHandle,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Refineable as _, Render,
-    StatefulInteractiveElement as _, StyleRefinement, Styled as _, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, div, px, size,
-};
-use uitcore::{Core, HostCmd, Node, State};
+use gpui::{AnyElement, AnyEntity, App, Entity, FocusHandle, Refineable as _, ScrollHandle, Stateful, Styled, Window, div};
+
+pub use uitcore::{Ctl, Node};
 
 pub mod bench;
-pub mod styling;
+pub mod canvas;
+pub mod clipboard;
+pub mod components;
+pub mod data_lines;
+pub mod dnd;
+pub mod elements;
+pub mod spec;
 
+mod actions;
+mod materialize;
+pub(crate) mod runtime;
+pub mod styling;
+mod theme;
+pub(crate) mod window;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
+#[cfg(test)]
+mod tests;
+
+pub use runtime::run;
+pub use spec::Spec;
+pub use styling::ParsedStyle;
+
+/// What the `uitree` binary passes in.
 #[derive(Debug, Clone, Default)]
 pub struct Options {
+    /// `-t title`: the app name and default window title.
     pub title: Option<String>,
+    /// `-k`: keep running after the client exits.
+    pub keep: bool,
+    /// h9's `--root` (default the built-in root).
     pub root: Option<String>,
+    /// The program and its arguments.
     pub argv: Vec<String>,
     /// Build an N-node tree and measure, instead of running an app.
     pub bench: Option<usize>,
 }
 
-static EXIT: AtomicI32 = AtomicI32::new(0);
-
-pub struct Host {
-    pub core: RefCell<Core>,
-    opts: Options,
-    window: RefCell<Option<(AnyWindowHandle, Entity<WindowView>)>>,
-    quitting: Cell<bool>,
-    /// Per-frame timings for --bench: (tree walk through the ABI, whole render).
-    pub frames: RefCell<Vec<(Duration, Duration)>>,
+/// Every component the host knows: the element tier, each group, and canvas.
+pub fn register_all(reg: &mut ComponentRegistry) {
+    elements::register(reg);
+    components::register(reg);
+    canvas::register(reg);
 }
 
-/// The theme tokens the core resolves style colors with, from GPUI Kit's
-/// default light and dark themes: `name light dark`.
-fn theme_tokens() -> String {
-    use gpui_component::ThemeColor;
-    let (l, d) = (ThemeColor::light(), ThemeColor::dark());
-    let hex = |c: gpui::Hsla| {
-        let r = gpui::Rgba::from(c);
-        format!("#{:02x}{:02x}{:02x}{:02x}", (r.r * 255.).round() as u8, (r.g * 255.).round() as u8, (r.b * 255.).round() as u8, (r.a * 255.).round() as u8)
-    };
-    let mut out = String::new();
-    macro_rules! tok {
-        ($($name:literal $field:ident),*) => {$(
-            out.push_str(&format!("{} {} {}\n", $name, hex(l.$field), hex(d.$field)));
-        )*};
+/// Components by type name.
+#[derive(Default)]
+pub struct ComponentRegistry {
+    components: HashMap<&'static str, Box<dyn Component>>,
+}
+
+impl ComponentRegistry {
+    pub fn add(&mut self, c: impl Component) {
+        self.components.insert(c.spec().name, Box::new(c));
     }
-    tok!("background" background, "foreground" foreground, "muted" muted, "muted-foreground" muted_foreground,
-        "primary" primary, "primary-foreground" primary_foreground, "accent" accent, "accent-foreground" accent_foreground,
-        "border" border, "ring" ring, "danger" danger, "success" success, "warning" warning);
-    out
+    pub fn get(&self, ty: &str) -> Option<&dyn Component> {
+        self.components.get(ty).map(|c| c.as_ref())
+    }
+    /// Type names that have a renderer, sorted.
+    pub fn names(&self) -> Vec<&'static str> {
+        let mut v: Vec<_> = self.components.keys().copied().collect();
+        v.sort();
+        v
+    }
 }
 
-/// The types this renderer draws, as descriptors (I6). W1 owns the real
-/// ones in core/types/; the spike registers just the names.
-const TYPES: &str = "type div\ntype text\ntype button\n";
+/// What the renderer keeps about a node for its whole life.
+pub(crate) struct NodeInfo {
+    pub node: Node,
+    /// `win` for a window's root, else `win/rel`: unique, and the node's
+    /// `ElementId`.
+    pub path: String,
+    pub win: String,
+    pub ty: String,
+}
 
-/// Starts GPUI and the core on this (main) thread; returns the exit code.
-pub fn run(opts: Options) -> i32 {
-    gpui_kit::application().with_assets(gpui_kit::assets::AllAssets).run(move |cx: &mut App| {
-        gpui_component::init(cx);
-        cx.set_quit_mode(gpui::QuitMode::Explicit);
-        let (tx, rx) = mpsc::unbounded::<()>();
-        let words = styling::words();
-        let tokens = theme_tokens();
-        let core = match Core::new(
-            &uitcore::Config { types: TYPES, style_words: &words, theme_tokens: &tokens, system_dark: false },
-            Box::new(move || {
-                let _ = tx.unbounded_send(());
-            }),
-        ) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("uitree: {e}");
-                EXIT.store(1, Ordering::SeqCst);
-                cx.quit();
-                return;
-            }
-        };
-        let host = Rc::new(Host {
-            core: RefCell::new(core),
-            opts: opts.clone(),
-            window: RefCell::new(None),
-            quitting: Cell::new(false),
-            frames: RefCell::new(Vec::new()),
-        });
-        // The pump loop: every wake is one pump, however many came.
-        let h = host.clone();
-        cx.spawn(async move |cx: &mut AsyncApp| {
-            let mut rx = rx;
-            while rx.next().await.is_some() {
-                while rx.try_recv().is_ok() {}
-                cx.update(|cx| pump(&h, cx));
-                if h.quitting.get() {
-                    break;
-                }
-            }
-        })
-        .detach();
-        if let Some(n) = opts.bench {
-            bench::start(&host, n, cx);
-            return;
+/// One committed node as the renderer sees it. Cheap to clone; props are
+/// read from the core on demand and cached until a pump changes them.
+#[derive(Clone)]
+pub struct NodeView {
+    pub(crate) info: Rc<NodeInfo>,
+    pub(crate) host: Rc<runtime::Inner>,
+}
+
+impl NodeView {
+    /// The core's handle.
+    pub fn node(&self) -> Node {
+        self.info.node
+    }
+    /// `win/rel` (`win` for a root): unique, used as the element id.
+    pub fn path(&self) -> &str {
+        &self.info.path
+    }
+    pub fn win(&self) -> &str {
+        &self.info.win
+    }
+    pub fn ty(&self) -> &str {
+        &self.info.ty
+    }
+    /// The node's own name (the last path element).
+    pub fn name(&self) -> &str {
+        self.rel_path().rsplit('/').next().unwrap_or("")
+    }
+    /// The window-relative path (`.` for the root, `f/ok`), as events use.
+    pub fn rel_path(&self) -> &str {
+        self.info.path.strip_prefix(&self.info.win).and_then(|r| r.strip_prefix('/')).unwrap_or(".")
+    }
+    /// A prop file's bytes as committed, `None` when unset.
+    pub fn prop(&self, file: &str) -> Option<Rc<[u8]>> {
+        self.host.prop(self.info.node, file)
+    }
+    /// A prop file as text, one trailing newline dropped.
+    pub fn text(&self, file: &str) -> Option<String> {
+        let b = self.prop(file)?;
+        let s = String::from_utf8_lossy(&b);
+        Some(s.strip_suffix('\n').unwrap_or(&s).to_string())
+    }
+    /// A prop as a boolean: `on`, `true`, `1` and `yes` are true.
+    pub fn flag(&self, file: &str) -> bool {
+        self.prop(file).is_some_and(|b| matches!(std::str::from_utf8(&b).map(str::trim), Ok("on" | "true" | "1" | "yes")))
+    }
+    /// Whether the prop has a value (written, or a default).
+    pub fn is_set(&self, file: &str) -> bool {
+        self.prop(file).is_some_and(|b| !b.is_empty())
+    }
+    /// A data file, split into lines and fields by the core.
+    pub fn lines(&self, file: &str) -> Rc<Vec<uitcore::Line>> {
+        self.host.lines(self.info.node, file)
+    }
+    /// A data file as typed lines; lines that don't read are skipped.
+    pub fn typed_lines<T: data_lines::Line>(&self, file: &str) -> Vec<T> {
+        data_lines::from_core(&self.lines(file))
+    }
+    /// How many times a pump changed this prop; 0 if never. For
+    /// components that rebuild GPUI state only when a file changes.
+    pub fn revision(&self, file: &str) -> u64 {
+        self.host.revision(self.info.node, file)
+    }
+    /// The type's descriptor.
+    pub fn spec(&self) -> Option<&'static Spec> {
+        spec::get(&self.info.ty)
+    }
+    /// Children in `order`.
+    pub fn children(&self) -> Vec<NodeView> {
+        self.host.children_of(self.info.node)
+    }
+    /// One child by name, drawn or not (slots).
+    pub fn child(&self, name: &str) -> Option<NodeView> {
+        self.host.node_at(&format!("{}/{name}", self.info.path))
+    }
+    /// The parent node, if this isn't a window's root.
+    pub fn parent(&self) -> Option<NodeView> {
+        let (p, _) = self.info.path.rsplit_once('/')?;
+        self.host.node_at(p)
+    }
+    /// The words in the node's `on` file.
+    pub fn on_words(&self) -> Vec<String> {
+        self.text("on").unwrap_or_default().split_whitespace().map(str::to_string).collect()
+    }
+    /// The node's last laid-out bounds, window space.
+    pub fn bounds(&self) -> Option<[f32; 4]> {
+        self.host.bounds.borrow().get(&self.info.node).copied()
+    }
+    /// An app asset (`$ui/asset/NAME`), for `src=@NAME`.
+    pub fn asset(&self, name: &str) -> Option<Rc<[u8]>> {
+        if let Some(a) = self.host.assets.borrow().get(name) {
+            return Some(a.clone());
         }
-        let argv: Vec<&str> = opts.argv.iter().map(String::as_str).collect();
-        let r = host.core.borrow_mut().run_machine(&uitcore::MachineArgs {
-            prog: argv[0],
-            argv: &argv,
-            root: opts.root.as_deref().unwrap_or(""),
-            cwd: "",
-            env: &[],
-        });
-        if let Err(e) = r {
-            eprintln!("uitree: {}: {e}", argv[0]);
-            EXIT.store(1, Ordering::SeqCst);
-            cx.quit();
-        }
-    });
-    EXIT.load(Ordering::SeqCst)
-}
-
-fn pump(host: &Rc<Host>, cx: &mut App) {
-    let ch = match host.core.borrow_mut().pump() {
-        Ok(ch) => ch,
-        Err(e) => {
-            eprintln!("uitree: pump: {e}");
-            return;
-        }
-    };
-    for c in &ch.cmds {
-        match c {
-            HostCmd::Window { win } if win == "main" => open_window(host, cx),
-            HostCmd::Quit => quit(host, 0, cx),
-            _ => {}
-        }
+        let a: Rc<[u8]> = self.host.core.borrow().asset(name)?.into();
+        self.host.assets.borrow_mut().insert(name.to_string(), a.clone());
+        Some(a)
     }
-    if !ch.dirty.is_empty() || !ch.props.is_empty() {
-        if let Some((_, view)) = host.window.borrow().as_ref() {
-            view.update(cx, |_, cx| cx.notify());
-        }
-    }
-    if let Some(status) = ch.exited {
-        // The client finished: exit as uitreefs does, 0 for an empty
-        // exits string and 1 otherwise.
-        if !status.is_empty() {
-            eprintln!("uitree: {status}");
-        }
-        quit(host, if status.is_empty() { 0 } else { 1 }, cx);
+    /// An `Emitter` for this node, usable outside render.
+    pub fn emitter(&self) -> Emitter {
+        Emitter { node: self.info.node, win: self.info.win.clone(), tx: self.host.input.clone() }
     }
 }
 
-fn quit(host: &Rc<Host>, code: i32, cx: &mut App) {
-    if host.quitting.replace(true) {
-        return;
-    }
-    EXIT.store(code, Ordering::SeqCst);
-    host.core.borrow().shutdown();
-    cx.quit();
-}
-
-fn pair(s: Option<&str>) -> Option<(f32, f32)> {
-    let (a, b) = s?.split_once(',')?;
-    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
-}
-
-/// The main window, sized and titled from its root's props.
-pub fn open_window(host: &Rc<Host>, cx: &mut App) {
-    if host.window.borrow().is_some() {
-        return;
-    }
-    let (title, (w, h)) = {
-        let core = host.core.borrow();
-        let root = core.window_root("main");
-        let title = core.prop(root, "title").map(str::to_string).or_else(|| host.opts.title.clone()).unwrap_or_else(|| "uitree".into());
-        (title, pair(core.prop(root, "size")).unwrap_or((800., 600.)))
-    };
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(w), px(h)), cx))),
-        titlebar: Some(TitlebarOptions { title: Some(title.clone().into()), ..Default::default() }),
-        app_id: Some("uitree".into()),
-        ..Default::default()
-    };
-    let h2 = host.clone();
-    match gpui_kit::open_window(options, cx, move |window, cx| {
-        window.set_window_title(&title);
-        let h3 = h2.clone();
-        window.on_window_should_close(cx, move |_, cx| {
-            h3.core.borrow().window_closed("main");
-            quit(&h3, 0, cx);
-            true
-        });
-        cx.new(|cx| {
-            let focus = cx.focus_handle();
-            focus.focus(window, cx);
-            WindowView { host: h2, focus }
-        })
-    }) {
-        Ok((handle, view)) => *host.window.borrow_mut() = Some((handle, view)),
-        Err(e) => eprintln!("uitree: window main: {e}"),
+impl PartialEq for NodeView {
+    fn eq(&self, o: &Self) -> bool {
+        self.info.node == o.info.node
     }
 }
 
-pub struct WindowView {
-    host: Rc<Host>,
-    focus: FocusHandle,
-}
-
-/// A GPUI keystroke in the protocol's spelling: modifiers joined by `-`,
-/// then the key. The core maps `cmd` to the platform's command key.
-fn keystroke(k: &gpui::Keystroke) -> String {
-    let mut s = String::new();
-    let m = &k.modifiers;
-    for (on, name) in [(m.control, "ctrl"), (m.alt, "alt"), (m.shift, "shift"), (m.platform, "super")] {
-        if on {
-            s.push_str(name);
-            s.push('-');
-        }
+impl std::fmt::Debug for NodeView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeView").field("node", &self.info.node).field("path", &self.info.path).field("ty", &self.info.ty).finish()
     }
-    s.push_str(&k.key);
-    s
 }
 
-impl Render for WindowView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let t0 = Instant::now();
-        let core = self.host.core.borrow();
-        let root = core.window_root("main");
-        let mut walk = Duration::ZERO;
-        let body = build(&self.host, &core, root, &mut walk);
-        drop(core);
-        let host = self.host.clone();
-        let el = div()
-            .size_full()
-            .track_focus(&self.focus)
-            .on_key_down(move |ev: &KeyDownEvent, _, _| {
-                let ks = keystroke(&ev.keystroke);
-                host.core.borrow().key("main", &ks, 0);
-            })
-            .child(body);
-        self.host.frames.borrow_mut().push((walk, t0.elapsed()));
+/// A verb or answer the component doesn't act on. Not a protocol error:
+/// the core already accepted the verb; the renderer just has nothing to do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unhandled;
+
+impl std::fmt::Display for Unhandled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("not handled by this renderer")
+    }
+}
+
+pub type VerbResult = Result<(), Unhandled>;
+
+pub trait Component: 'static {
+    /// The type's descriptor (from `uitree/core/types`).
+    fn spec(&self) -> &'static Spec;
+    /// Make the GPUI state entity for a new node (InputState, SelectState, ...). None if stateless.
+    fn create(&self, node: &NodeView, window: &mut Window, cx: &mut App) -> Option<AnyEntity> {
+        None
+    }
+    /// A prop file changed from the client side: push it into the entity.
+    fn prop_changed(&self, node: &NodeView, state: Option<&AnyEntity>, prop: &str, window: &mut Window, cx: &mut App) {}
+    /// Move keyboard focus into the node's own widget (an input's text
+    /// field). False if the component has none, and the node's generic
+    /// focus handle is used.
+    fn focus(&self, state: Option<&AnyEntity>, window: &mut Window, cx: &mut App) -> bool {
+        false
+    }
+    /// A component verb on the node's ctl, already parsed and validated by
+    /// the core against the descriptor. Also receives answers to requests
+    /// the component opened (`close seq=N`, `keep seq=N`, ...), and
+    /// `open`/`close` for overlays. `Err(Unhandled)` means the
+    /// renderer has nothing to do for it; nothing is reported.
+    fn verb(&self, node: &NodeView, state: Option<&AnyEntity>, cmd: &Ctl, window: &mut Window, cx: &mut App) -> VerbResult {
+        Err(Unhandled)
+    }
+    fn render(&self, rcx: &mut RenderCx, node: &NodeView) -> AnyElement;
+}
+
+pub struct RenderCx<'a> {
+    pub(crate) window: &'a mut Window,
+    pub(crate) cx: &'a mut App,
+    pub(crate) host: Rc<runtime::Inner>,
+}
+
+impl<'a> RenderCx<'a> {
+    pub(crate) fn new(window: &'a mut Window, cx: &'a mut App, host: Rc<runtime::Inner>) -> Self {
+        RenderCx { window, cx, host }
+    }
+
+    /// Renders any node: its component (creating its state on first use).
+    pub fn render(&mut self, node: &NodeView) -> AnyElement {
+        materialize::render_node(self, node)
+    }
+
+    /// Non-slot children, in order, rendered.
+    pub fn children(&mut self, node: &NodeView) -> Vec<AnyElement> {
+        let slots: &[&str] = node.spec().map(|s| s.slots.as_slice()).unwrap_or(&[]);
+        node.children().into_iter().filter(|c| !slots.contains(&c.name())).map(|c| self.render(&c)).collect()
+    }
+
+    /// A named slot child, rendered, whether or not `order` lists it.
+    pub fn slot(&mut self, node: &NodeView, name: &str) -> Option<AnyElement> {
+        let c = node.child(name)?;
+        Some(self.render(&c))
+    }
+
+    /// Style words (base words only; state styles need an interactive
+    /// element, see [`RenderCx::element`]).
+    pub fn styled<E: Styled>(&self, mut el: E, node: &NodeView) -> E {
+        let st = self.style_of(node);
+        el.style().refine(&st.base);
         el
     }
+
+    /// The node's style, parsed (cached per node until it changes): base and
+    /// state refinements, group, size and variant words.
+    pub fn style_of(&self, node: &NodeView) -> Rc<ParsedStyle> {
+        self.host.style_of(node)
+    }
+
+    /// A stateful `div` with the node's id, style words and state styles,
+    /// `group`, `on` listeners, `context`, `tooltip` and `bounds`
+    /// reporting. Add children and return it.
+    pub fn element(&mut self, node: &NodeView) -> Stateful<gpui::Div> {
+        materialize::element(self, node, div())
+    }
+
+    /// As [`RenderCx::element_from`], without the listeners for the `on`
+    /// words in `skip`, for a component that sends those events itself.
+    pub fn element_except(&mut self, node: &NodeView, base: gpui::Div, skip: &[&str]) -> Stateful<gpui::Div> {
+        materialize::element_except(self, node, base, skip)
+    }
+
+    /// As [`RenderCx::element`], starting from a `div` you made.
+    pub fn element_from(&mut self, node: &NodeView, base: gpui::Div) -> Stateful<gpui::Div> {
+        materialize::element(self, node, base)
+    }
+
+    /// `'static + Clone`, for listeners.
+    pub fn emitter(&self, node: &NodeView) -> Emitter {
+        node.emitter()
+    }
+
+    pub fn state<T: 'static>(&self, node: &NodeView) -> Option<Entity<T>> {
+        self.host.states.borrow().get(&node.node()).and_then(|s| s.entity.clone()).and_then(|e| e.downcast::<T>().ok())
+    }
+
+    /// The node's focus handle (made on first use, kept while the node lives).
+    pub fn focus_handle(&mut self, node: &NodeView) -> FocusHandle {
+        self.host.focus_handle(node.node(), self.cx)
+    }
+
+    /// The node's scroll handle (made on first use, kept while the node lives).
+    pub fn scroll_handle(&mut self, node: &NodeView) -> ScrollHandle {
+        self.host.scroll_handle(node.node())
+    }
+
+    /// A theme token's current color (`primary`, `muted-foreground`, ...).
+    pub fn token(&self, name: &str) -> Option<gpui::Hsla> {
+        theme::token(self.cx, name)
+    }
+
+    pub fn window(&mut self) -> &mut Window {
+        self.window
+    }
+    pub fn cx(&mut self) -> &mut App {
+        self.cx
+    }
+    pub fn cx_ref(&self) -> &App {
+        self.cx
+    }
 }
 
-/// The style split by state, as GPUI wants it.
-#[derive(Default)]
-struct Styles {
-    base: StyleRefinement,
-    hover: Option<StyleRefinement>,
-    active: Option<StyleRefinement>,
+/// Sends input about one node to the core from GPUI listeners. It is
+/// `Send` (some GPUI Kit callbacks require it), so it queues on a channel
+/// that the main thread drains into `uit_emit`, `uit_request` and
+/// `uit_mirror`, in order. The core then applies it at the next pump, in
+/// order with the client's ops; it adds `win=`, the path, `via=user` and
+/// `seq=`, and picks the queue from the descriptor.
+#[derive(Clone)]
+pub struct Emitter {
+    node: Node,
+    win: String,
+    tx: runtime::InputTx,
 }
 
-/// A node's style words as read through the ABI, copied out.
-type RawStyle = Vec<(String, State, Vec<uitcore::Arg<'static>>)>;
-
-fn read_style(core: &Core, n: Node) -> RawStyle {
-    core.style(n)
-        .map(|w| {
-            // Text arguments are only used during this frame; keep them as
-            // owned strings leaked into 'static would be wrong, so drop them.
-            let args = w
-                .args()
-                .map(|a| match a {
-                    uitcore::Arg::Rgba(v, _) => uitcore::Arg::Rgba(v, ""),
-                    uitcore::Arg::Text(_) => uitcore::Arg::None,
-                    uitcore::Arg::Px(x) => uitcore::Arg::Px(x),
-                    uitcore::Arg::Percent(x) => uitcore::Arg::Percent(x),
-                    uitcore::Arg::Rem(x) => uitcore::Arg::Rem(x),
-                    uitcore::Arg::Number(x) => uitcore::Arg::Number(x),
-                    uitcore::Arg::None => uitcore::Arg::None,
-                })
-                .collect();
-            (w.name.to_string(), w.state, args)
-        })
-        .collect()
+impl Emitter {
+    /// An element or component event (`click`, `change value=x`).
+    pub fn event(&self, name: &str, attrs: &[(&str, &str)]) {
+        self.send(runtime::Input::Event { node: self.node, name: name.into(), attrs: own(attrs) });
+    }
+    /// Opens a request; its answer (or the default, `default_answer`, a
+    /// verb such as `close`) comes back through `Component::verb`.
+    pub fn request(&self, name: &str, attrs: &[(&str, &str)], default_answer: &str) {
+        self.send(runtime::Input::Request { node: self.node, name: name.into(), attrs: own(attrs), default: default_answer.into() });
+    }
+    /// Component state -> the node's file, as `via=user`.
+    pub fn mirror(&self, file: &str, value: impl AsRef<[u8]>) {
+        self.send(runtime::Input::Mirror { node: self.node, file: file.into(), value: value.as_ref().to_vec() });
+    }
+    /// A menu item was chosen (a context menu's or a menu button's): the
+    /// core sends `action ID - via=menu`, as for the menu bar.
+    pub fn menu_action(&self, id: &str) {
+        self.send(runtime::Input::MenuAction { id: id.into() });
+    }
+    fn send(&self, m: runtime::Input) {
+        let _ = self.tx.unbounded_send(m);
+    }
+    pub fn node(&self) -> Node {
+        self.node
+    }
+    pub fn win(&self) -> &str {
+        &self.win
+    }
 }
 
-fn styles(raw: &RawStyle) -> Styles {
-    let mut st = Styles::default();
-    for (name, state, args) in raw {
-        let slot = match state {
-            State::Base => &mut st.base,
-            State::Hover => st.hover.get_or_insert_default(),
-            State::Active => st.active.get_or_insert_default(),
-            _ => continue,
-        };
-        if let Some(r) = styling::apply(std::mem::take(slot), name, args) {
-            *slot = r;
-        }
-    }
-    st
+fn own(attrs: &[(&str, &str)]) -> Vec<(String, String)> {
+    attrs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
-/// One node and its subtree. `walk` collects the time spent in ABI reads.
-fn build(host: &Rc<Host>, core: &Core, n: Node, walk: &mut Duration) -> AnyElement {
-    let t = Instant::now();
-    let ty = core.type_of(n).to_string();
-    let path = core.path(n).to_string();
-    let raw = read_style(core, n);
-    let text = core.prop(n, "text").map(str::to_string);
-    let label = core.prop(n, "label").map(str::to_string);
-    let click = core.prop(n, "on").is_some_and(|on| on.split_whitespace().any(|w| w == "click"));
-    let kids: Vec<Node> = core.children(n).to_vec();
-    *walk += t.elapsed();
-    let st = styles(&raw);
-
-    let mut el = div();
-    el.style().refine(&st.base);
-    if let Some(h) = st.hover {
-        el = el.hover(move |mut s| {
-            s.refine(&h);
-            s
-        });
-    }
-    let mut el = el.id(ElementId::Name(format!("n{n}:{path}").into()));
-    if let Some(a) = st.active {
-        el = el.active(move |mut s| {
-            s.refine(&a);
-            s
-        });
-    }
-    match ty.as_str() {
-        "text" => el = el.child(text.unwrap_or_default()),
-        "button" => el = el.child(label.or(text).unwrap_or_default()),
-        _ => {}
-    }
-    if click || ty == "button" {
-        let h = host.clone();
-        el = el.on_click(move |ev, _, _| {
-            let p = ev.position();
-            let (x, y) = (format!("{}", f32::from(p.x).round()), format!("{}", f32::from(p.y).round()));
-            let _ = h.core.borrow().emit(n, "click", &[("x", &x), ("y", &y), ("button", "left")]);
-        });
-    }
-    for k in kids {
-        el = el.child(build(host, core, k, walk));
-    }
-    el.into_any_element()
+/// Per-node GPUI state the host keeps while the node lives.
+pub(crate) struct NodeState {
+    pub ty: String,
+    pub entity: Option<AnyEntity>,
 }
