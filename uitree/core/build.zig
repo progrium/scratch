@@ -64,7 +64,24 @@ pub fn build(b: *std.Build) void {
     });
     // Zig can't supply an MSVC libc to link an exe; the library still
     // builds for x86_64-windows-msvc, which is what a Rust MSVC build links.
-    if (target.result.abi != .msvc) b.installArtifact(headless);
+    if (target.result.abi != .msvc) {
+        const install_headless = b.addInstallArtifact(headless, .{});
+        b.getInstallStep().dependOn(&install_headless.step);
+        // W8: on macOS, h9 runs on Hypervisor.framework, which a static
+        // library can't carry, and HVF refuses hv_vm_create without the
+        // hypervisor entitlement: link it and sign the installed binary
+        // with hyper9's h9.entitlements, as hyper9's own build does for h9.
+        if (with_h9 and target.result.os.tag == .macos) {
+            headless.root_module.linkFramework("Hypervisor", .{});
+            if (b.graph.host.result.os.tag == .macos) {
+                const sign = b.addSystemCommand(&.{ "codesign", "--force", "--sign", "-", "--entitlements" });
+                sign.addFileArg(b.path("../third_party/hyper9/h9.entitlements"));
+                sign.addArg(b.getInstallPath(.bin, headless.out_filename));
+                sign.step.dependOn(&install_headless.step);
+                b.getInstallStep().dependOn(&sign.step);
+            }
+        }
+    }
 
     // W4: src/ninep/wire.zig is hyper9's dotl/wire.zig, vendored (see its
     // header). This fails when the submodule's copy has moved on.
