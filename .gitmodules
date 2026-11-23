@@ -1,3 +1,6 @@
 [submodule "uitreefs/third_party/hyper9"]
 	path = uitreefs/third_party/hyper9
 	url = https://github.com/progrium/hyper9
+[submodule "uitree/third_party/hyper9"]
+	path = uitree/third_party/hyper9
+	url = https://github.com/progrium/hyper9

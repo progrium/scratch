@@ -1,0 +1,24 @@
+name: uitree-core
+
+on:
+  push:
+    branches: [uitree]
+    paths: ["uitree/**", ".github/workflows/uitree-core.yml"]
+  pull_request:
+    branches: [uitree]
+    paths: ["uitree/**", ".github/workflows/uitree-core.yml"]
+
+jobs:
+  core:
+    name: core (Linux, no GPU)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: uitree/core
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: mlugg/setup-zig@v2
+        with: { version: 0.16.0 }
+      - run: zig build test --summary all
+      - run: zig build
