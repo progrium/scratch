@@ -61,7 +61,7 @@ fn main() {
     };
     // Apple's ld refuses Zig's archives ("64-bit mach-o member ... not
     // 8-byte aligned"), and libtool copying the archive whole drops those
-    // members. So on macOS unpack each one with ar and archive the objects
+    // members. So on macOS unpack each one (unpack_archive) and archive the objects
     // again with libtool, which aligns them, and link the copies.
     let lib = if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
         let dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib-macos");
@@ -74,20 +74,10 @@ fn main() {
             let objs = dir.join(format!("{name}.objs"));
             let _ = std::fs::remove_dir_all(&objs);
             std::fs::create_dir_all(&objs).unwrap();
-            let st = Command::new("ar").arg("-x").arg(&src).current_dir(&objs).status()
-                .unwrap_or_else(|e| panic!("uitcore-sys: running ar: {e}"));
-            assert!(st.success(), "uitcore-sys: ar -x failed on {}", src.display());
-            let mut members: Vec<PathBuf> = std::fs::read_dir(&objs).unwrap()
-                .map(|e| e.unwrap().path())
-                .filter(|p| p.extension().is_some_and(|x| x == "o"))
-                .collect();
-            members.sort();
-            // Zig writes members with mode 0, which ar keeps: make them readable.
-            #[cfg(unix)]
-            for m in &members {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(m, std::fs::Permissions::from_mode(0o644)).unwrap();
-            }
+            // Not `ar -x`: kern's archive has members with the same name
+            // (draw.o from libdraw and libmemdraw), and extracting by name
+            // keeps only the last. Number each member instead.
+            let members = unpack_archive(&src, &objs);
             assert!(!members.is_empty(), "uitcore-sys: no objects in {}", src.display());
             let out = dir.join(name);
             let _ = std::fs::remove_file(&out);
@@ -153,4 +143,45 @@ fn zig_target(target: &str, host: &str) -> String {
         panic!("uitcore-sys: no Zig target for {target}");
     };
     format!("{arch}-{os}")
+}
+
+/// Writes every object in a BSD or GNU `ar` archive to `dir` as
+/// `NNNN-name`, skipping symbol tables, and returns their paths in order.
+fn unpack_archive(src: &std::path::Path, dir: &std::path::Path) -> Vec<PathBuf> {
+    let data = std::fs::read(src).unwrap();
+    assert!(data.starts_with(b"!<arch>\n"), "uitcore-sys: {} is not an archive", src.display());
+    let field = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
+    let mut gnu_names: &[u8] = &[];
+    let mut out = Vec::new();
+    let mut off = 8;
+    while off + 60 <= data.len() {
+        let h = &data[off..off + 60];
+        let raw = field(&h[0..16]);
+        let size: usize = field(&h[48..58]).parse().expect("uitcore-sys: archive member size");
+        let mut body = &data[off + 60..off + 60 + size];
+        let name = if let Some(n) = raw.strip_prefix("#1/") {
+            let n: usize = n.parse().unwrap();
+            let nm = String::from_utf8_lossy(&body[..n]).trim_end_matches('\0').to_string();
+            body = &body[n..];
+            nm
+        } else if raw == "//" {
+            gnu_names = body;
+            String::new()
+        } else if let Some(i) = raw.strip_prefix('/').and_then(|i| i.parse::<usize>().ok()) {
+            let rest = &gnu_names[i..];
+            let end = rest.iter().position(|&c| c == b'\n').unwrap_or(rest.len());
+            String::from_utf8_lossy(&rest[..end]).trim_end_matches('/').to_string()
+        } else {
+            raw.trim_end_matches('/').to_string()
+        };
+        off += 60 + size + (size & 1);
+        if name.is_empty() || name.starts_with("__.SYMDEF") || name == "/" || name == "/SYM64/" {
+            continue;
+        }
+        let base = std::path::Path::new(&name).file_name().unwrap().to_string_lossy().into_owned();
+        let p = dir.join(format!("{:04}-{base}", out.len()));
+        std::fs::write(&p, body).unwrap();
+        out.push(p);
+    }
+    out
 }
