@@ -3,6 +3,8 @@
 // `argv` is the command line in the app's directory, as the native
 // `uitree -t TITLE ...` takes it (tests/conformance/examples).
 
+import './cache.js';
+
 export const apps = {
   counter: { title: 'Counter', argv: ['rc', 'counter.rc'], files: ['counter.rc', 'lib.rc'] },
   hello: { title: 'Greeter', argv: ['rc', 'hello.rc'], files: ['hello.rc', 'lib.rc'] },

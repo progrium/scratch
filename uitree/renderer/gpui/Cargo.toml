@@ -21,3 +21,12 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "
 gpui-kit = { git = "https://github.com/longbridge/gpui-component", rev = "cf945af2d6491ff9bc175f3f1656a14793987db2", features = ["inspector"] }
 futures = "0.3"
 
+
+# The browser build (uitree/web/build.sh): smallest code over fastest, one
+# codegen unit and fat LTO, so the download is as small as rustc makes it.
+# The desktop release profile is untouched.
+[profile.web]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1

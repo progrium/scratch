@@ -9,8 +9,7 @@ description = "The GPUI host: draws the core's committed tree through uitcore.h"
 [dependencies]
 uitcore.workspace = true
 gpui.workspace = true
-# `syntect`: syntax highlighting for the editor, markdown code blocks and diffs.
-gpui-component = { workspace = true, features = ["syntect"] }
+gpui-component.workspace = true
 # The desktop platform, the full Lucide icon set (AllAssets) and the
 # `inspector` feature, which keeps gpui's style reflection table in release
 # builds (the host resolves no-argument style words through it).
@@ -29,6 +28,12 @@ similar = "2.7"
 # the browser's clock there (uitree/web).
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-time = "1.1"
+
+# `syntect`: syntax highlighting for the editor, markdown code blocks and
+# diffs. Not on the web, where its syntax set is 5 MB of the download
+# (uitree/web/README.md): code shows as plain text there.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+gpui-component = { workspace = true, features = ["syntect"] }
 
 [features]
 # Exposes `host::testing` (the TestAppContext harness) to other crates.

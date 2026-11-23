@@ -21,8 +21,9 @@ page (main thread)                                   Worker, one per app
 cd uitree/third_party/hyper9 && scripts/fetch.sh iso386 &&
   zig build isoroot -- .local/9front/9front-11952.386.iso .local/9front/root386   # once
 cargo install wasm-bindgen-cli --version 0.2.130                                   # Cargo.lock's
+# and wasm-opt from binaryen (any recent release); brotli, if installed, too
 cd uitree/web && ./build.sh            # dist/: everything the page loads
-cd dist && python3 -m http.server      # http://localhost:8000
+node serve.mjs                         # http://localhost:8000, dist/ with its .br and .gz
 ```
 
 Needs JavaScript Promise Integration: Chrome or Edge 137 or later (h9's own
@@ -90,20 +91,65 @@ web); more than one app per core.
 
 ## Size and speed
 
-From this build (ReleaseSmall Zig, release Rust, names stripped), headless
-Chromium 153 with SwiftShader (WebGPU found no adapter there, so gpui_web
-fell back to WebGL2):
+What a page downloads, from this build: ReleaseSmall Zig, Rust in Cargo's
+`web` profile (opt-level `z`, fat LTO, one codegen unit), names stripped.
+gzip is `gzip -9`, brotli is quality 11, as build.sh writes them beside
+each file.
 
-| File | Raw | gzip |
+| File | Raw | gzip | brotli |
+| --- | --- | --- | --- |
+| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host) | 16.8 MB | 5.6 MB | 3.9 MB |
+| `uitcore-shared.wasm` / `uitcore.wasm` (the core) | 0.56 MB | 0.21 MB | 0.16 MB |
+| `uitree-tui.wasm` (terminal renderer + core + Yoga + libc++) | 1.1 MB | 0.33 MB | 0.24 MB |
+| `h9/h9.wasm` (h9, DWARF stripped) | 4.6 MB | 1.2 MB | 0.83 MB |
+| `h9/root.h9a` (root.list: rc, awk, sed and 27 more) | 2.2 MB | 0.99 MB | 0.26 MB |
+
+So a GPUI page is about 8 MB gzip or 5.2 MB brotli, and a terminal page
+2.5 MB or 1.3 MB (plus xterm.js from its CDN).
+
+Where it came from, each step measured on the one before (gzip):
+
+| Change | Before | After |
 | --- | --- | --- |
-| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host) | 28.6 MB | 9.1 MB |
-| `uitcore-shared.wasm` / `uitcore.wasm` (the core) | 0.56 MB | 0.21 MB |
-| `uitree-tui.wasm` (terminal renderer + core + Yoga + libc++) | 1.1 MB | 0.33 MB |
-| `h9/h9.wasm` (h9, unchanged) | 17.5 MB | 5.1 MB |
-| `h9/root.h9a` (386 root: rc, awk, sed, ...) | 4.3 MB | 1.9 MB |
+| h9.wasm: `wasm-opt --strip-debug` (12.9 MB of it was DWARF; the code is unchanged) | 5.1 MB | 1.2 MB |
+| root.h9a: root.list only, not h9's demo root (rio, acme and the vga font were 0.85 MB raw) | 1.9 MB | 0.99 MB |
+| GPUI: no `syntect` on wasm (its syntax set; code shows unhighlighted on the web) | 9.1 MB | 8.2 MB |
+| GPUI: the `web` profile (opt-level `z`, fat LTO, one codegen unit) | 8.2 MB | 5.6 MB |
 
-The GPUI module is 23 MB of code and 5.5 MB of data (fonts, syntect's
-syntaxes); wasm-opt and dropping syntect are the obvious cuts.
+Tried and left out:
+
+- **opt-level `s`** instead of `z`: 6.4 MB gzip against 5.6 MB. Settings'
+  load and instantiate time and a run of clicks measured the same on both
+  (headless Chromium, within run-to-run noise).
+- **wasm-opt -Oz on the GPUI module**: 16.8 to 14.3 MB raw, but 5.56 to
+  5.60 MB gzip and 3.93 to 4.01 MB brotli. It took 2.5 MB off h9.wasm's
+  raw size and 0.01 MB off its gzip.
+- **Subsetting the fonts** to Latin, punctuation, arrows, box drawing and
+  symbols: 0.09 MB gzip for both, for losing Greek and Cyrillic.
+
+Brotli is worth having: it takes root.h9a from 0.99 to 0.26 MB, because its
+window spans whole binaries (each 9front command links its own libc) where
+gzip's 32 KB doesn't. The browser can't decompress brotli itself
+(`DecompressionStream` has gzip and deflate only, Chromium 158), so it has
+to come from the server: nginx's `brotli_static`, Caddy's `file_server
+precompressed`, or a CDN that compresses. `node serve.mjs` serves dist/
+that way, with the .br and .gz files build.sh writes.
+
+**Caching.** `sw.js`, a service worker (`cache.js`, imported by apps.js,
+registers it), answers every same-origin GET from a cache once it has
+fetched it, so h9.wasm, root.h9a and the GPUI module download once per
+build, not once per page or iframe. build.sh stamps the cache's name with a
+hash of dist/, so a new build replaces it; an unstamped `sw.js` (the source
+copy) caches nothing. The first page a browser opens isn't controlled until
+the worker activates (it claims the page then), so a file that page fetched
+before that is fetched once more, through the cache, on the next one.
+
+**Loading GPUI only when shown.** Only `gpui.html` loads the GPUI module,
+so a docs page that embeds each demo as `<iframe loading="lazy"
+src="gpui.html?app=NAME">` downloads it when the first such iframe nears the
+viewport, and with the service worker, once.
+
+From the earlier build (Chromium 153, SwiftShader, WebGL2):
 
 - Instantiating the GPUI module takes about 200 ms after download; the
   core 4 ms; the terminal module with its core 50 to 70 ms.
