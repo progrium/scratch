@@ -1,0 +1,10 @@
+type    stepper  tier=component  since=1.0
+prop    items     data  file
+prop    value     word
+prop    dir       enum=row,col  default=row
+prop    disabled  bool
+word    disabled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none
+file    items  format=items

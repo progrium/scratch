@@ -1,0 +1,8 @@
+type    tag  tier=component  profile=feedback  since=1.0
+prop    label     text  file
+prop    closable  bool  default=off
+word    closable  kind=flag
+word    primary secondary danger success warning info outline amber black blue cyan emerald fuchsia gray green indigo lime neutral orange pink purple red rose sky teal violet white yellow  kind=variant
+word    xs sm md lg  kind=size
+event   close  kind=action
+child   none

@@ -1,0 +1,5 @@
+type    img  tier=element  profile=core  since=1.0
+prop    src    text  file
+prop    data   bytes  file
+prop    scale  number  default=1
+child   none

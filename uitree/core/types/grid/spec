@@ -1,0 +1,5 @@
+type    grid  tier=component  profile=layout  since=1.0
+prop    cols  number
+prop    rows  number
+prop    gap   number
+child   any

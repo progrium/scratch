@@ -1,0 +1,22 @@
+type    editor  tier=component  since=1.0
+prop    value         bytes  file
+prop    language      word  default=text
+prop    line-numbers  bool  default=off
+prop    soft-wrap     bool  default=off
+prop    tab-size      number  default=4
+prop    readonly      bool  default=off
+prop    placeholder   text  file
+prop    diagnostics   data  file
+prop    selection     data  file
+prop    completions   data  file
+prop    hover         bytes  file
+word    line-numbers soft-wrap readonly  kind=flag
+event   change    kind=state
+event   cursor    kind=state
+event   save      kind=action
+event   complete  kind=request
+event   hover     kind=request
+child   none
+file    diagnostics  format=diagnostics
+file    selection  format=selection
+file    completions  format=completions

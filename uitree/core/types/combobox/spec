@@ -1,0 +1,14 @@
+type    combobox  tier=component  since=1.0
+prop    items        data  file
+prop    value        text  file
+prop    multiple     bool
+prop    placeholder  text  file
+prop    query        text  file  readonly
+prop    disabled     bool
+prop    controlled   bool
+word    multiple disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+event   query   kind=state
+child   none
+file    items  format=items

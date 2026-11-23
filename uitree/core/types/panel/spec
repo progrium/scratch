@@ -1,0 +1,5 @@
+type    panel  tier=component  profile=layout  since=1.0
+prop    size  number
+prop    min   number
+prop    max   number
+child   any

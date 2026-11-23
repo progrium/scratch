@@ -1,0 +1,9 @@
+type    context-menu  tier=overlay  profile=overlay  since=1.0
+prop    anchor  path
+prop    menu    data  file
+prop    open    bool  default=off  readonly
+verb    open   class=activate
+verb    close  class=activate
+event   action  kind=action
+child   none
+file    menu  format=menu

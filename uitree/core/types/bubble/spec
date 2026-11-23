@@ -1,0 +1,6 @@
+type    bubble  tier=component  since=1.0
+prop    role    enum=user,assistant,system,tool  default=assistant
+prop    text    bytes  file
+prop    avatar  text  file
+word    filled secondary muted tinted outline ghost destructive  kind=variant
+child   none

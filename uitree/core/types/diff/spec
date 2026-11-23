@@ -1,0 +1,9 @@
+type    diff  tier=component  since=1.0
+prop    old           bytes  file
+prop    new           bytes  file
+prop    patch         bytes  file
+prop    path          text  file
+prop    view          enum=unified,split  default=unified
+prop    line-numbers  bool  default=on
+word    line-numbers  kind=flag
+child   none

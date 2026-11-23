@@ -1,0 +1,7 @@
+type    message-list  tier=component  since=1.0
+prop    items            data  file
+prop    stick-to-bottom  bool  default=on
+word    stick-to-bottom  kind=flag
+event   scrolled-to-top  kind=action
+child   none
+file    items  format=messages
