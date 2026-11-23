@@ -115,6 +115,10 @@ pub const Opened = struct {
     /// For a `stream`: where reads come from. Null for a `file`, whose
     /// contents come from `read`.
     stream: ?Stream = null,
+    /// For a `file` too large to read whole at open (a file handle's
+    /// `data`): reads at any offset come from here, and `read` is not
+    /// called.
+    random: ?Random = null,
     write_mode: WriteMode = .at_close,
     /// Handed back to `commit` for writes through this open: what the
     /// file was under when it was opened, so a commit after that went
@@ -149,6 +153,27 @@ pub const Stream = struct {
     }
     pub fn close(s: Stream) void {
         s.vt.close(s.ptr);
+    }
+};
+
+/// A file read at any offset, without holding its contents.
+pub const Random = struct {
+    ptr: *anyopaque,
+    vt: *const VTable,
+
+    pub const VTable = struct {
+        /// Up to `buf.len` bytes at `off`; 0 at the end. Errors are the
+        /// text of a failed read.
+        pread: *const fn (ptr: *anyopaque, off: u64, buf: []u8, err: *Err) Error!usize,
+        /// Called once, at clunk.
+        close: *const fn (ptr: *anyopaque) void,
+    };
+
+    pub fn pread(r: Random, off: u64, buf: []u8, err: *Err) Error!usize {
+        return r.vt.pread(r.ptr, off, buf, err);
+    }
+    pub fn close(r: Random) void {
+        r.vt.close(r.ptr);
     }
 };
 

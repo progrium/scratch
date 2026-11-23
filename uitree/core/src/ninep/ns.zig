@@ -16,6 +16,7 @@ const fsmod = @import("fs.zig");
 const Allocator = std.mem.Allocator;
 const Err = fsmod.Err;
 const Tree = tree.Tree;
+const files = tree.files;
 
 pub const TreeFs = struct {
     gpa: Allocator,
@@ -87,6 +88,7 @@ pub const TreeFs = struct {
         const snap = n.t.acquire();
         defer snap.release();
         if (snap.gone()) return if (path.len == 0) .{ .kind = .dir, .qid = fsmod.qidOf(""), .perm = 0o777 } else gone_entry;
+        if (inFiles(path)) return n.fileStat(path);
         var arena: std.heap.ArenaAllocator = .init(n.gpa);
         defer arena.deinit();
         const st = snap.stat(arena.allocator(), path) catch return null;
@@ -98,6 +100,7 @@ pub const TreeFs = struct {
         const snap = n.t.acquire();
         defer snap.release();
         if (snap.gone()) return err.set("app gone");
+        if (inFiles(path) or std.mem.eql(u8, path, "file")) return n.fileList(path, arena, err);
         const sts = snap.list(arena, path) catch |e| return errText(err, e);
         const out = try arena.alloc(fsmod.DirEnt, sts.len);
         for (sts, out) |st, *o| {
@@ -112,6 +115,7 @@ pub const TreeFs = struct {
         const snap = n.t.acquire();
         defer snap.release();
         if (snap.gone()) return err.set("app gone");
+        if (inFiles(path)) return n.fileOpen(path, mode, err);
         var arena: std.heap.ArenaAllocator = .init(n.gpa);
         defer arena.deinit();
         const target = snap.streamTarget(arena.allocator(), path) catch |e| {
@@ -169,6 +173,7 @@ pub const TreeFs = struct {
         const snap = n.t.acquire();
         defer snap.release();
         if (snap.gone()) return err.set("app gone");
+        if (inFiles(path)) return n.fileRead(path, arena, err);
         return snap.read(arena, path) catch |e| errText(err, e);
     }
 
@@ -189,6 +194,7 @@ pub const TreeFs = struct {
     }
 
     fn commit(p: *anyopaque, c: fsmod.ConnId, path: []const u8, token: u64, data: []const u8, err: *Err) fsmod.Error!void {
+        if (inFiles(path)) return self(p).fileCommit(path, data, err);
         var op: tree.Op.FileOp = .{ .session = @intCast(c), .path = path, .data = data };
         // The tree says `gone` when the node the file was opened under has
         // been deleted since (FileOp.node).
@@ -202,6 +208,7 @@ pub const TreeFs = struct {
 
     fn create(p: *anyopaque, c: fsmod.ConnId, dir: []const u8, name: []const u8, is_dir: bool, err: *Err) fsmod.Error!fsmod.Entry {
         const n = self(p);
+        if (inFiles(dir) or std.mem.eql(u8, dir, "file")) return err.set("permission denied: file handles are made by the host");
         const full = try fsmod.join(n.gpa, dir, name);
         defer n.gpa.free(full);
         if (is_dir) {
@@ -213,7 +220,186 @@ pub const TreeFs = struct {
     }
 
     fn remove(p: *anyopaque, c: fsmod.ConnId, path: []const u8, err: *Err) fsmod.Error!void {
+        if (inFiles(path)) return err.set("permission denied: write release to the handle's ctl");
         return self(p).call(.{ .remove = .{ .session = @intCast(c), .path = path } }, err);
+    }
+
+    // ------------------------------------------------------------------
+    // `file/ID/`: file handles (transfer.md § Host files), served from the
+    // tree's `Files` rather than a snapshot.
+
+    fn inFiles(path: []const u8) bool {
+        return std.mem.startsWith(u8, path, "file/");
+    }
+
+    const Leaf = enum { root, name, info, data, ctl, events, dir };
+    const leaf_names = [_][]const u8{ "name", "info", "data", "ctl", "events", "dir" };
+
+    /// A path under `file/`: the handle (referenced), the file, and for
+    /// `dir/...` the path below the handle's directory.
+    const FileLoc = struct {
+        h: *files.Handle,
+        leaf: Leaf,
+        sub: []const u8 = "",
+    };
+
+    fn fileLoc(n: *TreeFs, path: []const u8) ?FileLoc {
+        var it = std.mem.splitScalar(u8, path["file/".len..], '/');
+        const h = n.t.files.getWord(it.next().?) orelse return null;
+        const leaf_s = it.next() orelse return .{ .h = h, .leaf = .root };
+        const leaf = std.meta.stringToEnum(Leaf, leaf_s) orelse {
+            h.unref(n.gpa);
+            return null;
+        };
+        if (leaf == .root or (leaf != .dir and it.peek() != null)) {
+            h.unref(n.gpa);
+            return null;
+        }
+        return .{ .h = h, .leaf = leaf, .sub = it.rest() };
+    }
+
+    fn fileStat(n: *TreeFs, path: []const u8) ?fsmod.Entry {
+        const l = n.fileLoc(path) orelse return null;
+        defer l.h.unref(n.gpa);
+        const fs_ = &n.t.files;
+        const top = fs_.info(l.h, "") catch return null;
+        const q = fsmod.qidOf(path);
+        return switch (l.leaf) {
+            .root => .{ .kind = .dir, .qid = q, .perm = 0o555 },
+            .name, .info => .{ .kind = .file, .qid = q, .perm = 0o444 },
+            .ctl => .{ .kind = .file, .qid = q, .perm = 0o222 },
+            .events => .{ .kind = .stream, .qid = q, .perm = 0o444 },
+            .data => if (top.dir) null else .{ .kind = .file, .qid = q, .perm = if (l.h.rw) 0o666 else 0o444, .length = top.size },
+            .dir => blk: {
+                if (!top.dir) break :blk null;
+                const in = fs_.info(l.h, l.sub) catch break :blk null;
+                break :blk if (in.dir)
+                    .{ .kind = .dir, .qid = q, .perm = 0o555 }
+                else
+                    .{ .kind = .file, .qid = q, .perm = 0o444, .length = in.size };
+            },
+        };
+    }
+
+    fn fileList(n: *TreeFs, path: []const u8, arena: Allocator, err: *Err) fsmod.Error![]const fsmod.DirEnt {
+        var out: std.ArrayList(fsmod.DirEnt) = .empty;
+        if (std.mem.eql(u8, path, "file")) {
+            for (try n.t.files.ids(arena)) |id| {
+                const name = try std.fmt.allocPrint(arena, "{d}", .{id});
+                const full = try fsmod.join(arena, path, name);
+                try out.append(arena, .{ .name = name, .entry = .{ .kind = .dir, .qid = fsmod.qidOf(full), .perm = 0o555 } });
+            }
+            return out.items;
+        }
+        const l = n.fileLoc(path) orelse return err.set("not found");
+        defer l.h.unref(n.gpa);
+        switch (l.leaf) {
+            .root => {
+                const top = n.t.files.info(l.h, "") catch return err.set("gone");
+                for (leaf_names) |nm| {
+                    if (std.mem.eql(u8, nm, if (top.dir) "data" else "dir")) continue;
+                    const full = try fsmod.join(arena, path, nm);
+                    if (n.fileStat(full)) |e| try out.append(arena, .{ .name = nm, .entry = e });
+                }
+            },
+            .dir => {
+                const ents = n.t.files.list(l.h, l.sub, arena) catch |e| return fileErr(err, e);
+                for (ents) |e| {
+                    const full = try fsmod.join(arena, path, e.name);
+                    try out.append(arena, .{ .name = e.name, .entry = if (e.info.dir)
+                        .{ .kind = .dir, .qid = fsmod.qidOf(full), .perm = 0o555 }
+                    else
+                        .{ .kind = .file, .qid = fsmod.qidOf(full), .perm = 0o444, .length = e.info.size } });
+                }
+            },
+            else => return err.set("not found"),
+        }
+        return out.items;
+    }
+
+    fn fileErr(err: *Err, e: files.Error) fsmod.Error {
+        return switch (e) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.NotFound => err.set("gone"),
+            error.PermissionDenied => err.set("permission denied"),
+            error.Io => err.set("bad value: read failed"),
+        };
+    }
+
+    fn fileOpen(n: *TreeFs, path: []const u8, mode: fsmod.OpenMode, err: *Err) fsmod.Error!fsmod.Opened {
+        const l = n.fileLoc(path) orelse return err.set("not found");
+        defer l.h.unref(n.gpa);
+        switch (l.leaf) {
+            .root => return .{},
+            .ctl => {
+                if (mode.read) return err.set("permission denied: write-only");
+                return .{ .write_mode = .ctl };
+            },
+            .name, .info => {
+                if (mode.write) return err.set("permission denied: read-only");
+                return .{};
+            },
+            .events => {
+                if (mode.write) return err.set("permission denied: read-only");
+                const e = try n.t.files.openEvents(l.h);
+                return .{ .stream = .{ .ptr = e, .vt = &fev_vt } };
+            },
+            .data, .dir => {
+                if (mode.write and !l.h.rw) return err.set("permission denied: read-only");
+                if (mode.write) return err.set("unsupported: writing a handle");
+                const r = n.t.files.openData(l.h, if (l.leaf == .dir) l.sub else "") catch |e| return fileErr(err, e);
+                return .{ .random = .{ .ptr = r, .vt = &rand_vt } };
+            },
+        }
+    }
+
+    fn fileRead(n: *TreeFs, path: []const u8, arena: Allocator, err: *Err) fsmod.Error![]const u8 {
+        const l = n.fileLoc(path) orelse return err.set("not found");
+        defer l.h.unref(n.gpa);
+        return switch (l.leaf) {
+            .name => try std.fmt.allocPrint(arena, "{s}\n", .{l.h.name}),
+            .info => n.t.files.infoLine(l.h, arena) catch |e| fileErr(err, e),
+            else => "",
+        };
+    }
+
+    fn fileCommit(n: *TreeFs, path: []const u8, data: []const u8, err: *Err) fsmod.Error!void {
+        const l = n.fileLoc(path) orelse return err.set("gone");
+        defer l.h.unref(n.gpa);
+        if (l.leaf != .ctl) return err.set("permission denied: read-only");
+        var it = std.mem.tokenizeAny(u8, data, "\n");
+        while (it.next()) |ln| {
+            const w = std.mem.trim(u8, ln, " \t\r");
+            if (w.len == 0) continue;
+            if (!std.mem.eql(u8, w, "release")) return err.print("unknown command: {s}", .{w});
+            _ = n.t.files.release(l.h.id);
+        }
+    }
+
+    const rand_vt: fsmod.Random.VTable = .{ .pread = rPread, .close = rClose };
+
+    fn rPread(p: *anyopaque, off: u64, buf: []u8, err: *Err) fsmod.Error!usize {
+        const r: *files.Reader = @ptrCast(@alignCast(p));
+        return r.pread(off, buf) catch |e| fileErr(err, e);
+    }
+    fn rClose(p: *anyopaque) void {
+        const r: *files.Reader = @ptrCast(@alignCast(p));
+        r.close();
+    }
+
+    const fev_vt: fsmod.Stream.VTable = .{ .read = fevRead, .interrupt = fevInterrupt, .close = fevClose };
+
+    fn fevRead(p: *anyopaque, buf: []u8) error{Interrupted}!usize {
+        const e: *files.Events = @ptrCast(@alignCast(p));
+        return e.read(buf);
+    }
+    fn fevInterrupt(p: *anyopaque) void {
+        const e: *files.Events = @ptrCast(@alignCast(p));
+        e.interrupt();
+    }
+    fn fevClose(p: *anyopaque) void {
+        const e: *files.Events = @ptrCast(@alignCast(p));
+        e.close();
     }
 
     const stream_vt: fsmod.Stream.VTable = .{ .read = sRead, .interrupt = sInterrupt, .close = sClose };

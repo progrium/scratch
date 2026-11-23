@@ -295,6 +295,18 @@ impl Harness {
         self.settle();
     }
 
+    /// Drops host files from the platform on the middle of a node, as a
+    /// file manager would: enter, move, submit.
+    pub fn drop_files(&mut self, path: &str, files: &[std::path::PathBuf]) {
+        let [x, y, w, h] = self.bounds(path);
+        let mut v = self.visual(&Self::window_of(path));
+        let p = point(px(x + w / 2.), px(y + h / 2.));
+        v.simulate_event(gpui::FileDropEvent::Entered { position: p, paths: gpui::ExternalPaths(files.to_vec().into()) });
+        v.simulate_event(gpui::FileDropEvent::Pending { position: p });
+        v.simulate_event(gpui::FileDropEvent::Submit { position: p });
+        self.settle();
+    }
+
     /// Moves the mouse to the middle of a node.
     pub fn hover(&mut self, path: &str) {
         let [x, y, w, h] = self.bounds(path);

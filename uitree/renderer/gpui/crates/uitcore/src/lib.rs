@@ -597,7 +597,10 @@ impl Core {
         unsafe { sys::uit_system_dark(self.raw, dark as u32) };
     }
 
-    /// Transfer layer. `Start` returns the new drag's number.
+    /// Transfer layer (`uit_drag` in uitcore.h). `Start` returns the new
+    /// drag's number; `Drop` with drag 0 takes a platform drop's offer as
+    /// `file=HOST-PATH` (made into read-only file handles) and `TYPE=BYTES`
+    /// attributes, and returns the `drop` request's seq.
     pub fn drag(&self, kind: DragKind, drag: u64, n: Node, x: f32, y: f32, attrs: &[(&str, &str)]) -> Result<u64, Error> {
         let a: Vec<sys::UitAttr> = attrs.iter().map(|(k, v)| sys::UitAttr { name: s(k), value: s(v) }).collect();
         let m = sys::UitDragMsg {

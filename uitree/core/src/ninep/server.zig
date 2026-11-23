@@ -131,6 +131,7 @@ const Fid = struct {
     write_mode: fsmod.WriteMode = .at_close,
     token: u64 = 0,
     stream: ?fsmod.Stream = null,
+    random: ?fsmod.Random = null,
 };
 
 const Pending = struct {
@@ -242,6 +243,7 @@ const Conn = struct {
 
     fn freeFid(cn: *Conn, f: *Fid) void {
         if (f.stream) |s| s.close();
+        if (f.random) |r| r.close();
         cn.gpa().free(f.path);
         cn.gpa().free(f.data);
         f.wbuf.deinit(cn.gpa());
@@ -532,10 +534,11 @@ const Conn = struct {
         }
         const opened = try fs.open(cn.id, f.path, om, err);
         f.stream = opened.stream;
+        f.random = opened.random;
         f.write_mode = opened.write_mode;
         f.token = opened.token;
         f.mode = om;
-        if (f.entry.kind == .file and om.read and opened.stream == null and !om.trunc) {
+        if (f.entry.kind == .file and om.read and opened.stream == null and opened.random == null and !om.trunc) {
             var arena: std.heap.ArenaAllocator = .init(cn.gpa());
             defer arena.deinit();
             const data = fs.read(cn.id, f.path, arena.allocator(), err) catch |e| {
@@ -595,6 +598,16 @@ const Conn = struct {
                 end += sz;
             }
             return cn.replyRead(tag, f.data[start..end]);
+        }
+        if (f.random) |r| {
+            const buf = try cn.gpa().alloc(u8, cap);
+            defer cn.gpa().free(buf);
+            var err: Err = .{};
+            const n = r.pread(off, buf, &err) catch |e| switch (e) {
+                error.Failed => return cn.fail(tag, err.text()),
+                error.OutOfMemory => return error.OutOfMemory,
+            };
+            return cn.replyRead(tag, buf[0..n]);
         }
         const start: usize = @intCast(@min(off, f.data.len));
         const end = @min(start + cap, f.data.len);

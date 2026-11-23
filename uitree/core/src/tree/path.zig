@@ -22,7 +22,7 @@ const Error = proto.Error;
 const Diag = proto.Diag;
 
 /// App-level directories.
-pub const Dir = enum { root, menu, theme, asset, types, style, win, drag };
+pub const Dir = enum { root, menu, theme, asset, types, style, win, drag, clipdata, file };
 
 /// App-level files.
 pub const AppFile = enum {
@@ -38,6 +38,8 @@ pub const AppFile = enum {
     theme_mode,
     theme_names,
     style_words,
+    /// `clipdata/types`.
+    clip_types,
 };
 
 pub const Loc = union(enum) {
@@ -49,8 +51,20 @@ pub const Loc = union(enum) {
     asset: []const u8,
     /// `drag/N/`.
     drag: u64,
-    /// `drag/N/data`.
-    drag_data: u64,
+    /// `drag/N/types`.
+    drag_types: u64,
+    /// `drag/N/data/`.
+    drag_data_dir: u64,
+    /// `drag/N/data/TYPE`, whether it is written yet or not.
+    drag_data: struct { n: u64, ty: []const u8 },
+    /// `drag/N/item/`.
+    drag_items: u64,
+    /// `drag/N/item/I/`.
+    drag_item: DragItem,
+    /// `drag/N/item/I/file`.
+    drag_item_file: DragItem,
+    /// `clipdata/TYPE`, whether the clipboard holds it or not.
+    clipdata: []const u8,
     type_dir: *const Type,
     /// `types/NAME/spec` or `types/NAME/version`.
     type_file: struct { ty: *const Type, name: []const u8 },
@@ -62,6 +76,8 @@ pub const Loc = union(enum) {
     /// One of `state.window_files`, under the window with root `root`.
     win_file: struct { root: Handle, name: []const u8 },
 };
+
+pub const DragItem = struct { n: u64, i: usize };
 
 pub const theme_files = [_][]const u8{ "tokens", "name", "names", "pref", "mode" };
 
@@ -110,7 +126,7 @@ pub fn resolve(st: *const State, cat: *const Catalog, arena: Allocator, path_in:
     if (one) {
         const app: ?AppFile = if (eq(u8, first, "version")) .version else if (eq(u8, first, "ctl")) .ctl else if (eq(u8, first, "events")) .events else if (eq(u8, first, "trace")) .trace else if (eq(u8, first, "keys")) .keys else if (eq(u8, first, "clip")) .clip else null;
         if (app) |a| return .{ .app = a };
-        const dir: ?Dir = if (eq(u8, first, "menu")) .menu else if (eq(u8, first, "theme")) .theme else if (eq(u8, first, "asset")) .asset else if (eq(u8, first, "types")) .types else if (eq(u8, first, "style")) .style else if (eq(u8, first, "drag")) .drag else null;
+        const dir: ?Dir = if (eq(u8, first, "menu")) .menu else if (eq(u8, first, "theme")) .theme else if (eq(u8, first, "asset")) .asset else if (eq(u8, first, "types")) .types else if (eq(u8, first, "style")) .style else if (eq(u8, first, "drag")) .drag else if (eq(u8, first, "clipdata")) .clipdata else if (eq(u8, first, "file")) .file else null;
         if (dir) |x| return .{ .dir = x };
         return nf(d, arena, path);
     }
@@ -147,12 +163,45 @@ pub fn resolve(st: *const State, cat: *const Catalog, arena: Allocator, path_in:
     if (eq(u8, first, "drag")) {
         var r = std.mem.splitScalar(u8, rest, '/');
         const n = std.fmt.parseInt(u64, r.next().?, 10) catch return nf(d, arena, path);
-        if (st.drag(n) == null) return nf(d, arena, path);
+        const dg = st.drag(n) orelse return nf(d, arena, path);
         const f = r.next() orelse return .{ .drag = n };
-        if (r.next() != null or !eq(u8, f, "data")) return nf(d, arena, path);
-        return .{ .drag_data = n };
+        if (eq(u8, f, "types")) {
+            if (r.next() != null) return nf(d, arena, path);
+            return .{ .drag_types = n };
+        }
+        if (eq(u8, f, "data")) {
+            const ty = r.next() orelse return .{ .drag_data_dir = n };
+            if (r.next() != null or !typeId(ty)) return nf(d, arena, path);
+            return .{ .drag_data = .{ .n = n, .ty = ty } };
+        }
+        if (eq(u8, f, "item")) {
+            const is = r.next() orelse return .{ .drag_items = n };
+            const i = std.fmt.parseInt(usize, is, 10) catch return nf(d, arena, path);
+            if (i >= dg.offer.items.items.len) return nf(d, arena, path);
+            const leaf = r.next() orelse return .{ .drag_item = .{ .n = n, .i = i } };
+            if (r.next() != null or !eq(u8, leaf, "file")) return nf(d, arena, path);
+            return .{ .drag_item_file = .{ .n = n, .i = i } };
+        }
+        return nf(d, arena, path);
+    }
+    if (eq(u8, first, "clipdata")) {
+        if (std.mem.indexOfScalar(u8, rest, '/') != null) return nf(d, arena, path);
+        if (eq(u8, rest, "types")) return .{ .app = .clip_types };
+        if (!typeId(rest)) return nf(d, arena, path);
+        return .{ .clipdata = rest };
     }
     return nf(d, arena, path);
+}
+
+/// A transfer type: lowercase letters, digits, `.` and `-` (transfer.md §
+/// Types).
+pub fn typeId(s: []const u8) bool {
+    if (s.len == 0 or s.len > 64) return false;
+    for (s) |c| switch (c) {
+        'a'...'z', '0'...'9', '.', '-' => {},
+        else => return false,
+    };
+    return true;
 }
 
 /// `NAME[/rest]` under `win/`.

@@ -331,8 +331,129 @@ pub const Win = struct {
 /// A named app file (`menu/NAME`, `asset/NAME`).
 pub const Named = struct { name: *Blob, val: *Blob, ver: u32 };
 
-/// `drag/N/data`.
-pub const Drag = struct { n: u64, val: *Blob, ver: u32 };
+/// One representation of an offer: a type and its bytes.
+pub const Rep = struct { ty: *Blob, val: *Blob, ver: u32 };
+
+/// Typed data (transfer.md): a drag's offer or the clipboard's contents.
+/// Shared between States like a node; `dupe` before changing a shared one.
+pub const Offer = struct {
+    rc: std.atomic.Value(u32) = .init(1),
+    /// The offered types, richest first. A client drag lists its
+    /// `drag-types` here before it writes their bytes.
+    types: std.ArrayList(*Blob) = .empty,
+    /// The representations written so far.
+    reps: std.ArrayList(Rep) = .empty,
+    /// For type `file`: item N's handle, as `file/ID`.
+    items: std.ArrayList(*Blob) = .empty,
+    /// The handles this offer made (files.zig), released if it is refused.
+    handles: std.ArrayList(u64) = .empty,
+
+    pub fn create(gpa: Allocator) Allocator.Error!*Offer {
+        const o = try gpa.create(Offer);
+        o.* = .{};
+        return o;
+    }
+
+    pub fn ref(o: *Offer) *Offer {
+        _ = o.rc.fetchAdd(1, .monotonic);
+        return o;
+    }
+
+    pub fn unref(o: *Offer, gpa: Allocator) void {
+        if (o.rc.fetchSub(1, .acq_rel) != 1) return;
+        o.freeParts(gpa);
+        gpa.destroy(o);
+    }
+
+    fn freeParts(o: *Offer, gpa: Allocator) void {
+        for (o.types.items) |b| b.unref(gpa);
+        o.types.deinit(gpa);
+        for (o.reps.items) |r| {
+            r.ty.unref(gpa);
+            r.val.unref(gpa);
+        }
+        o.reps.deinit(gpa);
+        for (o.items.items) |b| b.unref(gpa);
+        o.items.deinit(gpa);
+        o.handles.deinit(gpa);
+    }
+
+    pub fn dupe(o: *const Offer, gpa: Allocator) Allocator.Error!*Offer {
+        const c = try create(gpa);
+        errdefer c.unref(gpa);
+        try c.types.ensureTotalCapacity(gpa, o.types.items.len);
+        for (o.types.items) |b| c.types.appendAssumeCapacity(b.ref());
+        try c.reps.ensureTotalCapacity(gpa, o.reps.items.len);
+        for (o.reps.items) |r| c.reps.appendAssumeCapacity(.{ .ty = r.ty.ref(), .val = r.val.ref(), .ver = r.ver });
+        try c.items.ensureTotalCapacity(gpa, o.items.items.len);
+        for (o.items.items) |b| c.items.appendAssumeCapacity(b.ref());
+        try c.handles.appendSlice(gpa, o.handles.items);
+        return c;
+    }
+
+    pub fn rep(o: *const Offer, ty: []const u8) ?*const Rep {
+        for (o.reps.items) |*r| if (std.mem.eql(u8, r.ty.bytes, ty)) return r;
+        return null;
+    }
+
+    pub fn hasType(o: *const Offer, ty: []const u8) bool {
+        for (o.types.items) |b| if (std.mem.eql(u8, b.bytes, ty)) return true;
+        return false;
+    }
+
+    /// Lists `ty`, if it isn't yet.
+    pub fn addType(o: *Offer, gpa: Allocator, ty: []const u8) Allocator.Error!void {
+        if (o.hasType(ty)) return;
+        const b = try Blob.create(gpa, ty);
+        o.types.append(gpa, b) catch |e| {
+            b.unref(gpa);
+            return e;
+        };
+    }
+
+    /// Sets the bytes of type `ty`, listing it if needed.
+    pub fn setRep(o: *Offer, gpa: Allocator, ty: []const u8, val: []const u8, ver: u32) Allocator.Error!void {
+        try o.addType(gpa, ty);
+        const b = try Blob.create(gpa, val);
+        for (o.reps.items) |*r| if (std.mem.eql(u8, r.ty.bytes, ty)) {
+            r.val.unref(gpa);
+            r.val = b;
+            r.ver = ver;
+            return;
+        };
+        errdefer b.unref(gpa);
+        const tb = try Blob.create(gpa, ty);
+        o.reps.append(gpa, .{ .ty = tb, .val = b, .ver = ver }) catch |e| {
+            tb.unref(gpa);
+            return e;
+        };
+    }
+
+    /// Adds item N's handle name, `file/ID`.
+    pub fn addItem(o: *Offer, gpa: Allocator, id: u64) Allocator.Error!void {
+        var buf: [32]u8 = undefined;
+        const b = try Blob.create(gpa, std.fmt.bufPrint(&buf, "file/{d}", .{id}) catch unreachable);
+        o.items.append(gpa, b) catch |e| {
+            b.unref(gpa);
+            return e;
+        };
+        try o.handles.append(gpa, id);
+    }
+
+    /// The `types` file: one type per line.
+    pub fn writeTypes(o: *const Offer, w: *std.Io.Writer) std.Io.Writer.Error!void {
+        for (o.types.items) |b| try w.print("{s}\n", .{b.bytes});
+    }
+};
+
+/// `drag/N/`: one drag's offer.
+pub const Drag = struct {
+    n: u64,
+    offer: *Offer,
+    ver: u32,
+    /// The node a client-started drag came from; 0 for a host's drag.
+    source: Handle = 0,
+};
 
 /// A theme token the client set (`theme/tokens`), on top of the catalog's.
 pub const Token = struct { name: *Blob, val: *Blob };
@@ -378,8 +499,13 @@ pub const State = struct {
     /// `menu/NAME`, in creation order.
     menus: std.ArrayList(Named) = .empty,
     assets: std.ArrayList(Named) = .empty,
+    /// `clip`: the clipboard as text (transfer.md § Clipboard).
     clip: ?*Blob = null,
     clip_ver: u32 = 0,
+    /// `clipdata/`: every representation; null until a typed copy.
+    clipdata: ?*Offer = null,
+    /// The clipboard's generation, bumped by every change.
+    clip_gen: u64 = 0,
     drags: std.ArrayList(Drag) = .empty,
     tokens: std.ArrayList(Token) = .empty,
     tokens_ver: u32 = 0,
@@ -425,7 +551,8 @@ pub const State = struct {
         for (s.assets.items) |m| freeNamed(gpa, m);
         s.assets.deinit(gpa);
         unrefOpt(s.clip, gpa);
-        for (s.drags.items) |d| d.val.unref(gpa);
+        if (s.clipdata) |o| o.unref(gpa);
+        for (s.drags.items) |d| d.offer.unref(gpa);
         s.drags.deinit(gpa);
         for (s.tokens.items) |t| {
             t.name.unref(gpa);
@@ -452,6 +579,7 @@ pub const State = struct {
         _ = refOpt(c.keys);
         _ = refOpt(c.bar);
         _ = refOpt(c.clip);
+        if (c.clipdata) |o| _ = o.ref();
         _ = refOpt(c.theme_name);
         errdefer c.freeAll(gpa);
         c.nodes = try s.nodes.clone(gpa);
@@ -465,7 +593,7 @@ pub const State = struct {
         try c.assets.ensureTotalCapacity(gpa, s.assets.items.len);
         for (s.assets.items) |m| c.assets.appendAssumeCapacity(refNamed(m));
         try c.drags.ensureTotalCapacity(gpa, s.drags.items.len);
-        for (s.drags.items) |d| c.drags.appendAssumeCapacity(.{ .n = d.n, .val = d.val.ref(), .ver = d.ver });
+        for (s.drags.items) |d| c.drags.appendAssumeCapacity(.{ .n = d.n, .offer = d.offer.ref(), .ver = d.ver, .source = d.source });
         try c.tokens.ensureTotalCapacity(gpa, s.tokens.items.len);
         for (s.tokens.items) |t| c.tokens.appendAssumeCapacity(.{ .name = t.name.ref(), .val = t.val.ref() });
         return c;

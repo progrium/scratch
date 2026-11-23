@@ -33,6 +33,7 @@ const bus_mod = @import("bus.zig");
 const pathm = @import("path.zig");
 const trace = @import("trace.zig");
 const doc = @import("doc.zig");
+const filesm = @import("files.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -254,6 +255,13 @@ pub const Tree = struct {
     /// The snapshot 9P readers get, and its lock.
     snap: ?*Snapshot = null,
     snap_mu: Io.Mutex = .init,
+    /// File handles, `$ui/file/ID/` (transfer.md § Host files). Not tree
+    /// state: 9P threads read them directly.
+    files: filesm.Files,
+    /// The next drag number the tree gives out.
+    next_drag: u64 = 1,
+    /// The `op=` a drop's target accepted with, by drag, for `dragend`.
+    drag_ops: std.AutoHashMapUnmanaged(u64, []const u8) = .empty,
 
     /// A tree with the default `main` window, hidden. The tree must not
     /// move: streams point at its bus.
@@ -268,6 +276,7 @@ pub const Tree = struct {
             .st = try State.create(gpa),
             .bus = .init(gpa, io),
             .log = .{ .arena = .init(gpa) },
+            .files = .init(gpa, io),
         };
         t.st.system_dark = cfg.system_dark;
         errdefer t.destroyParts();
@@ -288,6 +297,8 @@ pub const Tree = struct {
         t.bus.deinit();
         t.shared.bounds.deinit(t.gpa);
         t.log.arena.deinit();
+        t.files.deinit();
+        t.drag_ops.deinit(t.gpa);
     }
 
     /// Frees the tree. Every snapshot must be released and every stream
@@ -862,6 +873,7 @@ pub const Tree = struct {
         if (std.mem.eql(u8, r.default, "quit")) return t.quitNow();
         if (!std.mem.eql(u8, r.default, "close") and r.drag == null) return;
         if (t.st.gone) return;
+        if (r.drag) |dn| if (std.mem.eql(u8, r.default, "refuse")) t.releaseOffer(dn);
         try t.mutate(struct {
             fn f(tx: *Tx, rr: Request) Error!void {
                 if (rr.drag) |dn| tx.dropDrag(dn);
@@ -1035,23 +1047,100 @@ pub const Tree = struct {
         _ = try t.emit(.{ .name = "action", .key = id, .via = "menu", .kind = .action });
     }
 
-    /// `/debug/inject drag`: adds `data` to drag N, making it if needed.
-    pub fn dragData(t: *Tree, n: u64, data: []const u8) Error!void {
-        return t.mutate(struct {
-            fn f(tx: *Tx, x: struct { u64, []const u8 }) Error!void {
-                const b = try Blob.create(tx.t.gpa, x[1]);
-                for (tx.st.drags.items) |*dg| if (dg.n == x[0]) {
-                    dg.val.unref(tx.t.gpa);
-                    dg.val = b;
-                    dg.ver = tx.gen;
-                    return;
-                };
-                tx.st.drags.append(tx.t.gpa, .{ .n = x[0], .val = b, .ver = tx.gen }) catch |e| {
-                    b.unref(tx.t.gpa);
-                    return e;
-                };
+    // ------------------------------------------------------------ drags
+
+    /// A drag number for a new drag: `n`, or the next free one if 0.
+    fn dragNumber(t: *Tree, n: u64) u64 {
+        const got = if (n == 0) t.next_drag else n;
+        if (got >= t.next_drag) t.next_drag = got + 1;
+        return got;
+    }
+
+    /// Sets type `ty` of drag N's offer to `data`, making the drag if
+    /// needed (N 0: a new one). A host's drop, `/debug/inject drag`.
+    /// Returns the drag's number.
+    pub fn dragData(t: *Tree, n: u64, ty: []const u8, data: []const u8) Error!u64 {
+        if (!pathm.typeId(ty)) return error.BadValue;
+        const dn = t.dragNumber(n);
+        try t.mutate(struct {
+            fn f(tx: *Tx, x: struct { u64, []const u8, []const u8 }) Error!void {
+                const o = try tx.mutDrag(x[0], 0);
+                try o.setRep(tx.gpa(), x[1], x[2], tx.gen);
             }
-        }.f, .{ n, data });
+        }.f, .{ dn, ty, data });
+        return dn;
+    }
+
+    /// Adds file handle `id` (files.zig) to drag N's offer as the next
+    /// item of type `file`, making the drag if needed (N 0: a new one).
+    /// Returns the drag's number. The offer releases the handle if its
+    /// drop is refused.
+    pub fn dragFile(t: *Tree, n: u64, id: u64) Error!u64 {
+        const h = t.files.get(id) orelse return error.NotFound;
+        defer h.unref(t.gpa);
+        const in = t.files.info(h, "") catch |e| return switch (e) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.NotFound,
+        };
+        var aw: Writer.Allocating = .init(t.gpa);
+        defer aw.deinit();
+        const w = &aw.writer;
+        w.writeAll("file name=") catch return error.OutOfMemory;
+        proto.tokenize.quoteValue(w, h.name) catch return error.OutOfMemory;
+        if (in.dir) w.writeAll(" dir") catch return error.OutOfMemory else w.print(" size={d}", .{in.size}) catch return error.OutOfMemory;
+        w.writeByte('\n') catch return error.OutOfMemory;
+        const dn = t.dragNumber(n);
+        try t.mutate(struct {
+            fn f(tx: *Tx, x: struct { u64, u64, []const u8 }) Error!void {
+                const o = try tx.mutDrag(x[0], 0);
+                const old = if (o.rep("file")) |r| r.val.bytes else "";
+                const list = try std.mem.concat(tx.a, u8, &.{ old, x[2] });
+                try o.setRep(tx.gpa(), "file", list, tx.gen);
+                try o.addItem(tx.gpa(), x[1]);
+            }
+        }.f, .{ dn, id, aw.written() });
+        return dn;
+    }
+
+    /// A drag starts from client node `source` (`on` has `drag`): drag N
+    /// (0: a new one) offers the node's `drag-types`, and the client
+    /// writes their bytes to `drag/N/data/TYPE`. Returns the number.
+    pub fn dragStart(t: *Tree, n: u64, source: Handle) Error!u64 {
+        const dn = t.dragNumber(n);
+        try t.mutate(struct {
+            fn f(tx: *Tx, x: struct { u64, Handle }) Error!void {
+                const o = try tx.mutDrag(x[0], x[1]);
+                const nd = tx.st.node(x[1]) orelse return;
+                const list = nd.stored("drag-types") orelse return;
+                var it = std.mem.tokenizeAny(u8, list, " \t\n,");
+                while (it.next()) |ty| if (pathm.typeId(ty)) try o.addType(tx.gpa(), ty);
+            }
+        }.f, .{ dn, source });
+        return dn;
+    }
+
+    /// Drag N's offered types, comma-separated, for a drop's `types=`.
+    pub fn dragTypes(t: *Tree, a: Allocator, n: u64) Error![]const u8 {
+        const dg = t.st.drag(n) orelse return "";
+        var out: std.ArrayList(u8) = .empty;
+        for (dg.offer.types.items, 0..) |b, i| {
+            if (i > 0) try out.append(a, ',');
+            try out.appendSlice(a, b.bytes);
+        }
+        return out.items;
+    }
+
+    /// The op a drop of drag N was accepted with, once; null if none.
+    pub fn takeDragOp(t: *Tree, n: u64) ?[]const u8 {
+        const kv = t.drag_ops.fetchRemove(n) orelse return null;
+        return kv.value;
+    }
+
+    /// Releases the file handles drag N's offer made (its drop was
+    /// refused).
+    fn releaseOffer(t: *Tree, n: u64) void {
+        const dg = t.st.drag(n) orelse return;
+        for (dg.offer.handles.items) |id| _ = t.files.release(id);
     }
 
     pub fn dragDone(t: *Tree, n: u64) Error!void {
@@ -1274,20 +1363,17 @@ const Tx = struct {
             data = try std.mem.concat(tx.a, u8, &.{ cur, data_in });
         }
         switch (loc) {
-            .dir, .node, .drag, .type_dir => return tx.fail(.bad_value, "{s}: a directory", .{p}),
+            .dir, .node, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir => return tx.fail(.bad_value, "{s}: a directory", .{p}),
+            .drag_types, .drag_item_file => return tx.fail(.bad_value, "read-only: {s}", .{p}),
             .type_file => return tx.fail(.bad_value, "read-only: {s}", .{p}),
             .app => |f| switch (f) {
                 .ctl => return tx.ctlApp(data),
-                .version, .events, .trace, .style_words, .theme_names => return tx.fail(.bad_value, "read-only: {s}", .{p}),
+                .version, .events, .trace, .style_words, .theme_names, .clip_types => return tx.fail(.bad_value, "read-only: {s}", .{p}),
                 .keys => return tx.writeKeys(data),
                 .clip => {
                     if (data.len > proto.limits.text_prop) return tx.fail(.too_large, "clip", .{});
                     try tx.logWrite("clip", data, false);
-                    pathm_unused();
-                    state.unrefOpt(tx.st.clip, tx.gpa());
-                    tx.st.clip = try tx.blob(data);
-                    tx.st.clip_ver = tx.gen;
-                    return tx.cmd(.{ .tag = .clipboard });
+                    return tx.setClipboard(&.{.{ .ty = "text", .val = data }});
                 },
                 .theme_tokens => return tx.writeTokens(data),
                 .theme_name => return tx.writeThemeName(chomp(data)),
@@ -1295,22 +1381,84 @@ const Tx = struct {
             },
             .menu => |name| return tx.writeMenu(name, data),
             .asset => |name| return tx.writeAsset(name, data),
-            .drag_data => |n| {
-                for (tx.st.drags.items) |*dg| if (dg.n == n) {
-                    try tx.logWrite(p, data, false);
-                    dg.val.unref(tx.gpa());
-                    dg.val = try tx.blob(data);
-                    dg.ver = tx.gen;
-                    return;
-                };
-                return tx.fail(.not_found, "{s}", .{p});
+            .drag_data => |x| {
+                const dg = tx.st.drag(x.n) orelse return tx.fail(.not_found, "{s}", .{p});
+                // A host's offer is read-only; a client drag's source
+                // writes its bytes.
+                if (dg.source == 0) return tx.fail(.permission_denied, "read-only: {s}", .{p});
+                try tx.logWrite(p, data, false);
+                const o = try tx.mutDrag(x.n, dg.source);
+                try o.setRep(tx.gpa(), x.ty, data, tx.gen);
+            },
+            .clipdata => |ty| {
+                try tx.logWrite(p, data, false);
+                return tx.setClipboard(&.{.{ .ty = ty, .val = data }});
             },
             .file => |f| return tx.writeNodeFile(f.node, f.name, data),
             .win_file => |f| return tx.writeWinFile(f.root, f.name, data),
         }
     }
 
-    fn pathm_unused() void {}
+    const ClipRep = struct { ty: []const u8, val: []const u8 };
+
+    /// The clipboard becomes exactly `reps`, with a new generation; `clip`
+    /// reads as their text, and a `clip` event follows.
+    fn setClipboard(tx: *Tx, reps: []const ClipRep) Error!void {
+        const g = tx.gpa();
+        const o = try state.Offer.create(g);
+        errdefer o.unref(g);
+        var text: []const u8 = "";
+        for (reps) |r| try o.setRep(g, r.ty, r.val, tx.gen);
+        if (o.rep("text")) |r| {
+            text = r.val.bytes;
+        } else if (o.rep("file")) |r| {
+            // A file list reads as its names, one per line.
+            var out: std.ArrayList(u8) = .empty;
+            var it = std.mem.splitScalar(u8, r.val.bytes, '\n');
+            while (it.next()) |ln| {
+                const toks = proto.tokenize.tokenize(tx.a, ln) catch continue;
+                for (toks) |tk| if (tk.attr()) |kv| if (std.mem.eql(u8, kv.key, "name")) {
+                    try out.appendSlice(tx.a, kv.value);
+                    try out.append(tx.a, '\n');
+                };
+            }
+            text = out.items;
+        } else if (o.rep("uri")) |r| {
+            text = r.val.bytes;
+        }
+        const tb = try tx.blob(text);
+        if (tx.st.clipdata) |old| old.unref(g);
+        tx.st.clipdata = o;
+        state.unrefOpt(tx.st.clip, g);
+        tx.st.clip = tb;
+        tx.st.clip_ver = tx.gen;
+        tx.st.clip_gen += 1;
+        const attrs = try tx.a.alloc(Attr, 1);
+        attrs[0] = .{ .key = "gen", .value = try std.fmt.allocPrint(tx.a, "{d}", .{tx.st.clip_gen}) };
+        try tx.event(.{ .name = "clip", .kind = .action, .key = "-", .attrs = attrs });
+        return tx.cmd(.{ .tag = .clipboard });
+    }
+
+    /// Drag N's offer, private to this State, making the drag (from
+    /// `source`, 0 for the host) if there is none.
+    fn mutDrag(tx: *Tx, n: u64, source: Handle) Error!*state.Offer {
+        const g = tx.gpa();
+        for (tx.st.drags.items) |*dg| if (dg.n == n) {
+            dg.ver = tx.gen;
+            if (dg.offer.rc.load(.acquire) != 1) {
+                const c = try dg.offer.dupe(g);
+                dg.offer.unref(g);
+                dg.offer = c;
+            }
+            return dg.offer;
+        };
+        const o = try state.Offer.create(g);
+        tx.st.drags.append(g, .{ .n = n, .offer = o, .ver = tx.gen, .source = source }) catch |e| {
+            o.unref(g);
+            return e;
+        };
+        return o;
+    }
 
     /// What a file holds now, for an append.
     fn currentBytes(tx: *Tx, loc: Loc) Error![]const u8 {
@@ -1344,7 +1492,7 @@ const Tx = struct {
             if (tx.st.win(name) != null) return tx.fail(.in_use, "{s}", .{p});
             return tx.makeWindow(name, &.{});
         }
-        if (std.mem.eql(u8, parent_p, "menu") or std.mem.eql(u8, parent_p, "asset") or std.mem.eql(u8, parent_p, "drag"))
+        if (std.mem.eql(u8, parent_p, "menu") or std.mem.eql(u8, parent_p, "asset") or std.mem.eql(u8, parent_p, "drag") or std.mem.eql(u8, parent_p, "clipdata") or std.mem.eql(u8, parent_p, "file"))
             return tx.fail(.bad_value, "mkdir: {s}", .{p});
         const loc = pathm.resolve(tx.st, tx.cat(), tx.a, parent_p, tx.d) catch |e| {
             if (e == error.NotFound) return tx.fail(.not_found, "{s}", .{p});
@@ -1608,10 +1756,25 @@ const Tx = struct {
     }
 
     fn ctlApp(tx: *Tx, data: []const u8) Error!void {
+        // Every `copy` line of one write makes one clipboard.
+        var copies: std.ArrayList(ClipRep) = .empty;
+        try tx.ctlAppLines(data, &copies);
+        if (copies.items.len > 0) try tx.setClipboard(copies.items);
+    }
+
+    fn ctlAppLines(tx: *Tx, data: []const u8, copies: *std.ArrayList(ClipRep)) Error!void {
         for (try tx.parseCtl(data)) |c| {
             try tx.logCtl("ctl", c, tx.ctlSecret(0, c));
             if (isAnswer(c)) {
                 try tx.answer(0, c);
+                continue;
+            }
+            if (std.mem.eql(u8, c.verb, "copy")) {
+                if (c.words.len > 0 or c.attrs.len == 0) return tx.fail(.bad_syntax, "copy TYPE=VALUE ...", .{});
+                for (c.attrs) |x| {
+                    if (!pathm.typeId(x.key)) return tx.fail(.bad_value, "type {s}", .{x.key});
+                    try copies.append(tx.a, .{ .ty = x.key, .val = x.value });
+                }
                 continue;
             }
             switch (c.kind()) {
@@ -1763,7 +1926,17 @@ const Tx = struct {
         } else return tx.fail(.not_found, "request {d}", .{seq});
         if (r.target != target or std.mem.indexOfScalar(u64, tx.answered.items, seq) != null)
             return tx.fail(.not_found, "request {d}", .{seq});
-        if (r.drag) |dn| tx.dropDrag(dn);
+        if (r.drag) |dn| {
+            if (std.mem.eql(u8, c.verb, "refuse")) tx.t.releaseOffer(dn);
+            if (std.mem.eql(u8, c.verb, "accept")) {
+                const op = c.attr("op") orelse "copy";
+                if (!std.mem.eql(u8, op, "copy") and !std.mem.eql(u8, op, "move")) return tx.fail(.bad_value, "op={s}", .{op});
+                // Kept for the source's dragend; a host's drag has none.
+                const client = if (tx.st.drag(dn)) |dg| dg.source != 0 else false;
+                if (client) try tx.t.drag_ops.put(tx.gpa(), dn, if (std.mem.eql(u8, op, "move")) "move" else "copy");
+            }
+            tx.dropDrag(dn);
+        }
         if (std.mem.eql(u8, c.verb, "close")) {
             if (r.closes != 0 and tx.st.node(r.closes) != null) try tx.closeWindow(r.closes);
             if (r.overlay != 0 and tx.st.node(r.overlay) != null) try tx.overlayOpen(r.overlay, false);
@@ -1779,7 +1952,7 @@ const Tx = struct {
 
     fn dropDrag(tx: *Tx, n: u64) void {
         for (tx.st.drags.items, 0..) |dg, i| if (dg.n == n) {
-            dg.val.unref(tx.gpa());
+            dg.offer.unref(tx.gpa());
             _ = tx.st.drags.orderedRemove(i);
             return;
         };

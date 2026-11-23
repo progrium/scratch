@@ -1,6 +1,7 @@
 #!/bin/sh
 # run-examples: run each ported example client's tree-building phase on
-# uitree-headless and compare what it built with examples/NAME.out.
+# uitree-headless and compare what it built with examples/NAME.out, and
+# the drive scripts that take an example further (files-drop.rc).
 #
 #	tests/conformance/run-examples [-u] [NAME...]
 #
@@ -30,6 +31,7 @@ confirm|examples/rc|confirm.rc Delete?
 signin|examples/rc|signin.rc
 settings|examples/rc|settings.rc
 csvview|examples/awk|awk -f csvview.awk planets.csv
+files-drop|-|files-drop.rc
 END
 }
 
@@ -39,8 +41,14 @@ list | {
 while IFS='|' read -r name dir cmd; do
 	[ $# -gt 0 ] && ! echo " $* " | grep -q " $name " && continue
 	out=out/examples/$name.out
-	# shellcheck disable=SC2086
-	"$host" rc tree-phase.rc "$dir" $cmd >"$out" 2>"$out.stderr"
+	# A directory of - is a script that drives an example past its
+	# tree-building phase (files-drop.rc: a drop from the desktop).
+	if [ "$dir" = - ]; then
+		"$host" rc "$cmd" >"$out" 2>"$out.stderr"
+	else
+		# shellcheck disable=SC2086
+		"$host" rc tree-phase.rc "$dir" $cmd >"$out" 2>"$out.stderr"
+	fi
 	grep '^uitree: ' "$out.stderr" >>"$out"
 	golden=examples/$name.out
 	if [ $update -eq 1 ]; then
