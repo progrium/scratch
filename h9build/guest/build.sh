@@ -104,6 +104,26 @@ runtime_path() {
 	export PATH="$bins$PATH"
 }
 
+# Erlang from Hex's prebuilt OTP (builds.hex.pm, for Ubuntu 24.04) rather
+# than mise's, which builds it from source with kerl on Linux: minutes
+# natively, and longer than h9build waits under h9. It goes where mise would
+# install it, so mise install takes it as installed, and then installs
+# Elixir or Gleam over it. A version Hex doesn't have is left to mise.
+prebuilt_erlang() {
+	v=$(cd /app && mise ls --json erlang 2>/dev/null | jq -r '[.[] | select(.installed | not) | .version][0] // empty')
+	[ -n "$v" ] || return 0
+	case $(uname -m) in x86_64) a=amd64 ;; aarch64) a=arm64 ;; *) return 0 ;; esac
+	d=/mise/installs/erlang/$v
+	log "  erlang $v from builds.hex.pm"
+	mkdir -p "$d"
+	if curl -fsSL "https://builds.hex.pm/builds/otp/$a/ubuntu-24.04/OTP-$v.tar.gz" | tar -xzf - -C "$d" --strip-components=1 &&
+		(cd "$d" && ./Install -minimal "$d" >/dev/null); then
+		return 0
+	fi
+	log "  no prebuilt erlang $v; mise builds it"
+	rm -rf "$d"
+}
+
 mkdir -p /app
 while read -r i l name; do
 	case $layer:$l in
@@ -150,8 +170,10 @@ EOF
 			fi
 			[ -n "$run" ] || continue
 			if echo "$c" | jq -e 'has("cmd")' >/dev/null; then
+				cmd=$(echo "$c" | jq -r .cmd)
 				log "  $(echo "$c" | jq -r '.customName // .cmd')"
-				(cd /app && sh -c "$(echo "$c" | jq -r .cmd)") </dev/null
+				case $cmd in "mise install"*) prebuilt_erlang ;; esac
+				(cd /app && sh -c "$cmd") </dev/null
 			elif echo "$c" | jq -e 'has("image")' >/dev/null; then
 				log "  skipping a copy from $(echo "$c" | jq -r .image): h9build doesn't fetch images"
 			elif echo "$c" | jq -e 'has("src")' >/dev/null; then

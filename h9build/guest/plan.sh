@@ -61,7 +61,11 @@ jq -r --rawfile steps "$W/steps.txt" '
 		elif startswith("/") then rtrimstr("/.") | rtrimstr("/")
 		else "/app/" + (rtrimstr("/.") | rtrimstr("/")) end;
 	.deploy.inputs[]? | select(.step and $layer[.step]) | . as $i
-	| .include[]? | "\($layer[$i.step]) \(abs) \([$i.exclude[]? | abs] | join(" "))"' "$P" >"$W/deploy.txt"
+	# A packages step that builds above the runtime layer (Gleam'"'"'s
+	# packages:mise:runtime, after its build) installs into it, or finds
+	# what it wants installed there already: deploy from both.
+	| ([$layer[$i.step]] + (if ($i.step | startswith("packages:")) and $layer[$i.step] != "runtime" then ["runtime"] else [] end))[] as $l
+	| $i.include[]? | "\($l) \(abs) \([$i.exclude[]? | abs] | join(" "))"' "$P" >"$W/deploy.txt"
 
 # Each layer's key: its steps as the plan has them, and the contents of the
 # source files they copy in (and for the app layer, the deploy). h9build chains them, so a layer's key changes

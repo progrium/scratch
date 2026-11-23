@@ -102,16 +102,26 @@ downloads in the cache; *rebuilt* is a second build with nothing changed.
 | `deno-2` | 30 s | 2 s | runtime 123 MB, app 328 KB (its `deno cache`) | prints its test's expected output |
 | `ruby-latest` (Ruby 4) | 100 s | 3 s | runtime 420 MB, deps 3.5 MB (gems), app 32 KB | prints its test's expected output |
 | `cpp-cmake` | 40 s | 4 s | app 268 KB | prints its test's expected output |
+| `gleam` (Erlang from Hex) | 25 s | 3 s | runtime 204 MB (Erlang and Gleam), app 328 KB | prints its test's expected output |
 
 What doesn't build yet, and why:
 
 - **Rust:** rustup's downloads fail inside h9 with "Input/output error"
-  (`os error 5`), with or without a layer. An h9 bug.
-- **Zig:** `zig build` (0.17) aborts with "reached unreachable code" inside
-  h9, even with `--memory 8G`. An h9 bug.
-- **.NET:** `dotnet restore` hangs. An h9 bug, likely in its threads.
-- **Elixir, Gleam:** mise builds Erlang from source with kerl, which took more
-  than a minute in h9 with no end in sight; untried to the finish.
+  (`os error 5`): `lseek(SEEK_END)` fails on its `<hash>.partial` files,
+  whose names are long
+  ([progrium/hyper9#255](https://github.com/progrium/hyper9/issues/255)).
+- **Zig:** `zig build` (0.17) aborts with "reached unreachable code", even
+  with `--memory 8G`: h9's `mremap` answers `EFAULT` where Linux answers
+  `ENOMEM` or grows the mapping
+  ([progrium/hyper9#256](https://github.com/progrium/hyper9/issues/256)).
+- **.NET:** `dotnet restore` hangs, with 4 GB too, its threads all waiting.
+  An h9 bug not yet narrowed down.
+- **Elixir:** mise builds Erlang from source with kerl, which takes minutes
+  natively and didn't finish in h9, so h9build installs Hex's prebuilt OTP
+  for Ubuntu 24.04 (builds.hex.pm) where mise would have, and mise takes it
+  as installed. Erlang runs, but its `crypto` NIF doesn't load against
+  Wolfi's OpenSSL, which leaves out SM4 (`EVP_sm4_cbc`), so Mix can't fetch
+  Hex over TLS. Gleam fetches its packages itself, so it builds and runs.
 - **Ruby, older versions:** h9build has mise use its precompiled Ruby
   (`MISE_RUBY_COMPILE=false`), which mise has for recent versions only.
   `ruby-sinatra` pins 3.1.2, which would be built from source by ruby-build,
@@ -131,7 +141,7 @@ a Linux program's links from its root
 
 h9build needs an h9 with up layers
 ([upper-layers](https://github.com/progrium/hyper9/blob/main/design/upper-layers.md)),
-and with [progrium/hyper9#254](https://github.com/progrium/hyper9/pull/254), which
+including [progrium/hyper9#254](https://github.com/progrium/hyper9/pull/254), which
 makes a working directory from below a layer see what's changed in it since: the
 build steps run in `/app`, which is usually below.
 
@@ -141,8 +151,9 @@ These runs were in a sandbox behind an HTTPS proxy, which took two things a
 normal machine doesn't need. The first was a Railpack built with a patch that
 passes the proxy settings through to the mise it runs, as the release clears
 them (`H9BUILD_RAILPACK` names it). The second was
-`H9_FLAGS="--env MISE_GITHUB_ATTESTATIONS=false"`, as the proxy refused the
-GitHub API calls that mise makes to check attestations. That breaks
+`H9_FLAGS="--env MISE_GITHUB_ATTESTATIONS=false --env MISE_AQUA_COSIGN=false
+--env MISE_AQUA_SLSA=false"`, as the proxy refused the GitHub API and
+Sigstore calls that mise makes to check what it downloads. That breaks
 `ruby-3-precompiled`, whose `mise.lock` requires them.
 
 What it leaves out, for now:
