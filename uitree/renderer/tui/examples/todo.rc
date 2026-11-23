@@ -1,0 +1,132 @@
+#!/bin/rc
+# todo.rc: the classic to-do list. Add with Enter, tick to complete,
+# filter All / Active / Done, clear completed. Saved to todo.txt in the cwd.
+#
+#	uitree-tui -t Todos rc todo.rc
+#
+# uitreefs/examples/rc/todo.rc in the draft 0.2 spelling. One difference:
+# the delete button is always shown, because group-hover is a uitreefs
+# extra 0.2 doesn't have.
+# Shows: one node per item made with new and delete, the order file as a
+# filter (a child not listed is not drawn), tags carrying ids, checkbox
+# change events, tabs, a scroll area, an empty state.
+. ./lib.rc
+
+db=todo.txt
+touch $db
+
+m=$ui/win/main
+echo 'set . title=Todos size=460,560 min=360,400 pos=center' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full p=24 gap=12 bg=background
+  text h  text=Todos  : text-2xl font-semibold
+  input new  cleanable  placeholder='What needs to be done?'  tag=add
+  scroll body  : flex-1 overflow-y-scroll
+    div items  : v-flex
+    empty none  title='Nothing to do'  description='Add a task above.'  icon=inbox
+  div foot  : h-flex items-center gap=8 pt=8 border-t-1 border-color=border
+    text count  : text-sm text-color=muted-foreground flex-1
+    tabs filter  segmented  sm  value=all  tag=filter
+      tab all  label=All
+      tab active  label=Active
+      tab done  label=Done
+    button clear  ghost  sm  label='Clear completed'  tag=clear
+END
+L=$m/body/items
+echo new >$m/focus
+
+n=0
+all=()
+filter=all
+
+# mk id text [on|off]: make one item row
+fn mk {
+	echo 'new div '$1' tag=row:'$1' : h-flex items-center gap=8 px=8 rounded-md hover:bg=muted
+new checkbox '$1'/done value=off tag=done:'$1'
+new text '$1'/label : flex-1
+new button '$1'/del icon=close tag=del:'$1' ghost xs' >$L/ctl
+	echo $2 >$L/$1/label/text
+	if(~ $3 on) { echo on >$L/$1/done/value; strike $1 on }
+	all=($all $1)
+}
+
+# strike id on|off: style a done item's label
+fn strike {
+	if(~ $2 on) echo 'set '$1'/label : flex-1 line-through text-color=muted-foreground' >$L/ctl
+	if not echo 'set '$1'/label : flex-1' >$L/ctl
+}
+
+# without x list...: the list with x left out
+fn without {
+	x=$1
+	shift
+	for(i in $*) if(! ~ $i $x) echo $i
+}
+
+# show: apply the filter through order, update the count and save
+fn show {
+	o=()
+	left=0
+	>$db
+	for(i in $all){
+		d=`{cat $L/$i/done/value}
+		if(~ $d off) left=`{add $left 1}
+		switch($filter){
+		case all
+			o=($o $i)
+		case active
+			if(~ $d off) o=($o $i)
+		case done
+			if(~ $d on) o=($o $i)
+		}
+		echo $d `{cat $L/$i/label/text} >>$db
+	}
+	b=items
+	if(~ $#all 0) b=(items none)
+	c=$left' items left'
+	if(~ $left 1) c='1 item left'
+	echo 'set body/items order='''$"o'''
+set body order='''$"b'''
+set foot/count text='''$c'''' >$m/ctl
+}
+
+# Load saved items: lines of "on|off text..."
+ifs='
+' { lines=`{cat $db} }
+for(line in $lines){
+	w=`{echo $line}
+	text=$w(2-)
+	n=`{add $n 1}
+	mk t$n $"text $w(1)
+}
+show
+
+cat $ui/events | while(ev=`{read}){
+	id=`{echo $ev(2) | sed 's/^[^:]*://'}
+	switch($ev(1)^:^$ev(2)){
+	case submit:add
+		v=`{cat $m/new/value}
+		if(! ~ $#v 0){
+			n=`{add $n 1}
+			mk t$n $"v off
+			echo -n >$m/new/value
+			show
+		}
+	case change:done:*
+		strike $id `{attr value}
+		show
+	case change:filter
+		filter=`{attr value}
+		show
+	case click:del:*
+		echo delete $id >$L/ctl
+		all=`{without $id $all}
+		show
+	case click:clear
+		for(i in $all) if(~ `{cat $L/$i/done/value} on) {
+			echo delete $i >$L/ctl
+			all=`{without $i $all}
+		}
+		show
+	}
+}

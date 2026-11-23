@@ -1,0 +1,16 @@
+type    button  tier=component  profile=form  since=1.0
+prop    label     text  file
+prop    icon      word
+prop    loading   bool  default=off
+prop    disabled  bool  default=off
+prop    selected  bool
+word    loading disabled selected  kind=flag
+word    primary secondary danger info success warning ghost link outline  kind=variant
+word    xs sm md lg  kind=size
+verb    click     class=activate
+event   click  kind=action
+event   focus  kind=state
+event   blur   kind=state
+slot    prefix  accepts=icon,svg,text
+slot    suffix  accepts=icon,svg,text
+child   any

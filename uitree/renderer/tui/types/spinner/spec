@@ -1,0 +1,3 @@
+type    spinner  tier=component  profile=feedback  since=1.0
+word    xs sm md lg  kind=size
+child   none

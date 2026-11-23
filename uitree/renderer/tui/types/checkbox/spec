@@ -1,0 +1,9 @@
+type    checkbox  tier=component  profile=form  since=1.0
+prop    label       text  file
+prop    value       enum=on,off,mixed  default=off
+prop    disabled    bool
+prop    controlled  bool
+word    disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none
