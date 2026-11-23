@@ -20,9 +20,10 @@ const page = 65536;
 
 /**
  * Starts the GPUI renderer on the page's canvas with the app `argv` (h9's)
- * and its `files` ({ path: text }, put in h9's root).
+ * and its `files` ({ path: text }, put in h9's root). `onCore(core)` gets
+ * the renderer's core (uit-web.js's Core) once the app starts.
  */
-export async function startGpui({ argv, title, files = {}, log = console.error, onOutput = () => {}, onExit = () => {} }) {
+export async function startGpui({ argv, title, files = {}, log = console.error, onOutput = () => {}, onExit = () => {}, onCore = () => {} }) {
   const t = { start: performance.now() };
   const [wasm, coreBytes] = await Promise.all([
     init({ module_or_path: new URL('gpui/uitree_web_bg.wasm', import.meta.url) }),
@@ -53,7 +54,9 @@ export async function startGpui({ argv, title, files = {}, log = console.error, 
     memory,
     setWake: (f) => { rustWake = f; },
     runMachine: (c, args) => {
-      runApp(Core.attach(m, c), { argv: args, files: appFiles, onOutput, onExit });
+      const core = Core.attach(m, c);
+      runApp(core, { argv: args, files: appFiles, onOutput, onExit });
+      onCore(core);
       t.app = performance.now();
       return 0;
     },

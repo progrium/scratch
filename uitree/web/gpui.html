@@ -13,6 +13,7 @@
 <script type="module">
 import { startGpui } from './gpui.js';
 import { apps, argvFor, filesFor } from './apps.js';
+import { probe } from './probe.js';
 const q = new URLSearchParams(location.search);
 const app = q.get('app') ?? 'counter';
 const dec = new TextDecoder();
@@ -27,6 +28,7 @@ try {
     onOutput: (fd, d) => { const s = dec.decode(d); window.appLog.push(s); console.log(`[${fd}] ${s}`); },
     onExit: (code, msg) => { window.appExit = code; if (code) err(`exit ${code} ${msg ?? ''}`); },
     log: (s) => { console.error(s); err(s); },
+    onCore: (c) => { window.core = c; window.probe = () => probe(c); },
   });
   parent.postMessage({ type: 'gpui-ready', timings: window.gpui.timings }, '*');
 } catch (e) {

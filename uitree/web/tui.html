@@ -18,6 +18,7 @@
 import { startTui } from './tui.js';
 import { runApp } from './uit-web.js';
 import { apps, argvFor, filesFor } from './apps.js';
+import { probe } from './probe.js';
 const q = new URLSearchParams(location.search);
 const app = q.get('app') ?? 'counter';
 const dec = new TextDecoder();
@@ -30,6 +31,8 @@ try {
   const cols = Math.max(20, Math.floor(el.clientWidth / 9)), rows = Math.max(8, Math.floor(el.clientHeight / 18));
   const tui = await startTui(el, { cols, rows, onTitle: (t) => { document.title = t; } });
   window.tui = tui;
+  window.core = tui.core;
+  window.probe = () => probe(tui.core);
   runApp(tui.core, {
     argv: argvFor(app),
     files: await filesFor(app),
