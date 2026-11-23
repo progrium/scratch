@@ -16,7 +16,9 @@
 //! A write (`parseWrite`) is one command per line, all or nothing, with
 //! here-values: a word `prop=<<WORD`, or a bare `<<WORD` (`tree PATH
 //! <<END`), takes the lines that follow, up to a line holding only `WORD`,
-//! as its value. The lines are joined with `\n` and the value ends in one.
+//! as its value: the lines joined with `\n`, with no trailing newline (so
+//! a value ending in a newline has an empty last line). The marker line is
+//! exactly `WORD` (a CR before its LF is allowed).
 
 const std = @import("std");
 const tokenize = @import("tokenize.zig");
@@ -113,21 +115,27 @@ pub const Ctl = struct {
 
     /// The canonical form: `verb words... attrs... [: style...]`, quoted as
     /// needed. A value holding a newline is written as a here-value, so
-    /// the output can be several lines, and `parseWrite` reads it back (a
-    /// here-value always ends in a newline, so one is added to a body
-    /// without it). Otherwise it is one line, with no newline at the end.
+    /// the output can be several lines, and `parseWrite` reads it back.
+    /// Otherwise it is one line, with no newline at the end.
     pub fn format(self: Ctl, w: *std.Io.Writer) std.Io.Writer.Error!void {
         var buf: [24]u8 = undefined;
+        var k: usize = 0;
         try tokenize.quoteWord(w, self.verb);
         for (self.words) |x| {
             try w.writeByte(' ');
-            if (hasNewline(x)) try w.print("<<{s}", .{markerFor(&buf, x)}) else try tokenize.quoteWord(w, x);
+            if (hasNewline(x)) {
+                try w.print("<<{s}", .{markerFor(&buf, x, k)});
+                k += 1;
+            } else try tokenize.quoteWord(w, x);
         }
         for (self.attrs) |a| {
             try w.writeByte(' ');
             try tokenize.quoteWord(w, a.key);
             try w.writeByte('=');
-            if (hasNewline(a.value)) try w.print("<<{s}", .{markerFor(&buf, a.value)}) else try tokenize.quoteValue(w, a.value);
+            if (hasNewline(a.value)) {
+                try w.print("<<{s}", .{markerFor(&buf, a.value, k)});
+                k += 1;
+            } else try tokenize.quoteValue(w, a.value);
         }
         if (self.style) |st| {
             try w.writeAll(" :");
@@ -137,33 +145,46 @@ pub const Ctl = struct {
             }
         }
         // The bodies, in the order their markers appear on the line.
-        for (self.words) |x| if (hasNewline(x)) try writeBody(w, x, &buf);
-        for (self.attrs) |a| if (hasNewline(a.value)) try writeBody(w, a.value, &buf);
+        k = 0;
+        for (self.words) |x| if (hasNewline(x)) {
+            try writeBody(w, x, markerFor(&buf, x, k));
+            k += 1;
+        };
+        for (self.attrs) |a| if (hasNewline(a.value)) {
+            try writeBody(w, a.value, markerFor(&buf, a.value, k));
+            k += 1;
+        };
     }
 };
 
-fn writeBody(w: *std.Io.Writer, body: []const u8, buf: *[24]u8) std.Io.Writer.Error!void {
+/// `\n`, the body, `\n`, the marker: no indent and no trailing newline.
+pub fn writeBody(w: *std.Io.Writer, body: []const u8, marker: []const u8) std.Io.Writer.Error!void {
     try w.writeByte('\n');
     try w.writeAll(body);
-    if (body[body.len - 1] != '\n') try w.writeByte('\n');
-    try w.writeAll(markerFor(buf, body));
+    try w.writeByte('\n');
+    try w.writeAll(marker);
 }
 
-fn hasNewline(s: []const u8) bool {
+pub fn hasNewline(s: []const u8) bool {
     return std.mem.indexOfScalar(u8, s, '\n') != null;
 }
 
-/// `END`, or `END1`, `END2`... when a line of the body already reads as
-/// it. Two here-values on one line may share a marker: each body ends at
-/// the first line holding its own.
-fn markerFor(buf: *[24]u8, body: []const u8) []const u8 {
-    var i: usize = 0;
+/// Whether `line` ends a here-value marked `marker`: it is exactly the
+/// marker, allowing a CR before the LF.
+pub fn isEndLine(line: []const u8, marker: []const u8) bool {
+    return std.mem.eql(u8, std.mem.trimEnd(u8, line, "\r"), marker);
+}
+
+/// The marker for the `k`-th here-value on a line (from 0): `END`, then
+/// `END2`, `END3`..., skipping any that a line of the body already is.
+pub fn markerFor(buf: *[24]u8, body: []const u8, k: usize) []const u8 {
+    var i: usize = k + 1;
     while (true) : (i += 1) {
-        const m = if (i == 0) "END" else std.fmt.bufPrint(buf, "END{d}", .{i}) catch unreachable;
+        const m = if (i == 1) "END" else std.fmt.bufPrint(buf, "END{d}", .{i}) catch unreachable;
         var used = false;
         var it = std.mem.splitScalar(u8, body, '\n');
         while (it.next()) |l| {
-            if (std.mem.eql(u8, std.mem.trim(u8, l, " \t\r"), m)) used = true;
+            if (isEndLine(l, m)) used = true;
         }
         if (!used) return m;
     }
@@ -300,14 +321,10 @@ pub fn parseWriteDiag(arena: Allocator, write: []const u8, d: ?*Diag) Error![]Ct
                         return lineErr(e, d, arena, many, n);
                     }
                     i += 1;
-                    if (std.mem.eql(u8, std.mem.trim(u8, all[i - 1], " \t\r"), h.marker)) break;
+                    if (isEndLine(all[i - 1], h.marker)) break;
                 }
-                var body: std.ArrayList(u8) = .empty;
-                for (all[start .. i - 1]) |x| {
-                    try body.appendSlice(arena, x);
-                    try body.append(arena, '\n');
-                }
-                if (h.is_attr) attrs[h.index].value = body.items else words[h.index] = body.items;
+                const body = try std.mem.join(arena, "\n", all[start .. i - 1]);
+                if (h.is_attr) attrs[h.index].value = body else words[h.index] = body;
             }
             var c = b.ctl;
             c.words = words;
@@ -434,11 +451,11 @@ test "here-values and style" {
 
     var cs = try parseWrite(a, "set n text=5\nset @reg append=<<END\nGrace\t40\nAda\t38\nEND\nset . title=Hi\n");
     try t.expectEqual(@as(usize, 3), cs.len);
-    try t.expectEqualStrings("Grace\t40\nAda\t38\n", cs[1].attr("append").?);
+    try t.expectEqualStrings("Grace\t40\nAda\t38", cs[1].attr("append").?);
     try t.expectEqualStrings("Hi", cs[2].attr("title").?);
 
     cs = try parseWrite(a, "tree f <<EOF\ndiv f\n  text t\nEOF\n");
-    try expectStrs(&.{ "f", "div f\n  text t\n" }, cs[0].words);
+    try expectStrs(&.{ "f", "div f\n  text t" }, cs[0].words);
     try t.expectEqual(Verb.tree, cs[0].kind());
 
     // The spec's own example (core.md § Commands).
@@ -455,14 +472,18 @@ test "here-values and style" {
     try expectStrs(&.{ "v-flex", "items-center", "p=24", "gap=12" }, cs[0].style.?);
     try expectStrs(&.{"primary"}, cs[2].bare());
     try expectStrs(&.{ "button", "inc", "primary" }, cs[2].words);
-    try t.expectEqualStrings("inbox Inbox\nsent Sent\n", cs[3].attr("items").?);
+    try t.expectEqualStrings("inbox Inbox\nsent Sent", cs[3].attr("items").?);
 
     // Two here-values on one line follow it in order; a quoted <<END is a
-    // plain value.
-    cs = try parseWrite(a, "set x a=<<A b='<<B' c=<<C\none\nA\ntwo\n  C  \n");
-    try t.expectEqualStrings("one\n", cs[0].attr("a").?);
+    // plain value; the marker line is exactly the marker (CRLF allowed), so
+    // an indented one is part of the body.
+    cs = try parseWrite(a, "set x a=<<A b='<<B' c=<<C\none\nA\r\ntwo\n  C\n\nC\n");
+    try t.expectEqualStrings("one", cs[0].attr("a").?);
     try t.expectEqualStrings("<<B", cs[0].attr("b").?);
-    try t.expectEqualStrings("two\n", cs[0].attr("c").?);
+    try t.expectEqualStrings("two\n  C\n", cs[0].attr("c").?);
+    // An empty body is an empty value.
+    cs = try parseWrite(a, "set x a=<<END\nEND\n");
+    try t.expectEqualStrings("", cs[0].attr("a").?);
 
     var c = try parse(a, "new div dec tag=dec on=click : lg w=64 hover:bg=accent");
     try expectStrs(&.{ "div", "dec" }, c.words);
@@ -496,7 +517,12 @@ test "format is canonical and reads back" {
         .style = &.{ "p=4", "hover:bg=accent" },
     };
     const s = try formatted(a, c);
-    try t.expectEqualStrings("set list 'a b' '<<x' ':' items=<<END1 text='it''s' v='<<END' : p=4 hover:bg=accent\ninbox Inbox\nEND\nEND1", s);
+    try t.expectEqualStrings("set list 'a b' '<<x' ':' items=<<END2 text='it''s' v='<<END' : p=4 hover:bg=accent\ninbox Inbox\nEND\n\nEND2", s);
+    // Several here-values on a line are END, END2, ...
+    const two: Ctl = .{ .verb = "set", .words = &.{"t"}, .attrs = &.{ .{ .key = "columns", .value = "a A\nb B" }, .{ .key = "rows", .value = "1\tx\n2\ty" } } };
+    const s2 = try formatted(a, two);
+    try t.expectEqualStrings("set t columns=<<END rows=<<END2\na A\nb B\nEND\n1\tx\n2\ty\nEND2", s2);
+    try t.expectEqualDeep(two, (try parseWrite(a, s2))[0]);
     const back = try parseWrite(a, s);
     try t.expectEqual(@as(usize, 1), back.len);
     try t.expectEqualDeep(c, back[0]);

@@ -7,7 +7,7 @@
 //! # Help
 //!
 //! Some *markdown*.
-//!   END
+//! END
 //! ```
 //!
 //! Each line is `TYPE NAME [word ...] [prop=value ...] [: style ...]`, two
@@ -15,17 +15,17 @@
 //! indent. Blank lines between nodes are ignored.
 //!
 //! A value written `prop=<<MARK` (unquoted, `MARK` of letters, digits and
-//! `_`) is a block: the lines after the node line, verbatim, up to a line
-//! holding only `MARK` (leading spaces allowed), joined with `\n`. A value
-//! ending in a newline has an empty last line. Several blocks on one line
-//! follow it in order.
+//! `_`) is a here-value, as on a `ctl` line: the lines after the node line,
+//! verbatim and unindented, up to a line holding exactly `MARK`, joined with
+//! `\n` and with no trailing newline. A value ending in a newline has an
+//! empty last line. Several on one line take their bodies in order.
 //!
 //! The canonical form, which `print` writes: `type name` with one space,
 //! two spaces before each bare word, prop and the style, values quoted only
-//! when needed, a block for every value holding a newline (marker `END`, or
-//! `END1`, `END2`... if the text has such a line), the marker at the node's
-//! indent. `parse(print(x)) == x`, and canonical input prints back byte for
-//! byte.
+//! when needed, a here-value for every value holding a newline (markers
+//! `END`, `END2`... in order on the line, skipping one the text already
+//! has as a line). `parse(print(x)) == x`, and canonical input prints back
+//! byte for byte.
 
 const std = @import("std");
 const tokenize = @import("tokenize.zig");
@@ -153,7 +153,7 @@ pub fn parseDiag(arena: Allocator, text: []const u8, d: ?*Diag) Error!Node {
             while (true) {
                 if (i >= all.len) return err.fail(d, arena, .bad_syntax, "line {d}: no {s} line ends the block", .{ n, b.marker });
                 i += 1;
-                if (std.mem.eql(u8, std.mem.trimStart(u8, all[i - 1], " "), b.marker)) break;
+                if (ctl.isEndLine(all[i - 1], b.marker)) break;
             }
             attrs.items[b.index].value = try std.mem.join(arena, "\n", all[start .. i - 1]);
         }
@@ -180,20 +180,6 @@ pub fn parseDiag(arena: Allocator, text: []const u8, d: ?*Diag) Error!Node {
     return root.finish(arena);
 }
 
-/// `END`, or `END1`, `END2`... if the value has a line that reads as one.
-fn markerFor(buf: *[24]u8, v: []const u8) []const u8 {
-    var i: usize = 0;
-    while (true) : (i += 1) {
-        const m = if (i == 0) "END" else std.fmt.bufPrint(buf, "END{d}", .{i}) catch unreachable;
-        var taken = false;
-        var it = std.mem.splitScalar(u8, v, '\n');
-        while (it.next()) |l| if (std.mem.eql(u8, std.mem.trimStart(u8, l, " "), m)) {
-            taken = true;
-        };
-        if (!taken) return m;
-    }
-}
-
 fn printNode(w: *std.Io.Writer, n: Node, depth: usize) std.Io.Writer.Error!void {
     for (0..depth) |_| try w.writeAll("  ");
     try tokenize.quoteWord(w, n.type);
@@ -203,13 +189,13 @@ fn printNode(w: *std.Io.Writer, n: Node, depth: usize) std.Io.Writer.Error!void 
         try w.writeAll("  ");
         try tokenize.quoteWord(w, x);
     }
-    var nblocks: usize = 0;
+    var buf: [24]u8 = undefined;
+    var k: usize = 0;
     for (n.attrs) |a| {
         try w.print("  {s}=", .{a.key});
-        if (std.mem.indexOfScalar(u8, a.value, '\n') != null) {
-            var buf: [24]u8 = undefined;
-            try w.print("<<{s}", .{markerFor(&buf, a.value)});
-            nblocks += 1;
+        if (ctl.hasNewline(a.value)) {
+            try w.print("<<{s}", .{ctl.markerFor(&buf, a.value, k)});
+            k += 1;
         } else try tokenize.quoteValue(w, a.value);
     }
     if (n.style) |st| {
@@ -219,16 +205,12 @@ fn printNode(w: *std.Io.Writer, n: Node, depth: usize) std.Io.Writer.Error!void 
             try tokenize.quote(w, x);
         }
     }
-    try w.writeByte('\n');
-    if (nblocks > 0) for (n.attrs) |a| {
-        if (std.mem.indexOfScalar(u8, a.value, '\n') == null) continue;
-        var buf: [24]u8 = undefined;
-        try w.writeAll(a.value);
-        try w.writeByte('\n');
-        for (0..depth) |_| try w.writeAll("  ");
-        try w.writeAll(markerFor(&buf, a.value));
-        try w.writeByte('\n');
+    k = 0;
+    for (n.attrs) |a| if (ctl.hasNewline(a.value)) {
+        try ctl.writeBody(w, a.value, ctl.markerFor(&buf, a.value, k));
+        k += 1;
     };
+    try w.writeByte('\n');
     for (n.children) |c| try printNode(w, c, depth + 1);
 }
 
@@ -362,7 +344,7 @@ test "here-value blocks" {
         \\# Title
         \\
         \\Body with 'quotes' and  spaces.
-        \\  END
+        \\END
         \\  text t  text=short
         \\
     ;
@@ -370,13 +352,16 @@ test "here-value blocks" {
     try t.expectEqualDeep(d, try parse(a, canonical));
 
     // A value with an END line gets another marker; a trailing newline is
-    // kept as an empty last line; a value starting << is quoted.
+    // kept as an empty last line; a value starting << is quoted. The body
+    // and marker are never indented, and an indented END is body text.
     const n: Node = .{ .type = "editor", .name = "e", .attrs = &.{
         .{ .key = "value", .value = "a\nEND\n" },
         .{ .key = "x", .value = "<<END" },
     } };
     const p = try printed(a, n);
-    try t.expectEqualStrings("editor e  value=<<END1  x='<<END'\na\nEND\n\nEND1\n", p);
+    try t.expectEqualStrings("editor e  value=<<END2  x='<<END'\na\nEND\n\nEND2\n", p);
+    const ind = try parse(a, "div r\n  text t  text=<<END\nx\n  END\nEND\n");
+    try t.expectEqualStrings("x\n  END", ind.child("t").?.attr("text").?);
     try t.expectEqualDeep(n, try parse(a, p));
 }
 

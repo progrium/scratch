@@ -125,18 +125,11 @@ test "quote and tokenize" {
     }
 }
 
-/// A here-value always ends in a newline.
-fn hereSafe(r: *Rng) []const u8 {
-    const v = r.any();
-    if (std.mem.indexOfScalar(u8, v, '\n') == null or v[v.len - 1] == '\n') return v;
-    return std.mem.concat(r.a, u8, &.{ v, "\n" }) catch @panic("oom");
-}
-
 fn randomCtl(r: *Rng) ctl.Ctl {
     return .{
         .verb = r.word(),
-        .words = r.list(4, if (r.coin()) Rng.single else hereSafe),
-        .attrs = r.attrs(if (r.coin()) Rng.single else hereSafe),
+        .words = r.list(4, if (r.coin()) Rng.single else Rng.any),
+        .attrs = r.attrs(if (r.coin()) Rng.single else Rng.any),
         .style = if (r.coin()) r.list(4, Rng.word) else null,
     };
 }
@@ -534,7 +527,8 @@ const corpus = [_][]const u8{
     "new button inc label=+1 primary tag=inc : w=64 hover:bg=accent\n",
     "set list items=<<END\ninbox Inbox\nsent Sent\nEND\n",
     "tree f <<EOF\ndiv f\n  text t\nEOF\n",
-    "set x a=<<A b='<<B' c=<<C\none\nA\ntwo\n  C  \n",
+    "set x a=<<A b='<<B' c=<<C\none\nA\ntwo\n  C\nC\n",
+    "set t columns=<<END rows=<<END2\na A\nEND\n1\tx\nEND2\n",
     "notify 'Upload failed' type=error action=retry:'Try again'\n",
     "set x 'a b'=c 'k='=v x-=1 =v :\n",
     "set x text=':' ':' : ':' ''\n",
