@@ -37,9 +37,8 @@ a
 ok
 home	Home
 docs	Docs
-# a toolbar's slots
+# a toolbar
 ok
-bad value
 # a link
 ok
 link help  label=Help  href=https://example.com/help

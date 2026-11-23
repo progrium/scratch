@@ -205,5 +205,4 @@ the reason, and the ones that need spec text are proposed in
   overlay outside `over/`, is `unknown type`; `begin` inside a batch is
   `in use`; an answer to a request that doesn't exist (never made, or
   already answered or timed out) is `not found`; a readonly prop is `bad
-  value`; a child in a named-slot position with the wrong name is `bad
-  value`.
+  value`. An unnamed child of a `child none` type is `unknown type`.

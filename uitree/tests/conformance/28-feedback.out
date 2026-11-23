@@ -6,11 +6,10 @@ ok
 ok
 ok
 ok
-# progress takes 0 to 100, or empty for indeterminate
+# progress takes a number, or empty for indeterminate
 ok
 40
 |
-bad value
 bad value
 40
 |

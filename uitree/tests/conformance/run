@@ -13,7 +13,7 @@
 # script needs.
 #
 #	-u   rewrite the goldens from this run instead of comparing; review the diff
-#	-t   per-test timeout in seconds (default 60)
+#	-t   per-test timeout in seconds (default 60; 24-limits takes about 40 in h9)
 #
 # UITREE_HEADLESS defaults to ../../core/zig-out/bin/uitree-headless, from
 # this directory. Exit status 0 when every test that ran passed. Actual

@@ -125,6 +125,18 @@ layer's Open questions. Carried-over items from uitreefs's GAPS.md that
     is porting. W1's descriptors are the authority: where they differ,
     fix the golden. 09 to 13, 22, 28.
 
+29a. **Ranges in descriptors.** The descriptor grammar has no way to say a
+    number's range (`progress` 0 to 100), so by components.md's "accept
+    everything its descriptors list" a host must take `value=140`. The
+    suite no longer tests a range (28). *Suggest:* `number min=0 max=100`
+    on `prop` lines. Owner: W1, components.md.
+29b. **Wrong slot names.** uitreefs refused a child named like no slot of
+    a slots-only type with `bad value`; with `child none` the descriptor
+    says `unknown type`. The suite follows the descriptor (27) and no longer
+    tests a wrong slot name by hand (10). W1's `toolbar` takes `child any`
+    and lost uitreefs's `left center right` slots: a port gap for W1, not
+    something the suite depends on.
+
 ## Against hyper9 and h9
 
 29. **The 9front kernel rewrites failed walks** to `file does not

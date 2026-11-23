@@ -51,10 +51,9 @@ w $r/page/ctl new breadcrumb crumbs
 echo 'home|Home
 docs|Docs' | tr '|' '	' >$r/page/crumbs/items
 cat $r/page/crumbs/items
-echo '# a toolbar''s slots'
+echo '# a toolbar'
 w $r/page/ctl 'new toolbar bar
 new button bar/left label=Back'
-w $r/page/ctl new text bar/middle 'text=x'
 echo '# a link'
 w $r/page/ctl new link help 'label=Help' 'href=https://example.com/help'
 cat $r/page/help/tree
