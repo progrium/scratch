@@ -133,13 +133,6 @@ type without testing each.
 | --- | --- |
 | `core` | `div` `text` `styled-text` `img` `svg` `icon` `scroll` `spacer` |
 | `canvas` | `canvas` (retained `ops`, item hits, `pixels`) |
-
-Two scale rules from [core.md § Coordinates](core.md#coordinates) apply
-to these profiles: `img` takes `scale=` (its logical size is its pixel
-size divided by `scale`, default 1), and a `canvas` has a read-only
-`scale` prop with its current device pixels per point; its `pixels`
-buffer is `w×scale` by `h×scale` device pixels, and its ops and hits are
-in node space, the only place decimals are allowed.
 | `form` | `button` `checkbox` `radio-group` `switch` `select` `input` `textarea` `number-input` `slider` `form` `field` |
 | `data` | `list` `table` `tree` `description-list` |
 | `overlay` | `dialog` `alert-dialog` `sheet` `popover` `tooltip` `context-menu` |
@@ -150,6 +143,13 @@ in node space, the only place decimals are allowed.
 | `web` | `web` |
 
 `core` is required: every host claims it. The others are optional.
+
+Two scale rules from [core.md § Coordinates](core.md#coordinates) apply
+to these profiles: `img` takes `scale=` (its logical size is its pixel
+size divided by `scale`, default 1), and a `canvas` has a read-only
+`scale` prop with its current device pixels per point; its `pixels`
+buffer is `w×scale` by `h×scale` device pixels, and its ops and hits are
+in node space, the only place decimals are allowed.
 
 Types not in any profile are **host extras**. They are listed in
 `types/` like any other, with no `profile=` on their `type` line. uitreefs
