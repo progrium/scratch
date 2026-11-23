@@ -72,20 +72,31 @@ The spike implements what the counter needs and makes the rest return
 announced to W3, W6 and W7.
 
 **I2. `proto` (W2 → W1, W3, W4).** Parsers take an arena and a line and
-return plain structs, with no global state:
+return plain structs, with no global state. Each fallible parser also has
+a `parseDiag(..., ?*proto.Diag)` form that reports the error's code and
+detail; errors are `proto.Error` (one Zig error per code, plus
+`OutOfMemory`), mapped back with `proto.Code.fromError`.
 
-- `proto.tokenize` (done): `tokenize(arena, line) ![]Tok`, `quote(w, s)`.
-- `proto.ctl.parse(arena, line) !Ctl`: verb, positional words, attributes,
-  bare words, style words after a lone `:`, here-values (`prop=<<END`).
-  Covers `set`, `new`, `delete`, `tree`, and the app `ctl` verbs (`window`,
-  `ask`, `begin`/`commit`/`abort`, `theme load`, `quit`). Validation
-  against types is not here.
-- `proto.style.parse(arena, text) ![]StyleWord`: name, optional variant
-  prefix (`hover:`), argument. Unvalidated.
-- `proto.event`: `Event{ name, key, path, attrs, seq }` and `format(w, ev)`.
-- `proto.err`: `Code` (the 0.2 codes) and `format(w, code, detail)`.
-- `proto.doc`: `.ui` documents to a list of `Ctl`.
-- `proto.lines`: the data-file formats of components.md.
+- `proto.tokenize` (done): `tokenize(arena, line) ![]Tok`, `quote(w, s)`,
+  `quoteWord`, `quoteValue`.
+- `proto.ctl.parse(arena, line) !Ctl` for one line, `parseWrite(arena,
+  bytes) ![]Ctl` for a whole write (all or nothing, here-values,
+  `prop=<<END`). `Ctl{verb, words, attrs, style}`: positional words,
+  attributes, the words after a lone `:`; `Ctl.kind()` is a `Verb`,
+  `Ctl.bare()` the bare words of `set`/`new`/`delete`/`tree`/`window`.
+  Covers the node commands and the app `ctl` verbs. Validation against
+  types is not here.
+- `proto.style.parse(arena, text) ![]StyleWord`: name, optional state
+  prefix (`hover:`), arguments. Unvalidated.
+- `proto.event`: `Event{ name, key, path, attrs, seq }`, `format(w, ev)`,
+  `parse`.
+- `proto.err`: `Code` (the 0.2 codes, `phrase()` and dashed `name()`),
+  `format(w, code, detail)`, `Diag`, `limits`.
+- `proto.doc`: `.ui` documents to a `Node` tree, `print`, and
+  `toCtls(arena, node, path)` for the list of `new` commands.
+- `proto.lines`: the data-file formats of components.md (`Item`,
+  `Column`, `Row`, `TreeItem`, `DescItem`, `IconItem`, `MenuLine`,
+  `KeyBinding`, `CanvasOp`) and uitreefs's extras, with `parseLines`.
 
 **I3. `types.Catalog` (W1 → W3, W4, W6, W7).**
 `Catalog.parse(gpa, descriptor_text) !Catalog`; `lookup(name) ?*const Type`;

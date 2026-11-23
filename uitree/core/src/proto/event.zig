@@ -41,7 +41,9 @@ pub const Event = struct {
         try w.writeByte(' ');
         try headWord(w, self.path);
         for (self.attrs) |a| {
-            try w.print(" {s}=", .{a.key});
+            try w.writeByte(' ');
+            try tokenize.quoteWord(w, a.key);
+            try w.writeByte('=');
             try oneLine(w, a.value);
         }
         if (self.seq) |n| try w.print(" seq={d}", .{n});

@@ -113,31 +113,21 @@ pub const Ctl = struct {
 
     /// The canonical form: `verb words... attrs... [: style...]`, quoted as
     /// needed. A value holding a newline is written as a here-value, so
-    /// the output can be several lines; `parseWrite` reads it back. With no
-    /// newline in any value it is one line, with no newline at the end.
+    /// the output can be several lines, and `parseWrite` reads it back (a
+    /// here-value always ends in a newline, so one is added to a body
+    /// without it). Otherwise it is one line, with no newline at the end.
     pub fn format(self: Ctl, w: *std.Io.Writer) std.Io.Writer.Error!void {
-        var heres: [16][]const u8 = undefined;
-        var nh: usize = 0;
-        var marker_buf: [16][8]u8 = undefined;
-        var markers: [16][]const u8 = undefined;
+        var buf: [24]u8 = undefined;
         try tokenize.quoteWord(w, self.verb);
         for (self.words) |x| {
             try w.writeByte(' ');
-            if (hasNewline(x) and nh < heres.len) {
-                markers[nh] = markerFor(&marker_buf[nh], x, markers[0..nh]);
-                try w.print("<<{s}", .{markers[nh]});
-                heres[nh] = x;
-                nh += 1;
-            } else try tokenize.quoteWord(w, x);
+            if (hasNewline(x)) try w.print("<<{s}", .{markerFor(&buf, x)}) else try tokenize.quoteWord(w, x);
         }
         for (self.attrs) |a| {
-            try w.print(" {s}=", .{a.key});
-            if (hasNewline(a.value) and nh < heres.len) {
-                markers[nh] = markerFor(&marker_buf[nh], a.value, markers[0..nh]);
-                try w.print("<<{s}", .{markers[nh]});
-                heres[nh] = a.value;
-                nh += 1;
-            } else try tokenize.quoteValue(w, a.value);
+            try w.writeByte(' ');
+            try tokenize.quoteWord(w, a.key);
+            try w.writeByte('=');
+            if (hasNewline(a.value)) try w.print("<<{s}", .{markerFor(&buf, a.value)}) else try tokenize.quoteValue(w, a.value);
         }
         if (self.style) |st| {
             try w.writeAll(" :");
@@ -146,22 +136,27 @@ pub const Ctl = struct {
                 try tokenize.quote(w, x);
             }
         }
-        for (heres[0..nh], markers[0..nh]) |body, m| {
-            try w.writeByte('\n');
-            try w.writeAll(body);
-            if (body.len == 0 or body[body.len - 1] != '\n') try w.writeByte('\n');
-            try w.writeAll(m);
-        }
+        // The bodies, in the order their markers appear on the line.
+        for (self.words) |x| if (hasNewline(x)) try writeBody(w, x, &buf);
+        for (self.attrs) |a| if (hasNewline(a.value)) try writeBody(w, a.value, &buf);
     }
 };
 
-fn hasNewline(s: []const u8) bool {
-    return std.mem.indexOfAny(u8, s, "\r\n") != null;
+fn writeBody(w: *std.Io.Writer, body: []const u8, buf: *[24]u8) std.Io.Writer.Error!void {
+    try w.writeByte('\n');
+    try w.writeAll(body);
+    if (body[body.len - 1] != '\n') try w.writeByte('\n');
+    try w.writeAll(markerFor(buf, body));
 }
 
-/// `END`, or `END1`, `END2`... when the body or an earlier here-value on the
-/// same line already uses it.
-fn markerFor(buf: *[8]u8, body: []const u8, taken: []const []const u8) []const u8 {
+fn hasNewline(s: []const u8) bool {
+    return std.mem.indexOfScalar(u8, s, '\n') != null;
+}
+
+/// `END`, or `END1`, `END2`... when a line of the body already reads as
+/// it. Two here-values on one line may share a marker: each body ends at
+/// the first line holding its own.
+fn markerFor(buf: *[24]u8, body: []const u8) []const u8 {
     var i: usize = 0;
     while (true) : (i += 1) {
         const m = if (i == 0) "END" else std.fmt.bufPrint(buf, "END{d}", .{i}) catch unreachable;
@@ -170,13 +165,7 @@ fn markerFor(buf: *[8]u8, body: []const u8, taken: []const []const u8) []const u
         while (it.next()) |l| {
             if (std.mem.eql(u8, std.mem.trim(u8, l, " \t\r"), m)) used = true;
         }
-        for (taken) |x| if (std.mem.eql(u8, x, m)) {
-            used = true;
-        };
-        if (!used) {
-            if (i == 0) return "END";
-            return m;
-        }
+        if (!used) return m;
     }
 }
 

@@ -15,6 +15,8 @@ pub const err = @import("err.zig");
 pub const ctl = @import("ctl.zig");
 pub const style = @import("style.zig");
 pub const event = @import("event.zig");
+pub const doc = @import("doc.zig");
+pub const lines = @import("lines.zig");
 
 pub const Tok = tokenize.Tok;
 pub const Code = err.Code;
@@ -29,4 +31,8 @@ pub const Event = event.Event;
 
 test {
     @import("std").testing.refAllDecls(@This());
+}
+
+test {
+    _ = @import("roundtrip_test.zig");
 }
