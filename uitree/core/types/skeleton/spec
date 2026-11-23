@@ -1,0 +1,5 @@
+type    skeleton  tier=component  since=1.0
+prop    secondary  bool  default=off
+word    secondary  kind=flag
+word    xs sm md lg  kind=size
+child   none

@@ -1,0 +1,6 @@
+type    text  tier=element  profile=core  since=1.0
+prop    text        text  file
+prop    selectable  bool
+prop    truncate    bool
+word    selectable truncate  kind=flag
+child   none

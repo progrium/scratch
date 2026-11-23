@@ -1,0 +1,15 @@
+type    virtual-list  tier=component  since=1.0
+prop    items       data  file
+prop    fields      text  file
+prop    value       text  file
+prop    item-size   number  default=32
+prop    selectable  bool  default=off
+prop    multiple    bool  default=off
+prop    loading     bool  default=off
+word    selectable multiple loading  kind=flag
+event   select           kind=state
+event   open             kind=action
+event   scrolled-to-end  kind=action
+slot    row
+child   none
+file    items  format=items

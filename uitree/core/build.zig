@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
     });
     core.addAnonymousImport("uitcore.h", .{ .root_source_file = b.path("include/uitcore.h") });
     core.addIncludePath(b.path("include"));
+    // W1: every descriptor in types/, compiled in (src/types/embedded.zig).
+    core.addAnonymousImport("uit_types", .{ .root_source_file = b.path("types/embed.zig") });
 
     if (with_h9) {
         if (b.lazyDependency("h9", .{

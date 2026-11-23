@@ -1,0 +1,21 @@
+# Generator for core/types/style-words, core/types/theme-tokens and the GPUI
+# renderer's style dispatch table (generated/). Not a workspace member: it
+# links GPUI only to read GPUI's own reflection. Run ./gen.sh after bumping
+# the gpui or gpui-component pins in the renderer's Cargo.toml.
+[package]
+name = "style-gen"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+# Keep these two pins identical to the renderer's Cargo.toml (gen.sh checks).
+gpui = { package = "gpui-pre", version = "=0.3.12", features = ["inspector"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", rev = "cf945af2d6491ff9bc175f3f1656a14793987db2", features = ["inspector"] }
+gpui-base = { git = "https://github.com/longbridge/gpui-component", rev = "cf945af2d6491ff9bc175f3f1656a14793987db2", features = ["inspector"] }
+serde_json = "1"
+syn = { version = "2", features = ["full", "visit"] }
+quote = "1"
+proc-macro2 = "1"

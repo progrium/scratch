@@ -1,0 +1,13 @@
+type    alert-dialog  tier=overlay  profile=overlay  since=1.0
+prop    title        text  file
+prop    description  text  file
+prop    confirm      text  default=OK  file
+prop    cancel       text  file
+prop    variant      enum=default,danger  default=default
+prop    width        number
+prop    open         bool  default=off  readonly
+verb    open   class=activate
+verb    close  class=activate
+event   confirm  kind=action
+event   cancel   kind=action
+child   any

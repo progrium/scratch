@@ -1,0 +1,11 @@
+type    sheet  tier=overlay  profile=overlay  since=1.0
+prop    side              enum=left,right,top,bottom  default=right
+prop    size              number  default=350
+prop    title             text  file
+prop    overlay-closable  bool
+prop    open              bool  default=off  readonly
+word    overlay-closable  kind=flag
+verb    open   class=activate
+verb    close  class=activate
+event   close  kind=request
+child   any

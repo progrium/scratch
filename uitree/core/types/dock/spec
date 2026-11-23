@@ -1,0 +1,6 @@
+type    dock  tier=component  since=1.0
+prop    layout  data  default={}  file
+event   layout       kind=state
+event   panel-close  kind=request
+child   dock-panel
+file    layout  format=json
