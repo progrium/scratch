@@ -18,6 +18,7 @@ const wire = @import("wire.zig");
 const Dir = @import("dir.zig").Dir;
 const fsmod = @import("fs.zig");
 const transport = @import("transport.zig");
+const Thread = @import("../web.zig").Thread;
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -80,7 +81,7 @@ pub const Server = struct {
         };
         _ = s.live.fetchAdd(1, .acq_rel);
         s.mu.unlock(s.io);
-        const th = std.Thread.spawn(.{}, Conn.run, .{cn}) catch |e| {
+        const th = Thread.spawn(.{}, Conn.run, .{cn}) catch |e| {
             cn.unref();
             return e;
         };
@@ -456,7 +457,7 @@ const Conn = struct {
                 @call(.auto, func, a ++ .{pp});
             }
         };
-        const th = std.Thread.spawn(.{}, Wrap.go, .{ cn, p, args }) catch {
+        const th = Thread.spawn(.{}, Wrap.go, .{ cn, p, args }) catch {
             _ = cn.endPending(p);
             cn.unref();
             return cn.fail(tag, "out of memory");

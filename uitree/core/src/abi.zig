@@ -20,6 +20,7 @@ const types = @import("types/root.zig");
 const proto = @import("proto/root.zig");
 const machine = @import("machine/root.zig");
 const ninep = @import("ninep/root.zig");
+const web = @import("web.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
@@ -233,11 +234,12 @@ pub const Core = struct {
     pinned: ?*treem.state.State = null,
     styles: std.AutoHashMapUnmanaged(treem.Handle, []const UitStyleWord) = .empty,
     /// Wakes the renderer while a batch or a request has a deadline.
-    timer: ?std.Thread = null,
+    timer: ?web.Thread = null,
     timers_due: std.atomic.Value(bool) = .init(false),
     stopping: std.atomic.Value(bool) = .init(false),
 
     pub fn io(c: *Core) Io {
+        if (web.enabled) return web.io();
         return c.threaded.io();
     }
 
@@ -382,7 +384,7 @@ fn create(c: *Core, cfg: *const UitConfig) c_int {
     c.queue.wake = Core.wakeQueue;
     c.queue.wake_ctx = c;
     c.tree.publish() catch {};
-    c.timer = std.Thread.spawn(.{}, Core.timerLoop, .{c}) catch null;
+    c.timer = web.Thread.spawn(.{}, Core.timerLoop, .{c}) catch null;
     return UIT_OK;
 }
 
@@ -390,6 +392,16 @@ export fn uit_serve_fd(c: *Core, fd: c_int) c_int {
     if (comptime builtin.os.tag == .windows) return UIT_ENOTSUP;
     const h = c.getHost() catch return UIT_ENOMEM;
     h.serveFd(fd) catch return UIT_EIO;
+    return UIT_OK;
+}
+
+/// The browser build's transport (web.zig): serves `$ui` on the page's
+/// channel `id`, a WebSocket from the app's machine. Not in uitcore.h:
+/// only web/uit-web.js calls it.
+export fn uit_web_serve(c: *Core, id: i32) c_int {
+    if (comptime !web.enabled) return UIT_ENOTSUP;
+    const h = c.getHost() catch return UIT_ENOMEM;
+    h.srv.serve(.{ .fd = id }) catch return UIT_EIO;
     return UIT_OK;
 }
 

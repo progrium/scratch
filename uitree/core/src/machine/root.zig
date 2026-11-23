@@ -9,6 +9,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 const abi = @import("../abi.zig");
+const Thread = @import("../web.zig").Thread;
 
 pub const available = build_options.h9;
 const h9 = if (available) @import("h9") else struct {};
@@ -24,7 +25,7 @@ pub const OnExit = *const fn (ctx: *anyopaque, status: []const u8) void;
 pub const Runner = struct {
     arena: std.heap.ArenaAllocator,
     threaded: std.Io.Threaded,
-    thread: std.Thread = undefined,
+    thread: Thread = undefined,
     signals: if (available) h9.Machine.Signals else void = if (available) .{} else {},
     running: std.atomic.Value(bool) = .init(true),
     hung_up: std.atomic.Value(bool) = .init(false),
@@ -54,7 +55,7 @@ pub const Runner = struct {
             gpa.destroy(r);
         }
         try r.configure(args, sock);
-        r.thread = try std.Thread.spawn(.{}, run, .{r});
+        r.thread = try Thread.spawn(.{}, run, .{r});
         return r;
     }
 

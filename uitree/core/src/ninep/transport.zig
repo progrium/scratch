@@ -10,13 +10,17 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const c = std.c;
-const posix = builtin.os.tag != .windows;
+const web = @import("../web.zig");
+/// Sockets and fds. Not on Windows (yet) and not in the browser, where a
+/// Conn is one of the page's channels (web.zig).
+const posix = builtin.os.tag != .windows and !web.enabled;
 
 /// One connected byte stream.
 pub const Conn = struct {
     fd: c_int,
 
     pub fn read(k: Conn, buf: []u8) !usize {
+        if (web.enabled) return web.recv(k.fd, buf);
         if (!posix) return error.Unsupported;
         while (true) {
             const n = c.read(k.fd, buf.ptr, buf.len);
@@ -27,6 +31,7 @@ pub const Conn = struct {
     }
 
     pub fn writeAll(k: Conn, b: []const u8) !void {
+        if (web.enabled) return web.send(k.fd, b);
         if (!posix) return error.Unsupported;
         var off: usize = 0;
         while (off < b.len) {
@@ -43,11 +48,13 @@ pub const Conn = struct {
     /// Ends both directions so a blocked reader sees end of file, without
     /// freeing the fd (the reader still closes it).
     pub fn shutdown(k: Conn) void {
+        if (web.enabled) return web.close(k.fd);
         if (!posix) return;
         _ = c.shutdown(k.fd, 2);
     }
 
     pub fn close(k: Conn) void {
+        if (web.enabled) return web.close(k.fd);
         if (!posix) return;
         _ = c.close(k.fd);
     }
@@ -68,13 +75,14 @@ pub const Listener = struct {
     /// A private directory made for the socket (removed at stop).
     dir: ?[:0]u8 = null,
     port: u16 = 0,
-    thread: ?std.Thread = null,
+    thread: ?web.Thread = null,
     stopping: std.atomic.Value(bool) = .init(false),
 
     /// Accepts on a thread of its own, handing each connection to
     /// `on_conn(ctx, conn)`, which owns it.
     pub fn start(l: *Listener, ctx: *anyopaque, on_conn: *const fn (*anyopaque, Conn) void) !void {
-        l.thread = try std.Thread.spawn(.{}, acceptLoop, .{ l, ctx, on_conn });
+        if (!posix) return error.Unsupported;
+        l.thread = try web.Thread.spawn(.{}, acceptLoop, .{ l, ctx, on_conn });
     }
 
     fn acceptLoop(l: *Listener, ctx: *anyopaque, on_conn: *const fn (*anyopaque, Conn) void) void {

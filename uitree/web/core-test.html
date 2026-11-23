@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>uitree core check</title>
+<style>body { font: 14px ui-monospace, monospace; background: #fff; color: #111; margin: 16px }</style>
+<p>The core in wasm with counter.rc in h9, and no renderer: the committed tree after each pump.</p>
+<pre id="tree">starting…</pre>
+<pre id="log"></pre>
+<script type="module">
+import { instantiate, Core } from './uit-web.js';
+import { runApp } from './uit-web.js';
+import { Tree } from './tree.js';
+
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; console.log(s); };
+const dec = new TextDecoder();
+let core, tree;
+let scheduled = false;
+const pump = () => {
+  scheduled = false;
+  const r = core.pump();
+  if (r !== 0) log(`pump: ${r} ${core.lastError()}`);
+  document.getElementById('tree').textContent = tree.dump();
+};
+const m = await instantiate(await (await fetch('uitcore.wasm')).arrayBuffer(), {
+  onWake: () => { if (!scheduled) { scheduled = true; setTimeout(pump, 0); } },
+  log,
+});
+core = new Core(m);
+tree = new Tree(core);
+const app = async (p) => (await fetch(p)).text();
+const t0 = performance.now();
+runApp(core, {
+  files: { 'app/counter.rc': await app('apps/counter.rc'), 'app/lib.rc': await app('apps/lib.rc'), 'app/dbg.rc': await app('apps/dbg.rc') },
+  argv: ['rc', '-c', new URLSearchParams(location.search).get('cmd') ?? 'cd /app; . ./counter.rc'],
+  onOutput: (fd, d) => log(`[${fd}] ${dec.decode(d)}`),
+  onExit: (code, msg) => log(`exit ${code} ${msg ?? ''}`),
+});
+window.uit = { core, tree, t0, click: (path) => tree.emit(path, 'click') };
+</script>

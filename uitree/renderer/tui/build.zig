@@ -59,6 +59,22 @@ pub fn build(b: *std.Build) void {
     mod.linkLibrary(yoga);
 
     mod.linkLibrary(core_lib);
+
+    // The browser build (uitree/web/README.md): uitree-tui.wasm, a wasm
+    // reactor the page drives (src/web.zig), with the core's coroutines.
+    if (target.result.os.tag == .wasi) {
+        mod.root_source_file = b.path("src/web.zig");
+        mod.single_threaded = true;
+        mod.linkLibrary(uitcore.artifact("h9coro"));
+        const wasm = b.addExecutable(.{ .name = "uitree-tui", .root_module = mod });
+        wasm.entry = .disabled;
+        wasm.wasi_exec_model = .reactor;
+        wasm.rdynamic = true;
+        wasm.export_table = true;
+        wasm.stack_size = 1 << 20;
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(wasm.getEmittedBin(), .{ .custom = "web" }, "uitree-tui.wasm").step);
+        return;
+    }
     const exe = b.addExecutable(.{ .name = "uitree-tui", .root_module = mod });
     b.installArtifact(exe);
 

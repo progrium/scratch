@@ -46,6 +46,19 @@ pub fn build(b: *std.Build) void {
     opts.addOption(bool, "h9", with_h9);
     core.addOptions("build_options", opts);
 
+    // The browser build (src/web.zig, web/README.md): on wasm32-wasi the
+    // core's threads are hyper9's web-host coroutines, from the submodule's
+    // src/web.zig and src/web/coro.c. h9 itself isn't linked.
+    const is_web = target.result.os.tag == .wasi;
+    if (is_web) {
+        if (with_h9) @panic("-Dh9 isn't for the web build: the app's machine runs in h9's own Worker");
+        core.single_threaded = true;
+        if (b.lazyDependency("h9", .{})) |h9| {
+            core.addAnonymousImport("h9web", .{ .root_source_file = h9.path("src/web.zig") });
+            addCoroutines(b, core, h9);
+        }
+    }
+
     // libuitcore.a: the core as one static library for renderers in other
     // languages. Bundle our compiler builtins: Rust's don't have the f128
     // math (cosq, fabsq, ...) h9's emulator uses on MSVC. (W8: the
@@ -55,6 +68,18 @@ pub fn build(b: *std.Build) void {
     lib.bundle_compiler_rt = true;
     b.installArtifact(lib);
     b.installFile("include/uitcore.h", "include/uitcore.h");
+
+    if (is_web) {
+        // uitcore.wasm: the core as a wasm reactor whose exports are
+        // uitcore.h, for a renderer in another wasm module (GPUI's, through
+        // its uitcore-sys shim) and web/uit-web.js. No uitree-headless.
+        // libuitcore.a is installed too, with libh9coro.a beside it, for a
+        // renderer in Zig that links the core (renderer/tui's web build).
+        const wasm = b.addExecutable(.{ .name = "uitcore-web", .root_module = core });
+        configureWeb(wasm);
+        b.getInstallStep().dependOn(&b.addInstallFileWithDir(wasm.getEmittedBin(), .{ .custom = "web" }, "uitcore.wasm").step);
+        return;
+    }
 
     const headless = b.addExecutable(.{
         .name = "uitree-headless",
@@ -98,4 +123,42 @@ pub fn build(b: *std.Build) void {
     // W4: uitree-headless's own tests (argument parsing).
     const headless_tests = b.addTest(.{ .root_module = headless.root_module });
     test_step.dependOn(&b.addRunArtifact(headless_tests).step);
+}
+
+/// h9's web-host coroutines (h9's src/web/coro.c, design/epoch-0/browser-host.md
+/// in hyper9): coro.c, the shadow-stack accessors, and wasi-libc's
+/// setjmp/longjmp runtime on wasm exception handling, which coro.c's exit
+/// path uses.
+fn addCoroutines(b: *std.Build, m: *std.Build.Module, h9: *std.Build.Dependency) void {
+    // Only these objects get exception handling, as in hyper9's own web
+    // build (its kern library): wasi-libc and Zig code are built without.
+    const t = m.resolved_target.?;
+    var q = t.query;
+    q.cpu_features_add = std.Target.wasm.featureSet(&.{.exception_handling});
+    const lib = b.addLibrary(.{ .name = "h9coro", .linkage = .static, .root_module = b.createModule(.{
+        .target = b.resolveTargetQuery(q),
+        .optimize = .ReleaseFast,
+        .link_libc = true,
+    }) });
+    const flags: []const []const u8 = &.{ "-mllvm", "-wasm-enable-sjlj" };
+    lib.root_module.addCSourceFiles(.{ .root = h9.path("src/web"), .files = &.{"coro.c"}, .flags = flags });
+    lib.root_module.addAssemblyFile(h9.path("src/web/stack.S"));
+    lib.root_module.addCSourceFile(.{
+        .file = .{ .cwd_relative = b.pathJoin(&.{ b.graph.zig_lib_directory.path orelse ".", "libc/wasi/libc-top-half/musl/src/setjmp/wasm32/rt.c" }) },
+        .flags = flags,
+    });
+    m.linkLibrary(lib);
+    b.installArtifact(lib);
+}
+
+/// A wasm reactor: no _start, every export kept, and room for the
+/// coroutines' stacks (each its own allocation; this is the first's).
+pub fn configureWeb(exe: *std.Build.Step.Compile) void {
+    exe.entry = .disabled;
+    exe.wasi_exec_model = .reactor;
+    exe.rdynamic = true;
+    exe.stack_size = 1 << 20;
+    // The page grows the function table for nothing, but h9-web.js-style
+    // hosts expect it exported.
+    exe.export_table = true;
 }

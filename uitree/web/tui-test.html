@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>uitree terminal check</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+<body style="margin:16px;background:#fff">
+<div id="term"></div>
+<pre id="log"></pre>
+<script type="module">
+import { startTui } from './tui.js';
+import { runApp } from './uit-web.js';
+const log = (s) => { document.getElementById('log').textContent += s + '\n'; };
+const dec = new TextDecoder();
+const tui = await startTui(document.getElementById('term'), { log });
+const app = async (p) => (await fetch(p)).text();
+runApp(tui.core, {
+  files: { 'app/counter.rc': await app('apps/counter.rc'), 'app/lib.rc': await app('apps/lib.rc') },
+  argv: ['rc', '-c', 'cd /app; . ./counter.rc'],
+  onOutput: (fd, d) => log(`[${fd}] ${dec.decode(d)}`),
+  onExit: (code, msg) => log(`exit ${code} ${msg ?? ''}`),
+});
+window.tui = tui;
+</script>
