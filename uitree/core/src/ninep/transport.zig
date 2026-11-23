@@ -78,6 +78,7 @@ pub const Listener = struct {
     }
 
     fn acceptLoop(l: *Listener, ctx: *anyopaque, on_conn: *const fn (*anyopaque, Conn) void) void {
+        if (!posix) return;
         while (!l.stopping.load(.acquire)) {
             const fd = c.accept(l.fd, null, null);
             if (fd < 0) {
@@ -95,6 +96,7 @@ pub const Listener = struct {
     }
 
     pub fn stop(l: *Listener) void {
+        if (!posix) return;
         l.stopping.store(true, .release);
         // Wakes the accept: shutdown on a listening socket makes accept
         // fail on Linux; elsewhere, connect to ourselves.
@@ -117,6 +119,7 @@ pub const Listener = struct {
     }
 
     fn poke(l: *Listener) void {
+        if (!posix) return;
         if (l.path) |p| {
             const w = c.socket(c.AF.UNIX, c.SOCK.STREAM, 0);
             if (w < 0) return;
