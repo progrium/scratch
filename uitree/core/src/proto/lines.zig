@@ -730,6 +730,36 @@ pub const Diagnostic = struct {
 };
 
 // ---------------------------------------------------------------------------
+// editor selection (uitreefs host extra)
+
+/// An editor `selection`: `line col line col`, 1-based, the anchor then
+/// the head. The file is this one line; a trailing newline is dropped.
+pub const Selection = struct {
+    anchor_line: u32,
+    anchor_col: u32,
+    head_line: u32,
+    head_col: u32,
+
+    pub fn parse(arena: Allocator, line: []const u8, d: ?*Diag) Error!Selection {
+        const l = std.mem.trimEnd(u8, line, "\r\n");
+        var ns: [4]u32 = undefined;
+        var it = std.mem.tokenizeAny(u8, l, " \t");
+        var k: usize = 0;
+        while (it.next()) |w| : (k += 1) {
+            if (k == 4) return err.fail(d, arena, .bad_syntax, "want line col line col", .{});
+            ns[k] = std.fmt.parseInt(u32, w, 10) catch return err.fail(d, arena, .bad_value, "selection number {s}", .{w});
+            if (ns[k] == 0) return err.fail(d, arena, .bad_value, "selection number 0 (1-based)", .{});
+        }
+        if (k != 4) return err.fail(d, arena, .bad_syntax, "want line col line col", .{});
+        return .{ .anchor_line = ns[0], .anchor_col = ns[1], .head_line = ns[2], .head_col = ns[3] };
+    }
+
+    pub fn format(self: Selection, w: *Writer) WErr!void {
+        try w.print("{d} {d} {d} {d}", .{ self.anchor_line, self.anchor_col, self.head_line, self.head_col });
+    }
+};
+
+// ---------------------------------------------------------------------------
 // completions (uitreefs host extra), and the seq= header of request answers
 
 /// A `completions` line: `text [label] [kind=k] [detail=d]`. `text` is
@@ -1133,6 +1163,19 @@ test "line numbers in errors" {
     var d: Diag = .{};
     try t.expectError(error.BadValue, parseLines(Column, a, "a\tA\n\nb\tB\twide\n", &d));
     try t.expectEqualStrings("line 3: wide", d.detail);
+}
+
+test "selection" {
+    var ar: std.heap.ArenaAllocator = .init(t.allocator);
+    defer ar.deinit();
+    const a = ar.allocator();
+    const s = try Selection.parse(a, "3 1 4 12\n", null);
+    try t.expectEqual(Selection{ .anchor_line = 3, .anchor_col = 1, .head_line = 4, .head_col = 12 }, s);
+    try t.expectEqualStrings("3 1 4 12", try str(a, s));
+    try t.expectError(error.BadSyntax, Selection.parse(a, "1 2 3", null));
+    try t.expectError(error.BadSyntax, Selection.parse(a, "1 2 3 4 5", null));
+    try t.expectError(error.BadValue, Selection.parse(a, "1 2 x 4", null));
+    try t.expectError(error.BadValue, Selection.parse(a, "0 1 1 1", null));
 }
 
 test "messages" {
