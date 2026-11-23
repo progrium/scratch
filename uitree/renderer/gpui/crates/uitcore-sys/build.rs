@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 /// Must equal UIT_ABI_VERSION in uitcore.h and ABI_VERSION in src/lib.rs.
-const ABI_VERSION: u32 = 4;
+const ABI_VERSION: u32 = 5;
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

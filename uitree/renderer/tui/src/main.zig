@@ -214,7 +214,12 @@ pub fn main(init: std.process.Init) !u8 {
                         }
                         break :main;
                     }
-                    redraw = true;
+                    // Every input call wakes the core, uit_frame_drawn
+                    // included, so a pump that changed nothing mustn't
+                    // draw (and call it) again, or the host spins at a
+                    // pump per frame while idle. The first frame comes
+                    // from the winsize event.
+                    if (ch.n_dirty + ch.n_created + ch.n_removed + ch.n_props + ch.n_cmds > 0) redraw = true;
                 },
                 else => {},
             }

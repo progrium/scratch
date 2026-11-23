@@ -161,7 +161,7 @@ fn argLen(a: core.StyleArg) ?Len {
     return switch (a.kind) {
         c.UIT_ARG_PX, c.UIT_ARG_NUMBER => .{ .pt = a.a },
         c.UIT_ARG_PERCENT => .{ .pct = a.a },
-        c.UIT_ARG_REM => .{ .pt = a.a * 16 },
+        c.UIT_ARG_REM => .{ .pt = a.a * step * 4 },
         c.UIT_ARG_TEXT => blk: {
             const t = core.slice(a.text);
             if (std.mem.eql(u8, t, "auto")) break :blk .auto;
@@ -176,8 +176,12 @@ fn argColor(a: core.StyleArg) ?u32 {
     return if (a.kind == c.UIT_ARG_RGBA) a.rgba else null;
 }
 
-/// A Tailwind scale suffix: `4` (16 points), `0p5`, `px`, `full`,
-/// `1-2` (50%), `auto`, `neg-4`.
+/// Points per step of the Tailwind scale: the `spacing` look token, which
+/// the Ui sets before each frame. A rem is four steps.
+pub var step: f32 = 4;
+
+/// A Tailwind scale suffix: `4` (4 steps, 16 points by default), `0p5`,
+/// `px`, `full`, `1-2` (50%), `auto`, `neg-4`.
 pub fn scale(suffix: []const u8) ?Len {
     var s = suffix;
     var sign: f32 = 1;
@@ -202,7 +206,7 @@ pub fn scale(suffix: []const u8) ?Len {
         buf[i + 1] = '5';
     }
     const n = std.fmt.parseFloat(f32, buf[0..s.len]) catch return null;
-    return .{ .pt = sign * n * 4 };
+    return .{ .pt = sign * n * step };
 }
 
 const Side = enum(u2) { t = 0, r = 1, b = 2, l = 3 };

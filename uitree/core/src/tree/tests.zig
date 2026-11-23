@@ -1401,6 +1401,35 @@ test "named themes: names, families, palettes and the mode" {
     try tt.expectEqual(Code.not_found, try f.code("ctl", "theme name Moon"));
 }
 
+test "look tokens: defaults, checks, and a palette's values" {
+    var f: Fx = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.cat.loadThemes(
+        \\theme Flat
+        \\  mode light
+        \\  radius 0
+        \\  shadow off
+        \\  font-family Inter Display
+        \\
+    , null);
+    const toks = try f.read("theme/tokens");
+    for ([_][]const u8{ "radius 6\n", "radius-lg 8\n", "font-size 16\n", "font-family system\n", "spacing 4\n", "shadow on\n" }) |x|
+        try tt.expect(std.mem.indexOf(u8, toks, x) != null);
+    try f.ok("theme/tokens", "font-size 14\nspacing 5\nfont-family Iosevka Term\nshadow off");
+    try tt.expectEqual(Code.bad_value, try f.code("theme/tokens", "spacing -1"));
+    try tt.expectEqual(Code.bad_value, try f.code("theme/tokens", "shadow maybe"));
+    try tt.expectEqual(Code.bad_value, try f.code("theme/tokens", "font-size big"));
+    const t2 = try f.read("theme/tokens");
+    for ([_][]const u8{ "font-size 14\n", "spacing 5\n", "font-family Iosevka Term\n", "shadow off\n" }) |x|
+        try tt.expect(std.mem.indexOf(u8, t2, x) != null);
+    // A palette's look tokens apply under the client's.
+    try f.ok("theme/name", "Flat");
+    const t3 = try f.read("theme/tokens");
+    for ([_][]const u8{ "radius 0\n", "font-family Iosevka Term\n", "radius-lg 8\n" }) |x|
+        try tt.expect(std.mem.indexOf(u8, t3, x) != null);
+}
+
 test "themes text is checked" {
     var c = try types.Catalog.builtin(tt.allocator);
     defer c.deinit();
@@ -1411,6 +1440,8 @@ test "themes text is checked" {
         "theme A\n\tmode dark\n\tprimary blue\n",
         "theme A\n\tmode dark\n\tno-such-token #000000\n",
         "theme A\n\tmode dark\ntheme A\n\tmode light\n",
+        "theme A\n\tmode dark\n\tshadow maybe\n",
+        "theme A\n\tmode dark\n\tradius -2\n",
     }) |bad| try tt.expectError(error.BadSyntax, c.loadThemes(bad, null));
     try c.loadThemes(types.embedded.themes, null);
     try tt.expect(c.themes.len > 0);

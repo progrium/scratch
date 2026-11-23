@@ -25,7 +25,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 4;
+pub const abi_version: u32 = 5;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -685,6 +685,7 @@ fn tokenText(c: *Core, name: []const u8) ?[]const u8 {
     const s = c.st();
     if (s.token(name)) |v| return v;
     for (c.cat.theme_tokens) |t| if (std.mem.eql(u8, t.name, name)) return s.tokenValue(t);
+    if (types.style.valueToken(name)) |v| return s.valueTokenValue(v);
     return null;
 }
 
@@ -862,6 +863,15 @@ export fn uit_theme_dark(c: *Core) u32 {
 export fn uit_token(c: *Core, name: UitStr, rgba: ?*u32) c_int {
     const v = parseColor(tokenText(c, name.slice()) orelse return 0) orelse return 0;
     if (rgba) |r| r.* = v;
+    return 1;
+}
+
+/// Any token's value for the current mode as text, as `theme/tokens` reads
+/// it: a color (`#0b5cff`) or a look token (`radius 6`, `font-family
+/// system`, `shadow off`). Borrowed until the next pump. Since 5.
+export fn uit_token_text(c: *Core, name: UitStr, out: ?*UitStr) c_int {
+    const v = tokenText(c, name.slice()) orelse return 0;
+    if (out) |o| o.* = UitStr.of(v);
     return 1;
 }
 
@@ -1193,6 +1203,16 @@ test "uit_themes registers palettes that uit_token resolves through" {
     var rgba: u32 = 0;
     try std.testing.expectEqual(@as(c_int, 1), uit_token(core, UitStr.lit("primary"), &rgba));
     try std.testing.expectEqual(@as(u32, 0x102030ff), rgba);
+    var tv: UitStr = .{};
+    try std.testing.expectEqual(@as(c_int, 1), uit_token_text(core, UitStr.lit("primary"), &tv));
+    try std.testing.expectEqualStrings("#102030", tv.slice());
+    try std.testing.expectEqual(@as(c_int, 1), uit_token_text(core, UitStr.lit("font-family"), &tv));
+    try std.testing.expectEqualStrings("system", tv.slice());
+    try write(core, "theme/tokens", "spacing 6");
+    _ = uit_pump(core, &ch);
+    try std.testing.expectEqual(@as(c_int, 1), uit_token_text(core, UitStr.lit("spacing"), &tv));
+    try std.testing.expectEqualStrings("6", tv.slice());
+    try std.testing.expectEqual(@as(c_int, 0), uit_token_text(core, UitStr.lit("nope"), &tv));
     // Once serving, the set is fixed.
     if (builtin.os.tag == .windows) return;
     var dial: UitStr = .{};

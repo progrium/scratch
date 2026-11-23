@@ -670,6 +670,14 @@ pub const State = struct {
         return if (s.dark()) s.theme.dark else s.theme.light;
     }
 
+    /// A value token's value now (`radius`, `font-family`): the client's,
+    /// then the named theme's, then the default.
+    pub fn valueTokenValue(s: *const State, v: types.style.ValueToken) []const u8 {
+        if (s.token(v.name)) |x| return x;
+        if (s.palette()) |p| if (p.token(v.name)) |x| return x;
+        return v.value;
+    }
+
     /// A catalog token's value now: the client's `theme/tokens`, then the
     /// named theme's palette, then the catalog's default for the mode.
     pub fn tokenValue(s: *const State, t: types.style.Token) []const u8 {

@@ -112,6 +112,8 @@ pub(crate) struct Inner {
     pub frame_tips: RefCell<HashMap<String, Vec<Node>>>,
     /// The tip state of each node with a `tooltip` file.
     pub tips: RefCell<HashMap<Node, Entity<crate::components::overlays::tooltip::TipState>>>,
+    /// The windows' rem size, from the `spacing` token (theme.rs).
+    pub rem: Cell<f32>,
 }
 
 pub(crate) fn is_dark(a: gpui::WindowAppearance) -> bool {
@@ -368,6 +370,7 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
         frames: Default::default(),
         assets: Default::default(),
         frame_tips: Default::default(),
+        rem: Cell::new(16.),
         tips: Default::default(),
     });
     crate::theme::init(&inner, cx);

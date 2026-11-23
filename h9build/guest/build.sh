@@ -154,6 +154,10 @@ while read -r i l name; do
 	esac
 	run=
 	[ "$l" = "$layer" ] && run=1
+	# The runtime layer is shared between apps without the files its steps
+	# copy from the source, so the deps layer makes those copies.
+	copies=
+	[ "$l:$layer" = runtime:deps ] && copies=1
 	step=$(jq -c ".steps[$i]" "$P")
 	[ -n "$run" ] && log "step $name"
 	vars=$(echo "$step" | jq -r '.variables // {} | to_entries[] | "\(.key)=\(.value)"')
@@ -177,7 +181,7 @@ EOF
 		[ "${H9BUILD_RUBY_COMPILE:-}" = 1 ] || export MISE_RUBY_COMPILE=false
 		;;
 	esac
-	if [ -n "$run" ]; then
+	if [ -n "$run$copies" ]; then
 		for s in $(echo "$step" | jq -r '.inputs[]? | select(.local == true) | .include[]?'); do
 			source_in "$s"
 		done
@@ -191,7 +195,12 @@ EOF
 				export PATH="$d:$PATH"
 				continue
 			fi
-			[ -n "$run" ] || continue
+			if [ -z "$run" ]; then
+				if [ -n "$copies" ] && echo "$c" | jq -e 'has("src")' >/dev/null; then
+					copy "$(echo "$c" | jq -r .src)" "$(echo "$c" | jq -r .dest)"
+				fi
+				continue
+			fi
 			if echo "$c" | jq -e 'has("cmd")' >/dev/null; then
 				cmd=$(echo "$c" | jq -r .cmd)
 				log "  $(echo "$c" | jq -r '.customName // .cmd')"

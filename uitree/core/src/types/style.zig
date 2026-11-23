@@ -86,6 +86,45 @@ pub fn parseTokens(arena: std.mem.Allocator, text: []const u8) error{ BadSyntax,
     return out.toOwnedSlice(arena);
 }
 
+/// What a theme token that isn't a color holds.
+pub const ValueKind = enum {
+    /// Points, a number ≥ 0.
+    length,
+    /// One line of text.
+    text,
+    /// `on` or `off`.
+    flag,
+};
+
+/// A theme token that isn't a color, with its default (core.md § Style,
+/// Theme: the look tokens). Every host has these, whatever its catalog.
+pub const ValueToken = struct { name: []const u8, kind: ValueKind, value: []const u8 };
+
+pub const value_tokens = [_]ValueToken{
+    .{ .name = "radius", .kind = .length, .value = "6" },
+    .{ .name = "radius-lg", .kind = .length, .value = "8" },
+    .{ .name = "font-size", .kind = .length, .value = "16" },
+    // `system`: the host's own UI font.
+    .{ .name = "font-family", .kind = .text, .value = "system" },
+    // Points per step of the spacing scale (`p-4` is 4 steps).
+    .{ .name = "spacing", .kind = .length, .value = "4" },
+    .{ .name = "shadow", .kind = .flag, .value = "on" },
+};
+
+pub fn valueToken(name: []const u8) ?ValueToken {
+    for (value_tokens) |v| if (std.mem.eql(u8, v.name, name)) return v;
+    return null;
+}
+
+/// Whether `v` is a value of `kind`.
+pub fn checkValue(kind: ValueKind, v: []const u8) bool {
+    return switch (kind) {
+        .length => isNumber(v) and v[0] != '-',
+        .text => v.len > 0 and std.mem.indexOfAny(u8, v, "\n\r") == null,
+        .flag => std.mem.eql(u8, v, "on") or std.mem.eql(u8, v, "off"),
+    };
+}
+
 /// One named theme (core.md § Style, Theme): a palette for one mode. Its
 /// tokens are the ones whose value differs from that mode's default.
 pub const Theme = struct {
@@ -106,7 +145,9 @@ pub const Pair = struct { name: []const u8, value: []const u8 };
 
 /// Parses `themes` text: a `theme NAME` line starts a theme; the lines
 /// after it, up to the next `theme` line, are `mode light|dark`,
-/// `family NAME` and `TOKEN #rrggbb[aa]`. A name is the rest of its line.
+/// `family NAME` and `TOKEN VALUE`: a color, or a value of the token's
+/// kind for the value tokens (`radius 0`, `shadow off`). A name or a text
+/// value is the rest of its line.
 /// Blank lines and `#` comments are skipped. Every theme needs a mode.
 pub fn parseThemes(arena: std.mem.Allocator, text: []const u8) error{ BadSyntax, OutOfMemory }![]Theme {
     var out: std.ArrayList(Theme) = .empty;
@@ -138,7 +179,9 @@ pub fn parseThemes(arena: std.mem.Allocator, text: []const u8) error{ BadSyntax,
         } else if (std.mem.eql(u8, key, "family")) {
             t.family = rest;
         } else {
-            if (!isColor(rest)) return error.BadSyntax;
+            if (valueToken(key)) |vt| {
+                if (!checkValue(vt.kind, rest)) return error.BadSyntax;
+            } else if (!isColor(rest)) return error.BadSyntax;
             try toks.append(arena, .{ .name = key, .value = rest });
         }
     }

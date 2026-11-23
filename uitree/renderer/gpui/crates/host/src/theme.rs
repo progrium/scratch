@@ -4,7 +4,9 @@
 //! RGBA). GPUI Kit components read `cx.theme()`, so on `UIT_CMD_THEME` the
 //! host copies every token the core knows (`uit_token`, for the names in
 //! W1's generated `theme-tokens`) into `ThemeColor`, by field name through
-//! serde, and switches the mode to `uit_theme_dark`.
+//! serde, and switches the mode to `uit_theme_dark`. The look tokens
+//! (`radius`, `font-size`, `font-family`, `shadow`, `spacing`) come as text
+//! (`uit_token_text`) and set `Theme`'s fields and the windows' rem size.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,6 +18,8 @@ use gpui_component::{ActiveTheme as _, Theme, ThemeColor, ThemeMode, ThemeRegist
 use crate::runtime::Inner;
 
 thread_local! {
+    /// GPUI Kit's own UI font, which `font-family system` means.
+    static SYSTEM_FONT: RefCell<Option<gpui::SharedString>> = const { RefCell::new(None) };
     static CACHE: RefCell<Option<(ThemeColor, HashMap<String, Hsla>)>> = const { RefCell::new(None) };
 }
 
@@ -49,6 +53,8 @@ pub(crate) fn init(inner: &Rc<Inner>, cx: &mut App) {
     if !cx.has_global::<Theme>() {
         Theme::change(ThemeMode::Light, None, cx);
     }
+    let f = cx.theme().font_family.clone();
+    SYSTEM_FONT.with(|s| *s.borrow_mut() = Some(f));
     apply(inner, cx);
 }
 
@@ -59,15 +65,16 @@ fn token_names() -> impl Iterator<Item = &'static str> {
 
 /// Re-reads the mode and every token from the core.
 pub(crate) fn apply(inner: &Rc<Inner>, cx: &mut App) {
-    let (dark, tokens) = {
+    let (dark, tokens, look) = {
         let core = inner.core.borrow();
         let tokens: Vec<(&str, u32)> = token_names().filter_map(|n| core.token(n).map(|v| (n, v))).collect();
-        (core.theme_dark(), tokens)
+        (core.theme_dark(), tokens, Look::read(&core))
     };
     let m = if dark { ThemeMode::Dark } else { ThemeMode::Light };
     if cx.theme().mode != m {
         Theme::change(m, None, cx);
     }
+    apply_look(inner, &look, cx);
     if tokens.is_empty() {
         return;
     }
@@ -83,6 +90,61 @@ pub(crate) fn apply(inner: &Rc<Inner>, cx: &mut App) {
         }
         if let Ok(c) = serde_json::from_value::<ThemeColor>(v) {
             t.colors = c;
+        }
+    });
+}
+
+/// The look tokens (core.md § Style, Theme), as the core resolves them.
+struct Look {
+    radius: Option<f32>,
+    radius_lg: Option<f32>,
+    font_size: Option<f32>,
+    font_family: Option<String>,
+    spacing: Option<f32>,
+    shadow: Option<bool>,
+}
+
+impl Look {
+    fn read(core: &uitcore::Core) -> Look {
+        let num = |n: &str| core.token_text(n).and_then(|v| v.trim().parse::<f32>().ok());
+        Look {
+            radius: num("radius"),
+            radius_lg: num("radius-lg"),
+            font_size: num("font-size"),
+            font_family: core.token_text("font-family"),
+            spacing: num("spacing"),
+            shadow: core.token_text("shadow").map(|v| v.trim() == "on"),
+        }
+    }
+}
+
+/// GPUI Kit's `Theme` fields for radius, fonts and shadow; `spacing` sets
+/// every window's rem size (a Tailwind step is a quarter rem, so the
+/// default 4 is GPUI's 16).
+fn apply_look(inner: &Rc<Inner>, l: &Look, cx: &mut App) {
+    if let Some(s) = l.spacing {
+        inner.rem.set((s * 4.).max(1.));
+    }
+    let system = SYSTEM_FONT.with(|s| s.borrow().clone());
+    Theme::update(cx, |t| {
+        if let Some(r) = l.radius {
+            t.radius = gpui::px(r);
+        }
+        if let Some(r) = l.radius_lg {
+            t.radius_lg = gpui::px(r);
+        }
+        if let Some(f) = l.font_size {
+            t.font_size = gpui::px(f.max(1.));
+        }
+        if let Some(f) = &l.font_family {
+            match (f.trim(), &system) {
+                ("system", Some(s)) => t.font_family = s.clone(),
+                ("system", None) => {}
+                (name, _) => t.font_family = name.to_string().into(),
+            }
+        }
+        if let Some(s) = l.shadow {
+            t.shadow = s;
         }
     });
 }

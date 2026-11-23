@@ -27,11 +27,12 @@ machines, so the same script works on macOS and Linux.
 
 ```
 myapp.h9/
-  layers/runtime/...           what the plan's packages steps changed: mise's runtimes in /mise
+  layers/runtime -> $cache/runtimes/KEY   what the plan's packages steps changed: mise's runtimes in /mise, shared by every app with the same ones
   layers/deps/...              what its install steps changed: node_modules, a venv, gems
   layers/app/...               what its build steps changed, pruned to what the plan deploys
   layers/*.key                 each layer's inputs, hashed; a layer whose key is unchanged is kept
   plan.json                    Railpack's plan
+  plan.key                     the source's files, Railpack, and plan.sh, hashed; a plan whose key is unchanged is kept
   env                          the run environment: PATH, the plan's variables, the start command
   layers.txt                   the layers the run stacks: those holding something the plan deploys
   run                          h9 with the layers stacked on #L over the base root
@@ -42,7 +43,8 @@ Each layer is an OCI layer, rooted at `/`, with `.wh.` whiteouts for what its
 steps removed, so `run` stacks them in order with `--dir LAYER:#L` over the
 base root, and they'd stack the same in any container tool. The roots are
 shared by every app and live in the cache: *base*, which apps run on (about
-40 MB), and *builder*, which every step runs on.
+40 MB), and *builder*, which every step runs on. So are the runtime layers:
+one for each set of tools and versions, in `$cache/runtimes`.
 
 ## How it works
 
@@ -60,7 +62,11 @@ shared by every app and live in the cache: *base*, which apps run on (about
 3. **Plan.** In a machine on the builder root, `railpack plan` reads the source
    and writes `plan.json`, and `guest/plan.sh` reads it into plain text the
    host side acts on: which layer each step builds in, each layer's key, the
-   paths the plan deploys, and its apt packages.
+   paths the plan deploys, and its apt packages. The plan is kept with a key
+   of every source file, Railpack, and `plan.sh`, and Railpack runs again only
+   when the key changes, as planning is most of a build with nothing changed.
+   A kept plan keeps the versions Railpack resolved, until the source changes
+   or `H9BUILD_REPLAN=1`.
 4. **Packages.** The plan's apt steps name Debian packages for Railpack's
    Debian images (`libjemalloc2`, `libyaml-dev`, `libatomic1`). h9build maps
    them to Wolfi's names, with a table for the common ones and guesses for the
@@ -74,10 +80,19 @@ shared by every app and live in the cache: *base*, which apps run on (about
    touched. `guest/build.sh` carries out the layer's steps as Railpack's
    BuildKit backend would, with the earlier layers' variables and PATH. Each
    layer builds in `LAYER.tmp` and takes its name when its steps succeed.
+   The runtime layer is shared between apps (below), so the files its steps
+   copy from the source (a `mise.toml`) are left out of it and copied in the
+   deps layer instead.
 6. **Caching.** A layer's key hashes its steps and the source files they copy
    in, chained with the keys below it. When it matches the last build's, the
    layer is kept, so changing the app's code rebuilds only the app layer, and
-   a build with nothing changed takes a few seconds.
+   a build with nothing changed takes a few seconds. The runtime layer is
+   kept in the cache rather than the output, under a key of the builder root
+   and the plan's runtime steps: the mise config with Railpack's resolved
+   versions, and any `mise.toml` the steps copy in, but not idiomatic version
+   files such as `.nvmrc` or a `Gemfile`, whose versions the plan has already
+   resolved. Every app with the same tools at the same versions uses the
+   same layer, so a runtime is installed once per machine.
 7. **Pruning.** The app layer keeps only the paths the plan deploys from it,
    less their excludes, with a whiteout for an exclude a layer below holds
    (Rust's `target`). The run stacks the runtime layer only when the plan
@@ -105,12 +120,19 @@ downloads in the cache; *rebuilt* is a second build with nothing changed.
 | `deno-2` | 30 s | 2 s | runtime 123 MB, app 328 KB (its `deno cache`) | prints its test's expected output |
 | `ruby-latest` (Ruby 4) | 100 s | 3 s | runtime 420 MB, deps 3.5 MB (gems), app 32 KB | prints its test's expected output |
 | `cpp-cmake` | 40 s | 4 s | app 268 KB | prints its test's expected output |
-| `gleam` (Erlang from Hex) | 25 s | 3 s | runtime 204 MB (Erlang and Gleam), app 328 KB | prints its test's expected output |
-| `elixir-latest` (a Mix release) | 50 s | 4 s | app 67 MB (the release carries Erlang) | prints its test's expected output |
-| `rust-rocket` | 4.5 min | 3 s | app 5.2 MB (no runtime, and not the deps layer's 480 MB of `target` and cargo registry) | "Rocket has launched" |
-| `zig` | 4.5 min | 2 s | app 3.9 MB | prints its test's expected output |
-| `dotnet-cli` (.NET 6) | 40 s | 2 s | runtime 498 MB, app 180 KB | prints its test's expected output |
-| `dotnet-api` (ASP.NET 8) | 90 s | 3 s | runtime 569 MB, app 4 MB | serves `/WeatherForecast` |
+| `gleam` (Erlang from Hex) | 25 s | 1 s | runtime 204 MB (Erlang and Gleam), app 328 KB | prints its test's expected output |
+| `elixir-latest` (a Mix release) | 50 s | 1 s | app 67 MB (the release carries Erlang) | prints its test's expected output |
+| `rust-rocket` | 4.5 min | 1 s | app 5.2 MB (no runtime, and not the deps layer's 480 MB of `target` and cargo registry) | "Rocket has launched" |
+| `zig` | 4.5 min | 1 s | app 3.9 MB | prints its test's expected output |
+| `dotnet-cli` (.NET 6) | 40 s | 1 s | runtime 498 MB, app 180 KB | prints its test's expected output |
+| `dotnet-api` (ASP.NET 8) | 90 s | 1 s | runtime 569 MB, app 4 MB | serves `/WeatherForecast` |
+
+With the plan kept and the runtime layers shared, a build with nothing changed
+takes about half a second (0.4 to 0.7 s for six of the examples above, down from 2 to
+2.6 s), and a second app on runtimes another app already installed skips
+installing them: on copies of the examples, Ruby built in 7 s rather than 70 s,
+Python in 7 s rather than 25 s, and Node in 24 s rather than 47 s. Go's build
+is mostly `go build` itself, so it went from 105 s to 67 s.
 
 What doesn't build yet, and why:
 
@@ -170,15 +192,18 @@ Sigstore calls that mise makes to check what it downloads. That breaks
 What it leaves out, for now:
 
 - **A tighter sandbox.** The build machines can write only the output
-  directory, but they have the network with `--net enable`, because Mix
-  listens on 127.0.0.1 for its lock and `--net outbound` refuses any listen.
-  An h9 mode for outbound connections plus loopback listens would fit
-  better, and `--net-allow` for the registries a plan uses would close it
-  further.
+  directory, or a new runtime layer in the cache, but they have the network
+  with `--net enable`, because Mix listens on 127.0.0.1 for its lock and
+  `--net outbound` refuses any listen. An h9 mode for outbound connections
+  plus loopback listens would fit better, and `--net-allow` for the
+  registries a plan uses would close it further.
 - **Pruning dev dependencies.** Railpack's plans keep them unless told
   otherwise (`RAILPACK_PRUNE_DEPS`).
-- **Caching the source.** The app layer's key hashes every source file, so
-  any change rebuilds it, as it should; a large tree is hashed on every build.
+- **Caching the source.** The plan's key and the app layer's key hash every
+  source file, so any change plans again and rebuilds the app layer, as it
+  should; a large tree is hashed on every build.
+- **Cleaning the cache.** Runtime layers nothing uses any more stay in
+  `$cache/runtimes` until removed by hand.
 
 ## What h9 still needs worked around
 
@@ -214,4 +239,5 @@ after the build.
 | `H9BUILD_MEMORY` | Guest memory for the build machines (default `4G`) |
 | `H9BUILD_RAILPACK` | A Railpack binary to use instead of the release |
 | `H9BUILD_RUBY_COMPILE` | `1` builds Ruby from source rather than using mise's precompiled one |
+| `H9BUILD_REPLAN` | `1` runs Railpack's planner even when the source hasn't changed |
 | `HTTPS_PROXY`, `SSL_CERT_FILE` | Passed into the guest when set |

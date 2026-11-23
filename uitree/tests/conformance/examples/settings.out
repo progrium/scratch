@@ -62,7 +62,9 @@ END
           field radius  label='Corner radius'
             slider in  max=16  value=6  tag=set:radius
           field size  label='Font size'
-            slider in  min=11  max=18  value=14  tag=set:font-size
+            slider in  min=11  max=20  value=16  tag=set:font-size
+          field spacing  label=Spacing  description='Points per step of the spacing scale.'
+            slider in  min=2  max=8  value=4  tag=set:spacing
       alert note  title='Changes apply right away'  text='Every style that names a theme token re-resolves on the next frame.'
     div account  : v-flex gap=24 max-w=560
       text h  text=Account  : text-xl font-semibold

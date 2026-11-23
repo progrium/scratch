@@ -269,6 +269,28 @@ fn named_themes(cx: &mut TestAppContext) {
     assert_eq!(hex(&mut h, "background"), "#232634");
 }
 
+/// The look tokens: radius, font size and family, shadow on GPUI Kit's
+/// Theme, and spacing as the rem that Tailwind scale words are in.
+#[gpui::test]
+fn look_tokens(cx: &mut TestAppContext) {
+    use gpui_component::ActiveTheme as _;
+    let mut h = window(cx);
+    h.ctl(M, "new div sq : w-4 h-4");
+    let [_, _, w0, _] = h.bounds(&format!("{M}/sq"));
+    assert_eq!(w0, 16.);
+    h.write("theme/tokens", "radius 0\nradius-lg 2\nfont-size 20\nfont-family Inter\nshadow off\nspacing 8\n");
+    let (r, rl, fs, ff, sh) = h.cx.update(|cx| {
+        let t = cx.theme();
+        (f32::from(t.radius), f32::from(t.radius_lg), f32::from(t.font_size), t.font_family.to_string(), t.shadow)
+    });
+    assert_eq!((r, rl, fs, ff.as_str(), sh), (0., 2., 20., "Inter", false));
+    let [_, _, w1, _] = h.bounds(&format!("{M}/sq"));
+    assert_eq!(w1, 32.);
+    // `system` is GPUI Kit's own UI font again.
+    h.write("theme/tokens", "font-family system\n");
+    assert_ne!(h.cx.update(|cx| cx.theme().font_family.to_string()), "Inter");
+}
+
 #[gpui::test]
 fn tree_document_renders(cx: &mut TestAppContext) {
     let mut h = window(cx);

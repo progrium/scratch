@@ -3,7 +3,8 @@
 # Named themes, renderer-neutral: one `theme NAME` block per theme, then
 # its `mode` (light or dark), its `family` (the GPUI Kit theme set it
 # came from), and each theme token whose value differs from that mode's
-# default in theme-tokens. Renderers register this text with uit_themes.
+# default in theme-tokens, then the look tokens it sets (radius, radius-lg,
+# font-size, font-family, shadow). Renderers register this with uit_themes.
 
 theme Default Light
 	mode light
@@ -2813,6 +2814,7 @@ theme Hybrid Light
 	magenta-light #5f1c5111
 	cyan #005a5f
 	cyan-light #2e767a
+	shadow off
 
 theme Hybrid Dark
 	mode dark
@@ -3382,6 +3384,7 @@ theme macOS Classic Light
 	magenta-light #ad3285
 	cyan #007e8a
 	cyan-light #3297a0
+	shadow off
 
 theme macOS Classic Dark
 	mode dark
@@ -3523,6 +3526,7 @@ theme macOS Classic Dark
 	magenta-light #884489
 	cyan #07fdd3
 	cyan-light #09cead
+	shadow off
 
 theme Mellifluous Light
 	mode light
@@ -3665,6 +3669,7 @@ theme Mellifluous Light
 	magenta-light #9c699588
 	cyan #54c981
 	cyan-light #71cf95
+	shadow off
 
 theme Mellifluous Dark
 	mode dark
@@ -3804,6 +3809,7 @@ theme Mellifluous Dark
 	magenta-light #9c699577
 	cyan #54c9bd
 	cyan-light #48a69c
+	shadow off
 
 theme Molokai Light
 	mode light
@@ -3937,6 +3943,7 @@ theme Molokai Light
 	magenta-light #8c78ca
 	cyan #0acc78
 	cyan-light #3bd592
+	shadow off
 
 theme Molokai Dark
 	mode dark

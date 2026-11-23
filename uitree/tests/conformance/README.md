@@ -43,7 +43,7 @@ PR into `uitree` says which scripts it makes pass.
 | 04-quoting | README § Tokens, core § Words and quoting, § Commands (here-values, all or nothing) | |
 | 05-windows | core § Windows | |
 | 06-style | core § Style (portable words, forms, `style/words`) | |
-| 07-theme | core § Style (theme: tokens, pref, mode, the `theme` event, named themes) | |
+| 07-theme | core § Style (theme: tokens, pref, mode, the `theme` event, named themes, look tokens) | |
 | 08-elements | components § Profiles (core), core § Making an element send events | |
 | 09-forms | components § Profiles (form), § The descriptor (words, verbs) | profile form |
 | 10-navigation | components § Profiles (nav) | profile nav |
