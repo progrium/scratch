@@ -1,7 +1,7 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
- * Version 1, frozen by the spike (W0). A change after the freeze bumps
+ * Version 2: version 1 (frozen by the spike, W0) plus uit_asset. A change after the freeze bumps
  * UIT_ABI_VERSION and is announced to W3 (tree), W6 (GPUI) and W7 (TUI).
  * Adding a UIT_CMD_* tag, a UIT_ARG_* kind or a UitErr code is not a
  * change: a renderer ignores tags and kinds it doesn't know.
@@ -40,7 +40,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 1u
+#define UIT_ABI_VERSION 2u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -182,7 +182,8 @@ typedef enum {
     UIT_CMD_COMPONENT_VERB = 11, /* node, ctl: a component verb (`scroll-to 3`, `select-all`) */
     UIT_CMD_ANSWER = 12,       /* seq, answer: the client answered request seq */
     UIT_CMD_REDRAW = 13,       /* win: a batch committed; redraw the window */
-    UIT_CMD_THEME_LOAD = 14    /* name = path: load a theme file in the renderer's format */
+    UIT_CMD_THEME_LOAD = 14,   /* name = path: load a theme file in the renderer's format */
+    UIT_CMD_ASSETS = 15        /* name: $ui/asset/NAME was written or removed; re-read it with uit_asset */
 } UitHostCmdTag;
 
 /* A pre-parsed ctl line, so the renderer never tokenizes. */
@@ -328,6 +329,10 @@ typedef struct {
 /* $ui/menu/bar's names, and one menu file's items. */
 size_t uit_menu_bar(UitCore *, const UitStr **out);
 int    uit_menu(UitCore *, UitStr name, const UitMenuItem **out, size_t *n);
+
+/* $ui/asset/NAME's bytes (`src=@NAME`). 1 and *out set; 0 when there is
+ * no such asset. Since version 2. */
+int    uit_asset(UitCore *, UitStr name, UitStr *out);
 
 /* The mode in effect: 0 light, 1 dark. */
 uint32_t uit_theme_dark(UitCore *);

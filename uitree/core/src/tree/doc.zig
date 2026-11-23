@@ -58,6 +58,8 @@ pub fn toDoc(arena: Allocator, st: *const State, h: Handle) Allocator.Error!prot
         }
         const p = n.ty.prop(f.name) orelse continue;
         if (p.readonly or isDefault(p, v)) continue;
+        // A secret input's value stays out of documents (09-forms).
+        if (std.mem.eql(u8, f.name, "value") and n.isOn("secret")) continue;
         if (p.form == .bool and std.mem.eql(u8, v, "on") and isFlag(n.ty, f.name)) {
             try items.append(arena, .{ .first = f.first, .word = f.name });
         } else try items.append(arena, .{ .first = f.first, .attr = .{ .key = f.name, .value = v } });

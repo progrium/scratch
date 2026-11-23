@@ -167,7 +167,7 @@ pub const OpQueue = struct {
                 const mem = try gpa.alloc(u8, f.path.len + f.data.len);
                 @memcpy(mem[0..f.path.len], f.path);
                 @memcpy(mem[f.path.len..], f.data);
-                const g: Op.FileOp = .{ .session = f.session, .path = mem[0..f.path.len], .data = mem[f.path.len..] };
+                const g: Op.FileOp = .{ .session = f.session, .path = mem[0..f.path.len], .data = mem[f.path.len..], .node = f.node };
                 return .{ .op = if (op == .write) .{ .write = g } else .{ .append = g }, .mem = mem };
             },
             .mkdir, .remove => |f| {
