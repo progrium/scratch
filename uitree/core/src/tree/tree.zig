@@ -241,6 +241,9 @@ pub const Tree = struct {
     bus: Bus,
     /// In `mirror`: changes aren't reported in `changes().props`.
     mirroring: bool = false,
+    /// Actions `set ID enabled=off` turned off: their bindings send
+    /// nothing (core.md § Keys, actions and menus).
+    disabled: std.StringHashMapUnmanaged(void) = .empty,
     shared: Shared = .{},
     batches: std.ArrayList(Batch) = .empty,
     requests: std.ArrayList(Request) = .empty,
@@ -292,6 +295,9 @@ pub const Tree = struct {
     /// Frees the tree. Every snapshot must be released and every stream
     /// closed first.
     pub fn destroy(t: *Tree) void {
+        var it = t.disabled.keyIterator();
+        while (it.next()) |k| t.gpa.free(k.*);
+        t.disabled.deinit(t.gpa);
         t.destroyParts();
         t.gpa.destroy(t);
     }
@@ -438,7 +444,10 @@ pub const Tree = struct {
         };
         for (tx.trace.items) |l| t.traceLine(l);
         try t.diff(old, t.st, false);
-        for (tx.cmds.items) |c| try t.pushCmd(c);
+        for (tx.cmds.items) |c| {
+            if (c.tag == .set_action and c.flag != -1) try t.setEnabled(c.name, c.flag == 1);
+            try t.pushCmd(c);
+        }
         if (ended) |f| try t.batchEnded(f);
         for (tx.events.items) |ev| {
             if (ev.request) |dflt| {
@@ -563,6 +572,16 @@ pub const Tree = struct {
         for (t.log.dirty.items) |x| if (std.mem.eql(u8, x, w)) return;
         const a = t.log.arena.allocator();
         try t.log.dirty.append(a, try a.dupe(u8, w));
+    }
+
+    fn setEnabled(t: *Tree, id: []const u8, on: bool) Error!void {
+        if (on) {
+            if (t.disabled.fetchRemove(id)) |kv| t.gpa.free(kv.key);
+        } else if (!t.disabled.contains(id)) {
+            const k = try t.gpa.dupe(u8, id);
+            errdefer t.gpa.free(k);
+            try t.disabled.put(t.gpa, k, {});
+        }
     }
 
     fn addProp(t: *Tree, h: Handle, file: []const u8) Error!void {
@@ -748,8 +767,9 @@ pub const Tree = struct {
         if (win_name) |w| try attrs.append(a, .{ .key = "win", .value = w });
         var via_at: ?Attr = null;
         for (ev.attrs) |x| {
-            // `key=` given as an attribute is the routing word.
-            if (std.mem.eql(u8, x.key, "key")) {
+            // `key=` given as an attribute is the routing word, except on
+            // a `key` event, where it is the keystroke.
+            if (std.mem.eql(u8, x.key, "key") and !std.mem.eql(u8, ev.name, "key")) {
                 route = x.value;
             } else if (std.mem.eql(u8, x.key, "via")) {
                 via_at = x;
@@ -1004,12 +1024,15 @@ pub const Tree = struct {
             }
         }
         const b = best orelse return false;
+        // A disabled action's binding is taken but sends nothing.
+        if (t.disabled.contains(b.action)) return true;
         _ = try t.emit(.{ .name = "action", .node = at, .key = b.action, .via = "key", .kind = .action });
         return true;
     }
 
     /// A menu item was chosen: `action ID - via=menu`.
     pub fn menuAction(t: *Tree, id: []const u8) Error!void {
+        if (t.disabled.contains(id)) return;
         _ = try t.emit(.{ .name = "action", .key = id, .via = "menu", .kind = .action });
     }
 

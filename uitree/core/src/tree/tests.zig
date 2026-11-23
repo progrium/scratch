@@ -1458,3 +1458,21 @@ test "W6: node menus name actions; ctl help lists a type's verbs" {
     try tt.expect(std.mem.indexOf(u8, help, "open activate\n") != null);
     try tt.expect(std.mem.indexOf(u8, help, "close activate\n") != null);
 }
+
+test "W6: a disabled action's binding sends nothing; key events carry key=" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    try f.ok("keys", "ctrl-s save\n");
+    try f.ok(R ++ "/ctl", "new input k tag=k");
+    const s = try f.sub(.app);
+    defer s.close();
+    try f.ok("ctl", "set save enabled=off");
+    try tt.expect(try f.t.key("main", "ctrl-s", 0));
+    try tt.expectEqualStrings("", try f.drain(s));
+    try f.ok("ctl", "set save enabled=on");
+    _ = try f.t.key("main", "ctrl-s", 0);
+    try tt.expectEqualStrings("action", try names(f.a(), try f.drain(s)));
+    _ = try f.t.emit(.{ .name = "key", .node = f.node(R ++ "/k").?, .attrs = &.{.{ .key = "key", .value = "a" }} });
+    try tt.expect(std.mem.startsWith(u8, try f.drain(s), "key k k win=main key=a seq="));
+}
