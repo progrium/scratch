@@ -141,8 +141,6 @@ replace, and what this host does meanwhile:
 - **No overlays** (`uit_overlays` is always empty, `over/` doesn't
   exist). Dialogs are drawn from `uit_overlays` and will appear when W3
   lands; signin shows its welcome as a panel in the window instead.
-- **`order` drops the children it leaves out** instead of hiding them,
-  so todo filters with the `hidden` style word.
 - **`focus` is a prop, not `UIT_CMD_FOCUS`.** The host handles
   `UIT_CMD_FOCUS` and, until W3, a change to the root's `focus` prop
   (`Ui.propChanged`).

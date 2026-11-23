@@ -7,8 +7,8 @@
 # uitreefs/examples/rc/todo.rc in the draft 0.2 spelling. Differences:
 # `new` lines instead of the `tree` file (W3); the delete button is always
 # shown, because group-hover is a uitreefs extra 0.2 doesn't have; and the
-# filter hides rows with the `hidden` style word instead of the `order`
-# file, because the spike core drops children left out of `order` (W3).
+# filter hides rows with the `hidden` style word. (Writing `order` with
+# only the matching rows works too: a child `order` leaves out isn't drawn.)
 # Shows: one node per item made with new and delete, tags carrying ids,
 # checkbox change events, tabs, a scroll area, an empty state.
 . ./lib.rc
