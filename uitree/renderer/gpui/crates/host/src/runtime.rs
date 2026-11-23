@@ -104,6 +104,10 @@ pub(crate) struct Inner {
     pub quitting: Cell<bool>,
     /// The platform clipboard as last published.
     pub clipboard: crate::clipboard::State,
+    /// The browser has no menu bar: menus are drawn in the window
+    /// (actions.rs), by GPUI Kit's AppMenuBar.
+    #[cfg(target_family = "wasm")]
+    pub menu_bar: RefCell<Option<gpui::Entity<gpui_component::menu::AppMenuBar>>>,
     /// Per-frame timings for --bench: (ABI reads, whole render).
     pub frames: RefCell<Vec<(std::time::Duration, std::time::Duration)>>,
     /// App assets read so far, dropped on `UIT_CMD_ASSETS`.
@@ -367,6 +371,8 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
         action_state: Default::default(),
         quitting: Cell::new(false),
         clipboard: Default::default(),
+        #[cfg(target_family = "wasm")]
+        menu_bar: RefCell::new(None),
         frames: Default::default(),
         assets: Default::default(),
         frame_tips: Default::default(),

@@ -13,7 +13,7 @@ export const apps = {
   settings: { title: 'Settings', argv: ['rc', 'settings.rc'], files: ['settings.rc', 'lib.rc'] },
   csvview: { title: 'planets.csv', argv: ['awk', '-f', 'csvview.awk', 'planets.csv'], files: ['csvview.awk', 'planets.csv'] },
   files: { title: 'Files', argv: ['rc', 'files.rc'], files: ['files.rc', 'lib.rc'] },
-  tour: { title: 'Tour', argv: ['rc', 'tour.rc'], files: ['tour.rc', 'lib.rc', 'notes.md'] },
+  tour: { title: 'Tour', argv: ['rc', 'tour.rc'], files: ['tour.rc', 'lib.rc', 'notes.md', 'pic.png'] },
 };
 
 const q = (s) => (/^[A-Za-z0-9_./=-]+$/.test(s) ? s : `'${s.replaceAll("'", "''")}'`);
@@ -21,12 +21,13 @@ const q = (s) => (/^[A-Za-z0-9_./=-]+$/.test(s) ? s : `'${s.replaceAll("'", "''"
 /** h9's argv for app `name`: rc in /app running its command line. */
 export const argvFor = (name) => ['rc', '-c', `cd /app; ${apps[name].argv.map(q).join(' ')}`];
 
-/** The app's files, fetched: { 'app/NAME': text }. */
+/** The app's files, fetched: { 'app/NAME': text, or bytes for an image }. */
 export async function filesFor(name, base = new URL('./', import.meta.url)) {
   const a = apps[name];
-  const texts = await Promise.all(a.files.map((f) => fetch(new URL(`apps/${name}/${f}`, base)).then((r) => {
+  const got = await Promise.all(a.files.map(async (f) => {
+    const r = await fetch(new URL(`apps/${name}/${f}`, base));
     if (!r.ok) throw new Error(`apps/${name}/${f}: ${r.status}`);
-    return r.text();
-  })));
-  return Object.fromEntries(a.files.map((f, i) => [`app/${f}`, texts[i]]));
+    return /\.(png|jpe?g|gif)$/.test(f) ? new Uint8Array(await r.arrayBuffer()) : r.text();
+  }));
+  return Object.fromEntries(a.files.map((f, i) => [`app/${f}`, got[i]]));
 }

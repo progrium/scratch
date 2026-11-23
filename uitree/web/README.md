@@ -84,10 +84,68 @@ the Rust build.
   the first few hundred ms after the tree appears, before `cat
   $ui/events` opens, does nothing.
 
-Not covered: text input, IME and the clipboard through gpui_web; dialogs
-and popups (gpui_web has one window, no popups: `WindowKind::Floating` and
-anchored popups fail); `uit_drag` file drops; menus (no menu bar on the
-web); more than one app per core.
+## Every example, and the tests
+
+`index.html` runs any example on both renderers (`?app=NAME`), and
+`gpui.html?app=NAME` and `tui.html?app=NAME` run one, filling the page.
+`apps.js` lists them: the conformance examples (counter, hello, confirm,
+signin, settings, csvview, files) and `tour/tour.rc`, which uses what
+none of them does (tabs, checkbox, textarea, the clipboard, a link, a
+tooltip, a toast, a popover, markdown, an editor, an image, a file drop
+and a menu bar).
+
+`test/run.mjs` drives them in headless Chromium on both renderers:
+
+```sh
+cd dist && python3 -m http.server 8765 &
+cd .. && node test/run.mjs        # --only APP,... --renderer gpui|tui --shots DIR
+```
+
+`probe.js` is a 9P client of the page's core, a connection of its own
+beside the app's: a case finds a node by its `bounds` file, acts with
+the real mouse and keyboard, and checks the tree (`test/cases.mjs`).
+23 cases pass: clicks, key bindings, typing, Enter, exit status, field
+errors, a secret input, dialogs, sidebar pages, switch, number-input,
+the select popup, radio-group, slider, theme mode and name, table
+filter, sheet, context menu, alert dialog, checkbox, textarea, the
+clipboard both ways, tabs, markdown, editor and image, popover, toast,
+tooltip, links, and the menu bar. The terminal renderer draws a subset
+of the components (no tables, sheets, sidebars or menus), so the cases
+for those run on GPUI only.
+
+What the tests found, and fixed:
+
+- **GPUI on the web sent Enter twice** when a key binding took it:
+  gpui_web turns an Enter that wasn't cancelled into a second one. A
+  binding's key now stops propagation (host `window.rs`).
+- **`cmd-` bindings never matched** on Linux, Windows or the web: hosts
+  send their command key as itself (`ctrl-2`). The core now reads `cmd`
+  in a binding as the host's `cmdkey` (native too).
+- **The terminal renderer sent `click` for a press on an input**, so a
+  form's tag fired as a submit (hello said "Hello, stranger!" when you
+  clicked its field). A press only places the caret now (native too).
+- **GPUI Kit's icons** are fetched one by one when drawn, from
+  `assets/icons/`; `build.sh` copies them and the page passes the URL.
+- **No menu bar in the browser**: GPUI Kit's AppMenuBar now draws the
+  app's menus at the top of the window, on the web only.
+- **Links on the terminal renderer** open in a new tab (`tui.open`).
+- **files.rc needs `walk`**, which h9's browser root leaves out
+  (`root.list`).
+
+Still not working, or not covered:
+
+- **File drops on GPUI** (files.rc, tour's Drop tab): gpui_web makes no
+  file drops, since a browser drop has no paths. The way in is for the
+  page to put the dropped files in the core's WASI file system and give
+  the host a FileDropEvent with those paths; the core already reads them
+  through its Io. That waits on how the core is instantiated settling
+  (it's moving into the GPUI module).
+- **Nodes drawn from data have no bounds**: sidebar items, menu items
+  and context-menu items aren't nodes, so the tests press their keys or
+  click where they're drawn (native too).
+- More than one window (gpui_web has one canvas: `WindowKind::Floating`
+  and second windows fail), IME composition, and pasting from the
+  system clipboard into the app (`$ui/clip` holds what the app wrote).
 
 ## Size and speed
 

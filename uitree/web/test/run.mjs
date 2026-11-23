@@ -23,6 +23,7 @@ for (const r of renderers) {
   for (const c of cases) {
     if (only.length && !only.includes(c.app)) continue;
     if (c.renderers && !c.renderers.includes(r)) continue;
+    if (c.skip) { console.log(`skip ${r} ${c.app}: ${c.name}: ${c.skip}`); continue; }
     const page = await browser.newPage({ viewport: { width: c.width ?? 1000, height: c.height ?? 640 } });
     if (route) {
       const fs = await import('node:fs');
@@ -31,6 +32,8 @@ for (const r of renderers) {
         rt.fulfill({ body: fs.readFileSync(f), contentType: f.endsWith('.css') ? 'text/css' : 'application/javascript' });
       });
     }
+    // Links open in a new tab; answer them here rather than on the network.
+    await page.context().route(/^https:\/\/example\.com\//, (rt) => rt.fulfill({ body: 'ok', contentType: 'text/plain' }));
     const log = [];
     page.on('console', (m) => log.push(m.text()));
     page.on('pageerror', (e) => log.push(`pageerror: ${e.message}`));

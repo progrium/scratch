@@ -201,7 +201,7 @@ export class Core {
 /**
  * Runs an app in h9's browser host, in a Worker of its own
  * (h9-worker.js), with `$ui` at /mnt/ui served by `core`.
- * `files` are put in the root ({ path: text }), `argv` is h9's.
+ * `files` are put in the root ({ path: text or bytes }), `argv` is h9's.
  */
 export function runApp(core, { base = new URL('./', import.meta.url), root = 'h9/root.h9a', files = {}, argv, cwd = '/', onOutput = () => {}, onExit = () => {} }) {
   const w = new Worker(new URL('h9-worker.js', base), { type: 'module' });
@@ -226,7 +226,7 @@ export function runApp(core, { base = new URL('./', import.meta.url), root = 'h9
   };
   w.onerror = (e) => onExit(-1, e.message);
   for (const [path, text] of Object.entries(files)) {
-    const data = enc.encode(text);
+    const data = typeof text === 'string' ? enc.encode(text) : text.slice();
     w.postMessage({ type: 'put', path, data: data.buffer, mode: 0o755 }, [data.buffer]);
   }
   w.postMessage({

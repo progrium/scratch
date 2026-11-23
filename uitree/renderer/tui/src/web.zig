@@ -22,6 +22,11 @@ extern "tui" fn write(p: [*]const u8, n: usize) void;
 extern "tui" fn wake() void;
 extern "tui" fn title(p: [*]const u8, n: usize) void;
 extern "tui" fn tip_timer(gen: u32, ms: u32) void;
+extern "tui" fn open(p: [*]const u8, n: usize) void;
+
+fn openUrl(href: []const u8) void {
+    open(href.ptr, href.len);
+}
 
 const gpa = std.heap.c_allocator;
 
@@ -50,6 +55,7 @@ export fn tui_init(cols: u16, rows: u16, dark: bool) usize {
     }) catch return 0;
     k.themes(types.themes) catch return 0;
     ui = uimod.Ui.init(gpa, source.fromCore(k));
+    ui.open_url = openUrl;
     grid = gridmod.Grid.init(gpa, cols, rows) catch return 0;
     started = true;
     return @intFromPtr(k.p);

@@ -52,7 +52,7 @@ for a in counter hello confirm signin settings files; do
 done
 mkdir -p "$out/apps/csvview" "$out/apps/tour"
 cp "$ex/awk/csvview.awk" "$ex/awk/planets.csv" "$out/apps/csvview/"
-cp "$here/tour/tour.rc" "$here/tour/notes.md" "$ex/rc/lib.rc" "$out/apps/tour/"
+cp "$here/tour/tour.rc" "$here/tour/notes.md" "$here/tour/pic.png" "$ex/rc/lib.rc" "$out/apps/tour/"
 # The service worker's cache name, from what's in dist/ (sw.js).
 ver=$(cd "$out" && find . -type f ! -name sw.js ! -name '*.gz' ! -name '*.br' | LC_ALL=C sort | xargs cat | sha256sum | cut -c1-12)
 sed "s/^const VERSION = 'dev';/const VERSION = '$ver';/" "$here/sw.js" >"$out/sw.js"

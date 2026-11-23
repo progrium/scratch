@@ -1,3 +1,98 @@
 #!/bin/rc
-# tour.rc: every feature the examples use, in one window (work in progress).
+# tour.rc: one window that uses every feature the other examples do and a
+# few they don't, for the browser build's tests (web/test/cases.mjs) and
+# as a page to try a renderer on.
+#
+#	uitree -t Tour rc tour.rc
+#
+# Shows: tabs, checkbox, textarea, an input whose value is copied to the
+# clipboard ($ui/clip) and pasted back, a link the host opens, a tooltip,
+# progress, a notify toast, markdown, a read-only editor, img bytes, a
+# popover, a drop target for files (transfer layer), and a menu bar whose
+# items share the buttons' keys.
 . ./lib.rc
+m=$ui/win/main
+
+echo 'set . title=Tour size=760,520 min=480,360 pos=center' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full bg=background
+  div top  : h-flex items-center gap=8 px=12 py=8 border-b-1 border-color=border
+    text h  text=Tour  : font-semibold flex-1
+    link docs  label=Docs  href=https://example.com/uitree
+    button more  label=More…  ghost  tag=more
+    button toast  label=Notify  tag=toast  tooltip='Shows a toast'
+  tabs t  value=controls  : flex-1
+    tab controls  label=Controls
+      div c  : v-flex gap=12 p=16
+        checkbox agree  label='I agree'  tag=agree
+        textarea notes  placeholder='Notes…'  rows=3  tag=notes
+        div clip  : h-flex gap=8 items-center
+          input src  value='copy me'  : flex-1
+          button copy  label=Copy  tag=copy
+          button paste  label=Paste  tag=paste
+        text pasted  text=-  : text-sm text-color=muted-foreground
+        progress p  value=40
+    tab content  label=Content
+      div v  : v-flex gap=12 p=16 size-full
+        markdown md  : flex-1
+        div row  : h-flex gap=12 items-start
+          editor ed  language=bash  line-numbers  readonly  : flex-1 h=140
+          img pic  : w=64 h=64
+    tab files  label=Drop
+      div zone  drop=file  tag=zone  : v-flex size-full items-center justify-center gap=8 border-1 border-color=border rounded-md drop-over:bg=accent
+        icon i  name=upload
+        text t  text='Drop a file here'
+END
+cat notes.md >$m/t/content/v/md/text
+cat tour.rc >$m/t/content/v/row/ed/value
+cat pic.png >$m/t/content/v/row/pic/data
+
+echo 'new popover pop anchor=top/more placement=bottom-end
+new text pop/t text=''A popover, anchored to More…'' : p=12 text-sm' >$m/over/ctl
+
+echo 'cmd-t  toast
+cmd-1  tab:controls
+cmd-2  tab:content
+cmd-3  tab:files' >$ui/keys
+echo 'item toast  label=Notify  key=cmd-t
+sep
+item tab:controls  label=Controls  key=cmd-1
+item tab:content   label=Content   key=cmd-2
+item tab:files      label=Drop      key=cmd-3' >$ui/menu/Tour
+echo Tour >$ui/menu/bar
+
+n=0
+cat $ui/events | while(ev=`{read}){
+	switch($ev(1)^:^$ev(2)){
+	case click:toast action:toast
+		n=`{add $n 1}
+		echo 'notify ''Toast '^$n^''' type=success' >$m/ctl
+	case action:tab:*
+		echo $ev(2) | sed 's/^tab://' >$m/t/value
+	case click:more
+		echo open >$m/over/pop/ctl
+	case click:copy
+		cat $m/t/controls/c/clip/src/value >$ui/clip
+	case click:paste
+		c=`{cat $ui/clip}
+		echo 'pasted: '^$"c >$m/t/controls/c/pasted/text
+	case change:agree
+		if(~ `{cat $m/t/controls/c/agree/value} on) echo 80 >$m/t/controls/c/p/value
+		if not echo 40 >$m/t/controls/c/p/value
+	case drop:zone
+		d=$ui/drag/`{attr drag}
+		s=`{attr seq}
+		hs=()
+		if(test -d $d/item) hs=`{cat $d/item/*/file}
+		if(~ $#hs 0) echo refuse 'seq='^$s >$m/t/files/zone/ctl
+		if not {
+			echo accept 'seq='^$s >$m/t/files/zone/ctl
+			names=()
+			for(h in $hs) {
+				names=($names `{cat $ui/$h/name})
+				echo release >$ui/$h/ctl
+			}
+			echo 'Dropped: '^$"names >$m/t/files/zone/t/text
+		}
+	}
+}
