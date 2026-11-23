@@ -1451,6 +1451,10 @@ pub const Ui = struct {
                 s.open = !s.open;
                 if (!s.open) ui.popup = null;
             },
+            // A press on a text field puts the caret there (onMouse); it
+            // isn't a click, as on GPUI, so a tag the field inherits (a
+            // form's) doesn't fire as if its button were pressed.
+            .input, .textarea => {},
             .slider => {
                 var buf: [32]u8 = undefined;
                 src.emit(n, "commit", &.{.{ "value", std.fmt.bufPrint(&buf, "{d}", .{src.number(n, "value") orelse 0}) catch "0" }});

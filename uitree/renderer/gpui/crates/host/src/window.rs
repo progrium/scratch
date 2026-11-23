@@ -154,11 +154,15 @@ impl Render for WindowView {
             .id("uitree-window")
             .size_full()
             .track_focus(&self.focus)
-            .on_key_down(move |ev: &gpui::KeyDownEvent, window, _| {
+            .on_key_down(move |ev: &gpui::KeyDownEvent, window, cx| {
                 let ks = keystroke(&ev.keystroke);
                 let focused = h.focused(&w, window).map(|v| v.node()).unwrap_or(0);
-                if let Ok(core) = h.core.try_borrow() {
-                    core.key(&w, &ks, focused);
+                let matched = h.core.try_borrow().map(|core| core.key(&w, &ks, focused)).unwrap_or(false);
+                // A key a binding took is done. In the browser this also
+                // keeps the keystroke's default from going on: gpui_web
+                // turns an Enter it didn't cancel into a second Enter.
+                if matched {
+                    cx.stop_propagation();
                 }
             })
             .bg(bg)

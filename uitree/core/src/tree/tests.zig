@@ -1668,6 +1668,22 @@ test "W6: a disabled action's binding sends nothing; key events carry key=" {
     try tt.expect(std.mem.startsWith(u8, try f.drain(s), "key k k win=main key=a seq="));
 }
 
+test "cmd in a binding matches the host's command key" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    // core.md § keys: `cmd` is the host's command modifier, ctrl by
+    // default (cmdkey), so a renderer that sends ctrl-2 hits cmd-2.
+    try f.ok("keys", "cmd-2 page\ncmd-shift-n new\nctrl-- zoom-out\n");
+    try tt.expect(try f.t.key("main", "cmd-2", 0));
+    try tt.expect(try f.t.key("main", "ctrl-2", 0));
+    try tt.expect(try f.t.key("main", "ctrl-shift-n", 0));
+    try tt.expect(try f.t.key("main", "ctrl--", 0));
+    try tt.expect(!try f.t.key("main", "super-2", 0));
+    try tt.expect(!try f.t.key("main", "ctrl-shift-2", 0));
+    try tt.expect(!try f.t.key("main", "2", 0));
+}
+
 test "tooltip is a node file on every node" {
     var f: Fx = undefined;
     try f.app();

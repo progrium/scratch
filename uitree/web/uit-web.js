@@ -110,6 +110,13 @@ export function platform({ log = console.error, onWake = () => {}, onOutput = nu
   // Machines: h9's browser host in a Worker each.
   const machines = new Map();
   let nextMachine = 1;
+  // connect()s before any machine: served once one starts.
+  let early = [];
+  const live = () => [...machines.values()].reverse().find((m) => m.status === null);
+  const offer = (m, cid) => {
+    m.accepts.push(cid);
+    const w = m.acceptWaiter; m.acceptWaiter = null; w?.();
+  };
   const finish = (m, status) => {
     if (m.status !== null) return;
     m.status = status;
@@ -138,8 +145,7 @@ export function platform({ log = console.error, onWake = () => {}, onOutput = nu
           });
           m.conns.set(wid, conns.get(cid));
           m.w.postMessage({ type: 'uit-opened', id: wid });
-          m.accepts.push(cid);
-          const w = m.acceptWaiter; m.acceptWaiter = null; w?.();
+          offer(m, cid);
         },
         data: (wid, b) => { const c = m.conns.get(wid); if (c && !c.closed) { c.q.push(b); poke(c); } },
         close: (wid) => { const c = m.conns.get(wid); m.conns.delete(wid); if (c) end(c); },
@@ -148,6 +154,8 @@ export function platform({ log = console.error, onWake = () => {}, onOutput = nu
           app.onExit?.(code, msg);
         },
       });
+      for (const cid of early) offer(m, cid);
+      early = [];
       return id;
     },
     machine_accept: suspending((id) => {
@@ -169,12 +177,20 @@ export function platform({ log = console.error, onWake = () => {}, onOutput = nu
       if (m.status !== null) return put();
       return new Promise((res) => { m.waitWaiter = () => res(put()); });
     }),
+    // A hangup (uit_shutdown, often because the app quit): the app's $ui
+    // connections end, as a hangup note would end its reads, and it gets
+    // a moment to exit with its own status before the Worker is stopped.
     machine_hangup: (id) => {
       const m = machines.get(id);
-      if (!m || m.status !== null) return;
-      m.w.terminate();
-      finish(m, 'hangup');
-      m.app.onExit?.(-1, 'hangup');
+      if (!m || m.status !== null || m.hungUp) return;
+      m.hungUp = true;
+      for (const [wid, c] of m.conns) { if (!c.closed) { end(c); c.hangup(); } m.conns.delete(wid); }
+      setTimeout(() => {
+        if (m.status !== null) return;
+        m.w.terminate();
+        finish(m, 'hangup');
+        m.app.onExit?.(-1, 'hangup');
+      }, 2000);
     },
 
     conn_read: suspending((id, p, n) => {
@@ -211,6 +227,24 @@ export function platform({ log = console.error, onWake = () => {}, onOutput = nu
   return {
     config,
     memory,
+    /**
+     * A `$ui` connection of the page's own, beside the app's (tests,
+     * probe.js): the core accepts it as one of the machine's, so it is
+     * served once the app's machine runs. `send(bytes)` gets the core's
+     * replies; returns { push(bytes), close() }.
+     */
+    connect(send, onClose = () => {}) {
+      const cid = nextConn++;
+      const c = { q: [], closed: false, waiter: null, send, hangup: onClose };
+      conns.set(cid, c);
+      const m = live();
+      if (m) offer(m, cid); else early.push(cid);
+      return {
+        id: cid,
+        push: (b) => { if (!c.closed) { c.q.push(b); poke(c); } },
+        close: () => end(c),
+      };
+    },
     imports: { h9, uit, wasi_snapshot_preview1: wasi },
     /** Binds the imports to the instance: its exports and its memory. */
     bind(exports, m = exports.memory) {
@@ -377,6 +411,9 @@ export class Core {
     // per app aren't worth tracking to free.
     return this.m.exports.uit_run_machine(this.c, a);
   }
+
+  /** A `$ui` connection of the page's own (platform's connect). */
+  serve(send, onClose) { return this.m.platform.connect(send, onClose); }
 
   pump() { return this.m.exports.uit_pump(this.c, this.changes); }
   lastError() { const p = this.mem.alloc(8); this.m.exports.uit_last_error(p, this.c); const s = this.mem.uitstr(p); this.mem.free(p); return s; }

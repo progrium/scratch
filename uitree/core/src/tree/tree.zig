@@ -1012,7 +1012,7 @@ pub const Tree = struct {
         var best: ?proto.lines.KeyBinding = null;
         var best_depth: usize = std.math.maxInt(usize);
         for (binds) |b| {
-            if (b.keys.len != 1 or !std.mem.eql(u8, b.keys[0], stroke)) continue;
+            if (b.keys.len != 1 or !t.strokeIs(b.keys[0], stroke)) continue;
             const ctx = b.context() orelse {
                 if (best == null) best = b;
                 continue;
@@ -1033,6 +1033,24 @@ pub const Tree = struct {
         if (t.disabled.contains(b.action)) return true;
         _ = try t.emit(.{ .name = "action", .node = at, .key = b.action, .via = "key", .kind = .action });
         return true;
+    }
+
+    /// Whether a binding's keystroke is `stroke`, a renderer's. `cmd` in a
+    /// binding names the host's command modifier (core.md § keys,
+    /// `cmdkey`), which a renderer may send as itself: ctrl on Linux,
+    /// Windows and the web.
+    fn strokeIs(t: *const Tree, bind: []const u8, stroke: []const u8) bool {
+        if (std.mem.eql(u8, bind, stroke)) return true;
+        if (std.mem.eql(u8, t.cfg.cmdkey, "cmd")) return false;
+        var bi = std.mem.splitScalar(u8, bind, '-');
+        var si = std.mem.splitScalar(u8, stroke, '-');
+        while (true) {
+            const b = bi.next();
+            const s = si.next();
+            if (b == null or s == null) return b == null and s == null;
+            const want = if (std.mem.eql(u8, b.?, "cmd") and bi.peek() != null) t.cfg.cmdkey else b.?;
+            if (!std.mem.eql(u8, want, s.?)) return false;
+        }
     }
 
     /// A menu item was chosen: `action ID - via=menu`.
