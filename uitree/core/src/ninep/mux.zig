@@ -92,9 +92,9 @@ pub const Mux = struct {
         const r = self(p).route(path);
         return r[0].read(c, r[1], arena, err);
     }
-    fn commit(p: *anyopaque, c: ConnId, path: []const u8, data: []const u8, err: *Err) fsmod.Error!void {
+    fn commit(p: *anyopaque, c: ConnId, path: []const u8, token: u64, data: []const u8, err: *Err) fsmod.Error!void {
         const r = self(p).route(path);
-        return r[0].commit(c, r[1], data, err);
+        return r[0].commit(c, r[1], token, data, err);
     }
     fn line(p: *anyopaque, c: ConnId, path: []const u8, l: []const u8, err: *Err) fsmod.Error!void {
         const r = self(p).route(path);

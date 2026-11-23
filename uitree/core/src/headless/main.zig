@@ -189,6 +189,9 @@ const Headless = struct {
     /// `name` is no request (core.md § Requests).
     fn requestDefault(h: *Headless, name: []const u8, n: Handle) ?[]const u8 {
         const eq = std.mem.eql;
+        // A type that declares the event says what kind it is (a tag's
+        // `close` is an action).
+        if (h.t.current().node(n)) |nd| if (nd.ty.event(name)) |e| if (e.kind != .request) return null;
         if (eq(u8, name, "close")) return "close";
         if (eq(u8, name, "quit")) return "quit";
         if (eq(u8, name, "open")) return "accept";
@@ -240,7 +243,7 @@ const Headless = struct {
     /// One pump: queued ops, then inject lines, each published before it
     /// is answered. The renderer's side (changes) has no one to draw it.
     fn pump(h: *Headless, q: *tree.OpQueue, jobs: ?*Job, gone: bool) void {
-        _ = ninep.ns.drainPublish(q, h.t);
+        _ = q.drain(h.t);
         var j = jobs;
         while (j) |x| : (j = x.next) {
             if (gone) {

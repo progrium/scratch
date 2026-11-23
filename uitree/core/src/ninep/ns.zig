@@ -132,7 +132,7 @@ pub const TreeFs = struct {
         if (mode.write) {
             const st = snap.stat(arena.allocator(), path) catch |e| return errText(err, e);
             if (st.kind == .readonly) return err.set("permission denied: read-only");
-            return .{ .write_mode = writeMode(n, snap, arena.allocator(), path, st.kind) };
+            return .{ .write_mode = writeMode(n, snap, arena.allocator(), path, st.kind), .token = ownerOf(n, snap, arena.allocator(), path) };
         }
         return .{};
     }
@@ -178,8 +178,22 @@ pub const TreeFs = struct {
         if (!ack.ok) return err.set(if (txt.len > 0) txt else "bad value");
     }
 
-    fn commit(p: *anyopaque, c: fsmod.ConnId, path: []const u8, data: []const u8, err: *Err) fsmod.Error!void {
-        return self(p).call(.{ .write = .{ .session = @intCast(c), .path = path, .data = data } }, err);
+    /// The node a node file (or window file) belongs to, for `gone`.
+    fn ownerOf(n: *TreeFs, snap: *tree.Snapshot, arena: Allocator, path: []const u8) u64 {
+        const loc = tree.path.resolve(snap.st, n.t.cat, arena, std.mem.trim(u8, path, "/"), null) catch return 0;
+        return switch (loc) {
+            .file => |f| f.node,
+            .win_file => |f| f.root,
+            else => 0,
+        };
+    }
+
+    fn commit(p: *anyopaque, c: fsmod.ConnId, path: []const u8, token: u64, data: []const u8, err: *Err) fsmod.Error!void {
+        var op: tree.Op.FileOp = .{ .session = @intCast(c), .path = path, .data = data };
+        // The tree says `gone` when the node the file was opened under has
+        // been deleted since (FileOp.node).
+        if (@hasField(tree.Op.FileOp, "node")) op.node = @intCast(token);
+        return self(p).call(.{ .write = op }, err);
     }
 
     fn line(_: *anyopaque, _: fsmod.ConnId, _: []const u8, _: []const u8, err: *Err) fsmod.Error!void {
@@ -218,32 +232,66 @@ pub const TreeFs = struct {
     }
 };
 
-/// Owner thread: `OpQueue.drain`, except that the state the ops made is
-/// published before any of them is acked, so a client that reads right
-/// after its write (or its clunk) sees it. Returns how many ran.
-pub fn drainPublish(q: *tree.OpQueue, t: *Tree) usize {
-    q.mu.lockUncancelable(q.io);
-    var batch = q.items;
-    q.items = .empty;
-    q.mu.unlock(q.io);
-    defer batch.deinit(q.gpa);
-    if (batch.items.len == 0) return 0;
-    for (batch.items) |it| {
-        defer q.gpa.free(it.mem);
-        const r = t.apply(it.op);
-        const a = it.ack orelse continue;
-        const msg: []const u8 = if (r) |_| "" else |e| if (e == error.OutOfMemory) "out of memory" else t.lastError();
-        a.ok = if (r) |_| true else |_| false;
-        const n = @min(msg.len, a.buf.len);
-        @memcpy(a.buf[0..n], msg[0..n]);
-        a.len = n;
-    }
-    t.publish() catch {};
-    q.mu.lockUncancelable(q.io);
-    for (batch.items) |it| if (it.ack) |a| {
-        a.done = true;
+
+test "TreeFs: per-write ctl errors, reads after writes, text at clunk" {
+    const t = std.testing;
+    const types = @import("../types/root.zig");
+    const server = @import("server.zig");
+    const transport = @import("transport.zig");
+    const Client = @import("client.zig").Client;
+    const wire = @import("wire.zig");
+
+    var th: std.Io.Threaded = .init(t.allocator, .{});
+    defer th.deinit();
+    const io = th.io();
+    var cat = try types.Catalog.builtin(t.allocator);
+    defer cat.deinit();
+    const tr = try Tree.create(t.allocator, io, &cat, .{});
+    defer tr.destroy();
+    var q: tree.OpQueue = .init(t.allocator, io);
+    defer q.deinit();
+
+    // The owner thread: drain until told to stop.
+    const Owner = struct {
+        q: *tree.OpQueue,
+        t: *Tree,
+        stop: std.atomic.Value(bool) = .init(false),
+        fn run(o: *@This()) void {
+            while (!o.stop.load(.acquire)) {
+                if (o.q.drain(o.t) == 0) std.Thread.yield() catch {};
+            }
+        }
     };
-    q.cond.broadcast(q.io);
-    q.mu.unlock(q.io);
-    return batch.items.len;
+    var owner: Owner = .{ .q = &q, .t = tr };
+    const thr = try std.Thread.spawn(.{}, Owner.run, .{&owner});
+
+    var tfs: TreeFs = .{ .gpa = t.allocator, .t = tr, .q = &q };
+    var srv: server.Server = .init(t.allocator, io, tfs.fs());
+    const p = try transport.pair();
+    try srv.serve(p[0]);
+    var cl = try Client.init(t.allocator, p[1]);
+    try cl.version();
+    const root = try cl.attach();
+
+    // A ctl write applies at the write, and its error comes back there.
+    const f = try cl.walk(root, "win/main/ctl");
+    try cl.open(f, wire.OWRITE);
+    _ = try cl.write(f, 0, "new text a text=hi\n");
+    try t.expectError(error.Rerror, cl.write(f, 0, "new nosuchtype b\n"));
+    try cl.clunk(f);
+    const got = try cl.get(t.allocator, root, "win/main/a/text");
+    defer t.allocator.free(got);
+    try t.expectEqualStrings("hi\n", got);
+
+    // A text file written in one write applies then.
+    try cl.put(root, "win/main/a/text", "there");
+    const got2 = try cl.get(t.allocator, root, "win/main/a/text");
+    defer t.allocator.free(got2);
+    try t.expectEqualStrings("there\n", got2);
+
+    cl.deinit();
+    srv.deinit();
+    q.close();
+    owner.stop.store(true, .release);
+    thr.join();
 }

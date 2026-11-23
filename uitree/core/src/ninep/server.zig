@@ -129,6 +129,7 @@ const Fid = struct {
     wbuf: std.ArrayList(u8) = .empty,
     wrote: bool = false,
     write_mode: fsmod.WriteMode = .at_close,
+    token: u64 = 0,
     stream: ?fsmod.Stream = null,
 };
 
@@ -532,6 +533,7 @@ const Conn = struct {
         const opened = try fs.open(cn.id, f.path, om, err);
         f.stream = opened.stream;
         f.write_mode = opened.write_mode;
+        f.token = opened.token;
         f.mode = om;
         if (f.entry.kind == .file and om.read and opened.stream == null and !om.trunc) {
             var arena: std.heap.ArenaAllocator = .init(cn.gpa());
@@ -687,7 +689,7 @@ const Conn = struct {
         var err: Err = .{};
         var failed = false;
         if (pendingAtClose(f)) {
-            fs.commit(cn.id, f.path, f.wbuf.items, &err) catch |e| {
+            fs.commit(cn.id, f.path, f.token, f.wbuf.items, &err) catch |e| {
                 failed = true;
                 if (e == error.OutOfMemory) err.note("out of memory");
             };
@@ -760,13 +762,13 @@ const Conn = struct {
                 defer cn.gpa().free(head);
                 f.wbuf.clearRetainingCapacity();
                 f.wbuf.appendSlice(cn.gpa(), tail) catch unreachable; // capacity held
-                if (head.len > 0) fs.commit(cn.id, f.path, head, &err) catch |e| {
+                if (head.len > 0) fs.commit(cn.id, f.path, f.token, head, &err) catch |e| {
                     failed = true;
                     if (e == error.OutOfMemory) err.note("out of memory");
                 };
                 break :blk;
             }
-            fs.commit(cn.id, f.path, buf, &err) catch |e| {
+            fs.commit(cn.id, f.path, f.token, buf, &err) catch |e| {
                 failed = true;
                 if (e == error.OutOfMemory) err.note("out of memory");
             };
@@ -779,7 +781,7 @@ const Conn = struct {
                 break :blk;
             };
             if (piece) break :blk;
-            fs.commit(cn.id, f.path, f.wbuf.items, &err) catch |e| {
+            fs.commit(cn.id, f.path, f.token, f.wbuf.items, &err) catch |e| {
                 failed = true;
                 if (e == error.OutOfMemory) err.note("out of memory");
             };
