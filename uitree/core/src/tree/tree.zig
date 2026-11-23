@@ -1921,7 +1921,9 @@ const Tx = struct {
             if (std.mem.eql(u8, c.verb, "accept")) {
                 const op = c.attr("op") orelse "copy";
                 if (!std.mem.eql(u8, op, "copy") and !std.mem.eql(u8, op, "move")) return tx.fail(.bad_value, "op={s}", .{op});
-                try tx.t.drag_ops.put(tx.gpa(), dn, if (std.mem.eql(u8, op, "move")) "move" else "copy");
+                // Kept for the source's dragend; a host's drag has none.
+                const client = if (tx.st.drag(dn)) |dg| dg.source != 0 else false;
+                if (client) try tx.t.drag_ops.put(tx.gpa(), dn, if (std.mem.eql(u8, op, "move")) "move" else "copy");
             }
             tx.dropDrag(dn);
         }

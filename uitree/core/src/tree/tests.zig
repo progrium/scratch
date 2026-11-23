@@ -843,7 +843,7 @@ test "a host's drop: typed offer, file items as handles, accept keeps them" {
     // The handle outlives the drag.
     const h = f.t.files.get(id).?;
     h.unref(tt.allocator);
-    try tt.expectEqualStrings("move", f.t.takeDragOp(n).?);
+    // A host's drag has no source to tell the op.
     try tt.expect(f.t.takeDragOp(n) == null);
 }
 
@@ -886,6 +886,16 @@ test "a client drag: drag-types are offered, the source writes the bytes" {
     try f.expectRead(try std.fmt.allocPrint(f.a(), "{s}/data/x.note", .{d}), "note:42");
     try tt.expectEqual(Code.not_found, try f.code(try std.fmt.allocPrint(f.a(), "{s}/data/Bad", .{d}), "x"));
     try tt.expectEqual(Code.not_found, try f.code("drag/999/data/text", "x"));
+    try f.ok(R ++ "/ctl", "new div bin");
+    try f.ok(R ++ "/bin/drop", "x.note\n");
+    const s = try f.sub(.app);
+    defer s.close();
+    const seq = try f.t.request(.{ .name = "drop", .node = f.node(R ++ "/bin").?, .attrs = &.{
+        .{ .key = "drag", .value = try std.fmt.allocPrint(f.a(), "{d}", .{n}) },
+    } }, "refuse");
+    try f.ok(R ++ "/bin/ctl", try std.fmt.allocPrint(f.a(), "accept seq={d} op=move", .{seq}));
+    try tt.expectEqualStrings("move", f.t.takeDragOp(n).?);
+    try tt.expect(f.t.takeDragOp(n) == null);
     try f.t.dragDone(n);
     try tt.expect(!try f.exists(d));
 }
