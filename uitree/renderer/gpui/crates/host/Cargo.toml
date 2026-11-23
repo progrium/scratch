@@ -1,0 +1,14 @@
+[package]
+name = "host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The GPUI host, spike cut: div, text and button, reading the tree through uitcore"
+
+[dependencies]
+uitcore.workspace = true
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit.workspace = true
+futures.workspace = true

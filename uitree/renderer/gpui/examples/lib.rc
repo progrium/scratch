@@ -1,0 +1,27 @@
+# lib.rc: helpers shared by the rc examples.  Use: . ./lib.rc
+#
+# The examples use only the commands in h9's built-in root (rc, awk, sed,
+# cat, ls, read, sleep, date, ...), so they run with uitreefs --root builtin.
+
+# Where the tree is mounted. uitreefs sets $ui in the guest.
+if(~ $#ui 0) ui=/mnt/ui
+
+# The event loop reads one line per event:
+#
+#	cat $ui/events | while(ev=`{read}) { switch($ev(2)) { ... } }
+#
+# Every event starts name key path, so $ev(1) is its name, $ev(2) the
+# routing key (the node's tag, or the action id of a key or menu item) and
+# $ev(3) the node's path in its window. Attributes follow as name=value.
+
+# attr name: print the value of name= in the current event, $ev.
+fn attr {
+	for(a in $ev)
+		if(~ $a $1^'='*)
+			echo $a | sed 's/^[^=]*=//; s/^''//; s/''$//'
+}
+
+# add n m: print n+m. There is no hoc in the built-in root.
+fn add {
+	echo $1 $2 | awk '{ print $1 + $2 }'
+}
