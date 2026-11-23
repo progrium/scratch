@@ -37,6 +37,16 @@ pub const WriteMode = enum {
     /// Each complete line is handed to `line` as it arrives; a write may
     /// end mid-line (`/debug/inject`).
     lines,
+    /// A `ctl`: each write is handed to `commit` as it arrives, so `echo`
+    /// sees its error. A write that fills a whole piece (as `cat` and the
+    /// kernel's iounit split make) and doesn't end in a newline keeps its
+    /// partial last line for the next write or the clunk.
+    ctl,
+    /// A text file: each write is the whole value, handed to `commit` as
+    /// it arrives, so `echo` sees its error. A write that fills a whole
+    /// piece is held with the next ones until a shorter write or the clunk
+    /// (`cat` of a long value).
+    per_write,
 };
 
 pub const Entry = struct {
@@ -106,6 +116,10 @@ pub const Opened = struct {
     /// contents come from `read`.
     stream: ?Stream = null,
     write_mode: WriteMode = .at_close,
+    /// Handed back to `commit` for writes through this open: what the
+    /// file was under when it was opened, so a commit after that went
+    /// away can fail with `gone`.
+    token: u64 = 0,
 };
 
 /// A blocking source of bytes: an `events` subscription, `trace`.
@@ -161,7 +175,7 @@ pub const Fs = struct {
         /// The bytes written to an `at_close` file, at clunk. Blocks until
         /// applied (or refused). Called even when nothing was written if
         /// the file was opened with `trunc` (`echo -n >file`).
-        commit: *const fn (ptr: *anyopaque, conn: ConnId, path: []const u8, data: []const u8, err: *Err) Error!void,
+        commit: *const fn (ptr: *anyopaque, conn: ConnId, path: []const u8, token: u64, data: []const u8, err: *Err) Error!void,
         /// One complete line (without its newline) written to a `lines`
         /// file. Blocks until applied.
         line: *const fn (ptr: *anyopaque, conn: ConnId, path: []const u8, line: []const u8, err: *Err) Error!void,
@@ -189,8 +203,8 @@ pub const Fs = struct {
     pub fn read(f: Fs, c: ConnId, path: []const u8, arena: Allocator, err: *Err) Error![]const u8 {
         return f.vt.read(f.ptr, c, path, arena, err);
     }
-    pub fn commit(f: Fs, c: ConnId, path: []const u8, data: []const u8, err: *Err) Error!void {
-        return f.vt.commit(f.ptr, c, path, data, err);
+    pub fn commit(f: Fs, c: ConnId, path: []const u8, token: u64, data: []const u8, err: *Err) Error!void {
+        return f.vt.commit(f.ptr, c, path, token, data, err);
     }
     pub fn line(f: Fs, c: ConnId, path: []const u8, l: []const u8, err: *Err) Error!void {
         return f.vt.line(f.ptr, c, path, l, err);

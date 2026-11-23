@@ -183,7 +183,7 @@ pub const MemFs = struct {
         return arena.dupe(u8, v);
     }
 
-    fn commit(p: *anyopaque, _: fsmod.ConnId, path: []const u8, data: []const u8, err: *fsmod.Err) fsmod.Error!void {
+    fn commit(p: *anyopaque, _: fsmod.ConnId, path: []const u8, _: u64, data: []const u8, err: *fsmod.Err) fsmod.Error!void {
         const m = self(p);
         m.mu.lockUncancelable(m.io);
         defer m.mu.unlock(m.io);

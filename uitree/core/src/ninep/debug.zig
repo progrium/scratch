@@ -196,7 +196,7 @@ pub const Debug = struct {
     fn read(_: *anyopaque, _: fsmod.ConnId, _: []const u8, _: Allocator, err: *Err) fsmod.Error![]const u8 {
         return err.set("permission denied: write-only");
     }
-    fn commit(_: *anyopaque, _: fsmod.ConnId, _: []const u8, _: []const u8, _: *Err) fsmod.Error!void {}
+    fn commit(_: *anyopaque, _: fsmod.ConnId, _: []const u8, _: u64, _: []const u8, _: *Err) fsmod.Error!void {}
     fn line(p: *anyopaque, _: fsmod.ConnId, _: []const u8, l: []const u8, err: *Err) fsmod.Error!void {
         var arena: std.heap.ArenaAllocator = .init(std.heap.c_allocator);
         defer arena.deinit();
