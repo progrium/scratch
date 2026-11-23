@@ -60,8 +60,9 @@ fn main() {
         prefix.join("lib")
     };
     // Apple's ld refuses Zig's archives ("64-bit mach-o member ... not
-    // 8-byte aligned"), so on macOS re-archive them with libtool, which
-    // aligns members, and link the copies.
+    // 8-byte aligned"), and libtool copying the archive whole drops those
+    // members. So on macOS unpack each one with ar and archive the objects
+    // again with libtool, which aligns them, and link the copies.
     let lib = if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
         let dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib-macos");
         std::fs::create_dir_all(&dir).unwrap();
@@ -70,13 +71,23 @@ fn main() {
             if !src.exists() {
                 continue;
             }
-            let st = Command::new("libtool")
-                .args(["-static", "-o"])
-                .arg(dir.join(name))
-                .arg(&src)
-                .status()
+            let objs = dir.join(format!("{name}.objs"));
+            let _ = std::fs::remove_dir_all(&objs);
+            std::fs::create_dir_all(&objs).unwrap();
+            let st = Command::new("ar").arg("-x").arg(&src).current_dir(&objs).status()
+                .unwrap_or_else(|e| panic!("uitcore-sys: running ar: {e}"));
+            assert!(st.success(), "uitcore-sys: ar -x failed on {}", src.display());
+            let mut members: Vec<PathBuf> = std::fs::read_dir(&objs).unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.extension().is_some_and(|x| x == "o"))
+                .collect();
+            members.sort();
+            assert!(!members.is_empty(), "uitcore-sys: no objects in {}", src.display());
+            let out = dir.join(name);
+            let _ = std::fs::remove_file(&out);
+            let st = Command::new("libtool").args(["-static", "-o"]).arg(&out).args(&members).status()
                 .unwrap_or_else(|e| panic!("uitcore-sys: running libtool: {e}"));
-            assert!(st.success(), "uitcore-sys: libtool -static failed on {}", src.display());
+            assert!(st.success(), "uitcore-sys: libtool -static failed for {name}");
         }
         dir
     } else {
