@@ -4,32 +4,34 @@
 #
 #	uitree-tui -t Todos rc todo.rc
 #
-# uitreefs/examples/rc/todo.rc in the draft 0.2 spelling. Differences:
-# `new` lines instead of the `tree` file (W3); the delete button is always
-# shown, because group-hover is a uitreefs extra 0.2 doesn't have; and the
-# filter hides rows with the `hidden` style word. (Writing `order` with
-# only the matching rows works too: a child `order` leaves out isn't drawn.)
-# Shows: one node per item made with new and delete, tags carrying ids,
-# checkbox change events, tabs, a scroll area, an empty state.
+# uitreefs/examples/rc/todo.rc in the draft 0.2 spelling. One difference:
+# the delete button is always shown, because group-hover is a uitreefs
+# extra 0.2 doesn't have.
+# Shows: one node per item made with new and delete, the order file as a
+# filter (a child not listed is not drawn), tags carrying ids, checkbox
+# change events, tabs, a scroll area, an empty state.
 . ./lib.rc
 
 db=todo.txt
 touch $db
 
 m=$ui/win/main
-echo 'set . title=Todos size=460,560 min=360,400 pos=center : v-flex size-full p=24 gap=12 bg=background
-new text h text=Todos : text-2xl font-semibold
-new input new cleanable placeholder=''What needs to be done?'' tag=add
-new scroll body : flex-1 overflow-y-scroll
-new div body/items : v-flex
-new empty body/none title=''Nothing to do'' description=''Add a task above.'' icon=inbox
-new div foot : h-flex items-center gap=8 pt=8 border-t-1 border-color=border
-new text foot/count : text-sm text-color=muted-foreground flex-1
-new tabs foot/filter value=all tag=filter segmented sm
-new tab foot/filter/all label=All
-new tab foot/filter/active label=Active
-new tab foot/filter/done label=Done
-new button foot/clear label=''Clear completed'' tag=clear ghost sm' >$m/ctl
+echo 'set . title=Todos size=460,560 min=360,400 pos=center' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full p=24 gap=12 bg=background
+  text h  text=Todos  : text-2xl font-semibold
+  input new  cleanable  placeholder='What needs to be done?'  tag=add
+  scroll body  : flex-1 overflow-y-scroll
+    div items  : v-flex
+    empty none  title='Nothing to do'  description='Add a task above.'  icon=inbox
+  div foot  : h-flex items-center gap=8 pt=8 border-t-1 border-color=border
+    text count  : text-sm text-color=muted-foreground flex-1
+    tabs filter  segmented  sm  value=all  tag=filter
+      tab all  label=All
+      tab active  label=Active
+      tab done  label=Done
+    button clear  ghost  sm  label='Clear completed'  tag=clear
+END
 L=$m/body/items
 echo new >$m/focus
 
@@ -61,24 +63,30 @@ fn without {
 	for(i in $*) if(! ~ $i $x) echo $i
 }
 
-# show: apply the filter by hiding rows, update the count and save
+# show: apply the filter through order, update the count and save
 fn show {
+	o=()
 	left=0
 	>$db
 	for(i in $all){
 		d=`{cat $L/$i/done/value}
 		if(~ $d off) left=`{add $left 1}
-		h=''
-		if(~ $filter active && ~ $d on) h=' hidden'
-		if(~ $filter done && ~ $d off) h=' hidden'
-		echo 'set '$i' : h-flex items-center gap=8 px=8 rounded-md hover:bg=muted'$h >$L/ctl
+		switch($filter){
+		case all
+			o=($o $i)
+		case active
+			if(~ $d off) o=($o $i)
+		case done
+			if(~ $d on) o=($o $i)
+		}
 		echo $d `{cat $L/$i/label/text} >>$db
 	}
-	e=hidden
-	if(~ $#all 0) e=''
+	b=items
+	if(~ $#all 0) b=(items none)
 	c=$left' items left'
 	if(~ $left 1) c='1 item left'
-	echo 'set body/none : '$e'
+	echo 'set body/items order='''$"o'''
+set body order='''$"b'''
 set foot/count text='''$c'''' >$m/ctl
 }
 

@@ -158,6 +158,8 @@ pub const Ui = struct {
     popup: ?struct { node: Node, rect: Rect, items: []core.Core.Line } = null,
 
     focused: Node = 0,
+    /// What had focus before a modal overlay took it, given back on close.
+    modal_prev: Node = 0,
     /// Nodes under the pointer, innermost first.
     hover: std.ArrayList(Node) = .empty,
     pressed: Node = 0,
@@ -201,13 +203,6 @@ pub const Ui = struct {
     /// A prop changed (UitChanges.props). Keeps an input's edit buffer in
     /// step when the client writes its value.
     pub fn propChanged(ui: *Ui, n: Node, file: []const u8) void {
-        // The spike core keeps a write to the window's `focus` file as a
-        // prop of the root instead of sending UIT_CMD_FOCUS. Honor it
-        // until W3's tree does (then this branch never runs).
-        if (std.mem.eql(u8, file, "focus") and n == ui.src.windowRoot(ui.win)) {
-            if (ui.lookup(ui.src.text(n, "focus"))) |f| ui.focus(f);
-            return;
-        }
         if (!std.mem.eql(u8, file, "value")) return;
         const e = ui.edits.getPtr(n) orelse return;
         const v = ui.src.text(n, "value");
@@ -225,6 +220,7 @@ pub const Ui = struct {
         }
         _ = ui.states.remove(n);
         if (ui.focused == n) ui.focused = 0;
+        if (ui.modal_prev == n) ui.modal_prev = 0;
         if (ui.pressed == n) ui.pressed = 0;
         if (ui.popup) |p| if (p.node == n) {
             ui.popup = null;
@@ -314,6 +310,14 @@ pub const Ui = struct {
     /// draws it into g (which must be w wide and h+1 tall: row 0 is the
     /// title bar).
     pub fn frame(ui: *Ui, g: *Grid) !void {
+        const before = ui.focused;
+        try ui.frameOnce(g);
+        // A modal overlay opening or closing moved focus: draw again so the
+        // caret and focus marks match.
+        if (ui.focused != before) try ui.frameOnce(g);
+    }
+
+    fn frameOnce(ui: *Ui, g: *Grid) !void {
         _ = ui.arena.reset(.retain_capacity);
         ui.root = null;
         ui.overlay_roots = .empty;
@@ -342,9 +346,24 @@ pub const Ui = struct {
         ui.draw(g, root);
 
         // Overlays: dialogs, centered, over a scrim.
+        var modal = false;
         for (ui.src.overlays(ui.win)) |ov| {
             if (!ui.src.flag(ov, "open", true)) continue;
+            const first = ui.focus_order.items.len;
             const ob = try ui.build(ov, null, ink);
+            if (ui.src.flag(ov, "modal", true)) {
+                // A modal overlay keeps focus and the caret inside it.
+                modal = true;
+                const k = ui.focus_order.items.len - first;
+                std.mem.copyForwards(Node, ui.focus_order.items, ui.focus_order.items[first..]);
+                ui.focus_order.shrinkRetainingCapacity(k);
+                const mine = ui.focus_order.items;
+                g.cursor = null;
+                if (std.mem.indexOfScalar(Node, mine, ui.focused) == null) {
+                    if (ui.modal_prev == 0) ui.modal_prev = ui.focused;
+                    if (mine.len > 0) ui.focus(mine[0]) else ui.blur();
+                }
+            }
             const want_w: f32 = if (ui.src.number(ov, "width")) |pw| style.cells(@floatCast(pw), .x) else @min(60, @as(f32, @floatFromInt(body.w)) - 4);
             c.YGNodeStyleSetWidth(ob.yg, @min(want_w, @as(f32, @floatFromInt(body.w))));
             c.YGNodeStyleSetMaxHeight(ob.yg, @floatFromInt(body.h));
@@ -360,6 +379,12 @@ pub const Ui = struct {
             ui.hits.clearRetainingCapacity();
             ui.draw(g, ob);
             try ui.overlay_roots.append(ui.arena.allocator(), ob);
+        }
+
+        if (!modal and ui.modal_prev != 0) {
+            const prev = ui.modal_prev;
+            ui.modal_prev = 0;
+            if (std.mem.indexOfScalar(Node, ui.focus_order.items, prev) != null) ui.focus(prev);
         }
 
         if (ui.popup) |p| ui.drawPopup(g, p.node, p.rect, body);
@@ -749,18 +774,23 @@ pub const Ui = struct {
         const vis = b.rect.intersect(b.clip);
         const a = ui.arena.allocator();
         if (!vis.empty() or b.kids.items.len > 0) ui.hits.append(a, .{ .rect = vis, .box = b }) catch {};
-        if (b.st.look.bg) |bg| g.fill(b.rect, b.clip, bg);
+        if (b.st.look.bg) |bg| {
+            // An opaque box hides what's under it, glyphs included.
+            if (bg & 0xff == 0xff) g.blank(b.rect, b.clip);
+            g.fill(b.rect, b.clip, bg);
+        }
         ui.drawBorder(g, b);
         ui.drawContent(g, b);
         for (b.kids.items) |k| ui.draw(g, k);
         ui.bounds(b);
     }
 
+    /// Reports a node's layout for its `bounds` file, in window points
+    /// (a cell is 8×16; the window starts under the title bar).
     fn bounds(ui: *Ui, b: *Box) void {
-        _ = ui;
-        _ = b;
-        // uit_bounds wants window-space points; the spike core answers
-        // ENOTSUP, so this waits for W3. (cols*8, rows*16.)
+        if (b.part != .none or b.hidden) return;
+        const r = b.rect;
+        ui.src.bounds(b.node, @floatFromInt(r.x * 8), @floatFromInt((r.y - 1) * 16), @floatFromInt(r.w * 8), @floatFromInt(r.h * 16));
     }
 
     fn drawBorder(ui: *Ui, g: *Grid, b: *Box) void {
@@ -2057,4 +2087,49 @@ test "select opens a list, radio and slider take arrows" {
         \\emit commit vol value=60
         \\
     , f.log.items);
+}
+
+test "a modal dialog hides what's under it and keeps focus" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try source.Fake.init(arena.allocator());
+    try f.set(".", "style", "v-flex size-full");
+    for (0..6) |i| _ = try f.new("text", try std.fmt.allocPrint(arena.allocator(), "t{d}", .{i}), &.{.{ "text", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }}, "");
+    const in = try f.new("input", "in", &.{}, "");
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    var g: Grid = undefined;
+    try render(f, 30, 10, &ui, &g);
+    defer g.deinit(testing.allocator);
+    // Its bounds file gets window points: the seventh row, full width.
+    try testing.expectEqual([4]f32{ 0, 6 * 16, 30 * 8, 16 }, f.nodes.items[in].bounds.?);
+    ui.focus(in);
+
+    _ = try f.new("dialog", "over/hi", &.{ .{ "title", "Welcome" }, .{ "open", "on" } }, "");
+    _ = try f.new("div", "over/hi/footer", &.{}, "");
+    const ok = try f.new("button", "over/hi/footer/ok", &.{.{ "label", "OK" }}, "");
+    try ui.frame(&g);
+    var dump: std.Io.Writer.Allocating = .init(testing.allocator);
+    defer dump.deinit();
+    try g.dump(&dump.writer);
+    // The dialog's rows show its own text, not the x's under it (two
+    // columns of the scrim show at each side).
+    var lines = std.mem.splitScalar(u8, dump.written(), '\n');
+    var saw = false;
+    while (lines.next()) |l| if (std.mem.indexOf(u8, l, "Welcome") != null) {
+        saw = true;
+        try testing.expect(std.mem.indexOf(u8, l, "xxx") == null);
+    };
+    try testing.expect(saw);
+    try testing.expectEqual(ok, ui.focused);
+    try testing.expect(g.cursor == null);
+    // Tab stays inside the dialog.
+    _ = ui.onKey(.{ .name = "tab" });
+    try testing.expectEqual(ok, ui.focused);
+
+    // Closed, focus goes back where it was.
+    try f.set("over/hi", "open", "off");
+    try ui.frame(&g);
+    try testing.expectEqual(in, ui.focused);
+    try testing.expect(g.cursor != null);
 }

@@ -26,6 +26,7 @@ pub const Source = struct {
         emit: *const fn (*anyopaque, Node, []const u8, []const Attr) void,
         mirror: *const fn (*anyopaque, Node, []const u8, []const u8) void,
         key: *const fn (*anyopaque, []const u8, []const u8, Node) bool,
+        bounds: *const fn (*anyopaque, Node, [4]f32) void,
     };
 
     pub fn windowRoot(s: Source, win: []const u8) Node {
@@ -63,6 +64,10 @@ pub const Source = struct {
     }
     pub fn key(s: Source, win: []const u8, ks: []const u8, focused: Node) bool {
         return s.vt.key(s.ptr, win, ks, focused);
+    }
+
+    pub fn bounds(s: Source, n: Node, x: f32, y: f32, w: f32, h: f32) void {
+        s.vt.bounds(s.ptr, n, .{ x, y, w, h });
     }
 
     /// Text of a prop with one trailing newline dropped (files end in one).
@@ -151,6 +156,11 @@ const core_vt: Source.VTable = .{
             return K(p).key(w, ks, n);
         }
     }.f,
+    .bounds = struct {
+        fn f(p: *anyopaque, n: Node, r: [4]f32) void {
+            K(p).bounds(n, r[0], r[1], r[2], r[3]);
+        }
+    }.f,
 };
 
 pub fn fromCore(k: core.Core) Source {
@@ -161,6 +171,7 @@ pub fn fromCore(k: core.Core) Source {
 // A fake tree for tests
 
 pub const Fake = struct {
+    const over: Node = 2;
     a: std.mem.Allocator,
     nodes: std.ArrayList(FNode) = .empty,
     tokens: std.StringHashMapUnmanaged(u32) = .empty,
@@ -175,6 +186,8 @@ pub const Fake = struct {
         kids: std.ArrayList(Node) = .empty,
         props: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
         style: []core.StyleWord = &.{},
+        /// What the UI last reported for the node's `bounds` file.
+        bounds: ?[4]f32 = null,
     };
 
     /// Use an arena: nothing is freed one by one.
@@ -183,6 +196,9 @@ pub const Fake = struct {
         f.* = .{ .a = a };
         try f.nodes.append(a, .{ .name = "", .path = "", .typ = "", .parent = 0 });
         try f.nodes.append(a, .{ .name = ".", .path = ".", .typ = "div", .parent = 0 });
+        // `over/`: overlays made under it are the window's overlays. It
+        // isn't one of the root's children.
+        try f.nodes.append(a, .{ .name = "over", .path = "over", .typ = "", .parent = 1 });
         for ([_]struct { []const u8, u32 }{
             .{ "background", 0xffffffff },       .{ "foreground", 0x0a0a0aff }, .{ "muted", 0xf5f5f5ff },
             .{ "muted-foreground", 0x737373ff }, .{ "primary", 0x171717ff },    .{ "primary-foreground", 0xfafafaff },
@@ -285,8 +301,8 @@ pub const Fake = struct {
             }
         }.f,
         .overlays = struct {
-            fn f(_: *anyopaque, _: []const u8) []const Node {
-                return &.{};
+            fn f(p: *anyopaque, _: []const u8) []const Node {
+                return F(p).nodes.items[over].kids.items;
             }
         }.f,
         .typeOf = struct {
@@ -347,6 +363,11 @@ pub const Fake = struct {
                 const fk = F(p);
                 fk.log.print(fk.a, "key {s}\n", .{ks}) catch {};
                 return false;
+            }
+        }.f,
+        .bounds = struct {
+            fn f(p: *anyopaque, n: Node, r: [4]f32) void {
+                F(p).nodes.items[n].bounds = r;
             }
         }.f,
     };

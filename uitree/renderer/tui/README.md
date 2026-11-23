@@ -101,7 +101,7 @@ families and text sizes are accepted and not drawn.
 | `scroll` | clips and scrolls with the wheel |
 | `empty`, `alert`, `badge`, `kbd`, `separator`, `spinner`, `icon` | glyphs: `▭ Nothing to do`, a bordered box, ` 3 `, ` ⌘K `, `───`, `⠋`, `×` |
 | `img`, `svg` | `[image name]`, dim |
-| `dialog` | centered over a scrim, bordered, title, description, children, `footer` last (from `uit_overlays`) |
+| `dialog` | from `uit_overlays`: centered over a scrim, opaque, bordered, title, description, children, `footer` last; while one is open, focus and Tab stay inside it, and focus goes back when it closes |
 
 **Input.** Tab and Shift-Tab move focus between controls in tree order.
 A focused control takes the keys it uses (typing in inputs, Space and
@@ -113,6 +113,8 @@ node whose `on` includes `click` (the counter's divs) emits `click` on it
 with `x=`, `y=` (window points, cells × 8 and × 16) and `button=left`.
 Edits mirror `value` and send `change value=` (no value for a `secret`
 input); Enter sends `submit` from the enclosing form, or the input.
+Each drawn node's rect goes to `uit_bounds` in window points, for its
+`bounds` file.
 
 ## Examples
 
@@ -125,32 +127,12 @@ screenshots and GIFs in [examples/screenshots/](examples/screenshots/).
 | Example | Shows | Recording |
 | --- | --- | --- |
 | counter | `on=click` divs, `hover:` and `active:` styles, a `=` key binding | [counter.png](examples/screenshots/counter.png), [counter-after.png](examples/screenshots/counter-after.png), [counter.gif](examples/screenshots/counter.gif) |
-| hello | input + primary button sharing a tag, Enter submits, reading `value` | [hello.png](examples/screenshots/hello.png), [hello-greeted.png](examples/screenshots/hello-greeted.png), [hello.gif](examples/screenshots/hello.gif) |
-| signin | form and fields, `required`, field errors, a secret input, a link, delete and new | [signin.png](examples/screenshots/signin.png), [signin-errors.png](examples/screenshots/signin-errors.png), [signin-welcome.png](examples/screenshots/signin-welcome.png), [signin.gif](examples/screenshots/signin.gif) |
-| todo | new and delete per item, checkbox `change`, tabs as a filter, scroll, empty state, `hover:` rows | [todo.png](examples/screenshots/todo.png), [todo-items.png](examples/screenshots/todo-items.png), [todo-active.png](examples/screenshots/todo-active.png), [todo-cleared.png](examples/screenshots/todo-cleared.png), [todo.gif](examples/screenshots/todo.gif) |
+| hello | a `tree` document, input + primary button sharing a tag, Enter submits, reading `value` | [hello.png](examples/screenshots/hello.png), [hello-greeted.png](examples/screenshots/hello-greeted.png), [hello.gif](examples/screenshots/hello.gif) |
+| signin | form and fields, `required`, field errors, a secret input, a link, a dialog in `over/` opened with `open` | [signin.png](examples/screenshots/signin.png), [signin-errors.png](examples/screenshots/signin-errors.png), [signin-welcome.png](examples/screenshots/signin-welcome.png), [signin.gif](examples/screenshots/signin.gif) |
+| todo | new and delete per item, checkbox `change`, tabs filtering through `order`, scroll, empty state, `hover:` rows | [todo.png](examples/screenshots/todo.png), [todo-items.png](examples/screenshots/todo-items.png), [todo-active.png](examples/screenshots/todo-active.png), [todo-cleared.png](examples/screenshots/todo-cleared.png), [todo.gif](examples/screenshots/todo.gif) |
 
-Where they differ from uitreefs's versions, each file's header says why;
-it's always a gap in the spike core, listed next.
-
-## Waiting on the core
-
-The spike core (W0) is what this runs against today. What W3 and W4
-replace, and what this host does meanwhile:
-
-- **No `tree` file.** The examples build their subtrees with `new` lines.
-- **No overlays** (`uit_overlays` is always empty, `over/` doesn't
-  exist). Dialogs are drawn from `uit_overlays` and will appear when W3
-  lands; signin shows its welcome as a panel in the window instead.
-- **`focus` is a prop, not `UIT_CMD_FOCUS`.** The host handles
-  `UIT_CMD_FOCUS` and, until W3, a change to the root's `focus` prop
-  (`Ui.propChanged`).
-- **`uit_lines` returns `UIT_ENOTSUP`.** `core.Core.lines` falls back to
-  splitting the prop's text (tabs, or Plan 9 words). Delete the fallback
-  when `uit_lines` is real.
-- **`uit_bounds` returns `UIT_ENOTSUP`**, so nodes' `bounds` files are
-  empty; `Ui.bounds` is where it will go.
-- **`group-hover`** isn't in 0.2 or the spike, so todo's delete buttons
-  are always shown.
+They follow uitreefs's versions, except that todo's delete buttons are
+always shown: `group-hover` is a uitreefs extra that 0.2 doesn't have.
 
 ## Not done yet
 

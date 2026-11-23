@@ -4,17 +4,18 @@
 #	uitree-tui -t Greeter rc hello.rc
 #
 # uitreefs/examples/rc/hello.rc in the draft 0.2 spelling: dashed style
-# words, `primary` as a bare word, window-relative event paths. The
-# subtree is built with `new` lines instead of the `tree` file, which the
-# spike core doesn't serve yet (W3).
+# words, `primary` as a bare word, window-relative event paths.
 . ./lib.rc
 m=$ui/win/main
 
-echo 'set . title=Greeter size=360,170 pos=center resizable=off : v-flex size-full p=20 gap=12 bg=background
-new div row tag=greet : h-flex gap=8
-new input row/name placeholder=''Your name'' : flex-1
-new button row/go label=Greet primary
-new text out text=''Who are you?'' : text-lg text-color=muted-foreground' >$m/ctl
+echo 'set . title=Greeter size=360,170 pos=center resizable=off' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full p=20 gap=12 bg=background
+  div row  tag=greet  : h-flex gap=8
+    input name  placeholder='Your name'  : flex-1
+    button go  primary  label=Greet
+  text out  text='Who are you?'  : text-lg text-color=muted-foreground
+END
 echo row/name >$m/focus
 
 { while(ev=`{read}){

@@ -232,33 +232,15 @@ pub const Core = struct {
 
     pub const Line = struct { fields: []const []const u8 };
 
-    /// A data file's lines (`items`). The spike core answers
-    /// UIT_ENOTSUP, so until W3 lands this falls back to splitting the
-    /// prop's text: tab-separated fields, or blank-separated words with
-    /// Plan 9 quotes. Remove the fallback when uit_lines is real.
+    /// A data file's lines (`items`), split into fields by the core.
     pub fn lines(k: Core, a: std.mem.Allocator, n: Node, file: []const u8) ![]Line {
         var out: c.UitLines = .{};
-        const rc = c.uit_lines(k.p, n, str(file), &out);
+        try check(c.uit_lines(k.p, n, str(file), &out));
         var res: std.ArrayList(Line) = .empty;
-        if (rc >= 0) {
-            for (many(c.UitLine, out.lines, out.n)) |ln| {
-                const fs = try a.alloc([]const u8, ln.n_fields);
-                for (many(c.UitStr, ln.fields, ln.n_fields), fs) |f, *d| d.* = slice(f);
-                try res.append(a, .{ .fields = fs });
-            }
-            return res.items;
-        }
-        const text = k.prop(n, file) orelse return &.{};
-        var it = std.mem.splitScalar(u8, text, '\n');
-        while (it.next()) |raw| {
-            const line = std.mem.trimEnd(u8, raw, "\r");
-            if (std.mem.trim(u8, line, " \t").len == 0) continue;
-            var fs: std.ArrayList([]const u8) = .empty;
-            if (std.mem.indexOfScalar(u8, line, '\t') != null) {
-                var f = std.mem.splitScalar(u8, line, '\t');
-                while (f.next()) |x| try fs.append(a, x);
-            } else try splitWords(a, line, &fs);
-            try res.append(a, .{ .fields = fs.items });
+        for (many(c.UitLine, out.lines, out.n)) |ln| {
+            const fs = try a.alloc([]const u8, ln.n_fields);
+            for (many(c.UitStr, ln.fields, ln.n_fields), fs) |f, *d| d.* = slice(f);
+            try res.append(a, .{ .fields = fs });
         }
         return res.items;
     }
@@ -313,6 +295,7 @@ pub const Core = struct {
 };
 
 /// Plan 9 words: blanks separate, '' quotes, '' inside quotes is one '.
+/// The test fake splits data files with it, as the core's uit_lines does.
 pub fn splitWords(a: std.mem.Allocator, line: []const u8, out: *std.ArrayList([]const u8)) !void {
     var i: usize = 0;
     while (i < line.len) {
