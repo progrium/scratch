@@ -14,6 +14,7 @@ pub const memfs = @import("memfs.zig");
 pub const mux = @import("mux.zig");
 pub const debug = @import("debug.zig");
 pub const host = @import("host.zig");
+pub const ns = @import("ns.zig");
 
 pub const Fs = fs.Fs;
 pub const Server = server.Server;
