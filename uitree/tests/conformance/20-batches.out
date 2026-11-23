@@ -1,0 +1,34 @@
+# commit or abort with no begin
+no batch
+no batch
+# reads see writes inside a batch
+ok
+ok
+inside
+|
+ok
+inside
+|
+# abort throws the batch away
+ok
+ok
+ok
+yes
+changed
+|
+ok
+no
+inside
+|
+# begin inside a batch
+ok
+in use
+ok
+# a batch left open is committed after 2 seconds
+ok
+ok
+ok
+no batch
+yes
+yes
+exit=0

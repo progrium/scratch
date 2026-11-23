@@ -1,0 +1,74 @@
+#!/bin/rc
+# 05-windows: core.md § Windows. The window verb and its props, the window
+# ctl verbs and files, hidden until content, and the state event.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+
+echo '# window with every prop'
+w $k/ctl window main 'title=''Main window''' 'size=800,600' 'min=400,300' 'max=1600,1200' 'pos=center' 'kind=normal' 'titlebar=system' 'resizable=on'
+val $k/win/main/title
+echo '# the name is taken'
+w $k/ctl window main
+echo '# bad prop values'
+w $k/ctl window w2 'size=wide'
+w $k/ctl window w3 'kind=sideways'
+w $k/ctl window w4 'titlebar=fancy'
+w $k/ctl window w5 'resizable=maybe'
+exists $k/win/w2 $k/win/w3 $k/win/w4 $k/win/w5
+echo '# a prop windows do not have'
+w $k/ctl window w6 'colour=red'
+exists $k/win/w6
+echo '# a dialog, and a window with no title bar'
+w $k/ctl window ask 'kind=dialog' 'title=Ask'
+w $k/ctl window tip 'titlebar=none' 'resizable=off' 'pos=10,10'
+names $k/win
+
+m=$k/win/main
+echo '# title by set . and by file'
+w $m/ctl set . 'title=Renamed'
+val $m/title
+w $m/title 'By file'
+val $m/title
+echo '# size and pos by set .'
+w $m/ctl set . 'size=1024,768'
+w $m/ctl set . 'pos=10,20'
+w $m/ctl set . 'pos=center'
+w $m/ctl set . 'size=big'
+echo '# inner is the content size, w h'
+val $m/inner
+
+echo '# a window is hidden until its root has content or it gets show'
+val $m/state $k/win/ask/state
+w $m/ctl new text hello 'text=hi'
+val $m/state
+w $k/win/ask/ctl show
+val $k/win/ask/state
+w $m/ctl activate
+
+echo '# the state verb, read back; state events coalesce, so a slow reader sees the newest'
+{
+	w $m/ctl state max
+	val $m/state
+	w $m/ctl state full
+	w $m/ctl state normal
+	w $m/ctl state sideways
+	val $m/state
+	evs 'win=main'
+} <[3]$m/events
+echo '# a change the user made carries via=user'
+{
+	inj event state 'win=main' 'value=min' 'via=user'
+	evs 'win=main'
+} <[3]$m/events
+
+echo '# notify'
+w $m/ctl 'notify ''Saved draft'' type=success'
+w $m/ctl notify Hello
+w $m/ctl 'notify hi type=loud'
+echo '# a verb windows do not take'
+w $m/ctl wobble
+echo '# close, with nobody asking to answer, closes at once'
+w $k/win/ask/ctl close
+echo '# destroy closes now'
+w $k/win/tip/ctl destroy
+names $k/win

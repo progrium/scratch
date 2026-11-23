@@ -1,0 +1,63 @@
+# single quotes group a word; '' is a literal quote
+ok
+it's here
+|
+# tokenize drops the quotes, so a quoted prop=value is still a prop
+ok
+also grouped
+|
+# a lone : starts the style; a : inside a word does not
+ok
+open:42
+|
+h-flex gap=8 p=12 hover:bg=accent
+|
+# style is a file, so style= sets it too, quoted
+ok
+v-flex gap=4
+|
+# = inside a value is kept
+ok
+a=b
+|
+# blanks: spaces and tabs split words, runs count once
+ok
+x
+|
+# an unterminated quote
+bad syntax
+no
+# a bare word the type does not take
+bad value
+no
+# text files are raw bytes, never parsed
+ok
+quote ' and = and '' and : stay
+|
+# a here-value takes the lines up to its word
+ok
+two
+lines
+|
+# a here-value with no end line
+bad syntax
+no
+# several lines in one write apply together
+ok
+a b c c2 d e p g h i
+|
+# one bad line and none apply
+unknown type
+no
+no
+no
+a b c c2 d e p g h i
+|
+# a duplicate inside one write is in use, and nothing applies
+in use
+no
+# a later line can use a node an earlier line made
+ok
+inner
+|
+exit=0

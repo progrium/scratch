@@ -1,0 +1,48 @@
+# requests are opt-in: without ask, close closes at once, even with a reader
+ok
+no
+resync - -
+# ask takes close, quit and open, or none
+ok
+bad value
+# close on a window ctl asks; keep seq= says no
+ok
+resync - -
+close - . via=ctl win=main
+ok
+yes
+# answering twice
+not found
+# the user's close button, answered close seq=
+resync - -
+close - . via=titlebar win=two
+ok
+no
+# no answer in 5 seconds: the default, close
+yes
+no
+# a late answer
+not found
+# an answer to a seq that was never a request
+not found
+# no events file open: the default applies at once
+ok
+no
+# ask none on one window opts it out
+ok
+ok
+no
+resync - -
+# quit is a request too; its default is to quit, so answer keep on the app ctl
+resync - -
+quit - - via=menu
+ok
+main
+# a window opts in on its own ctl
+ok
+ok
+resync - -
+close - . via=titlebar win=six
+ok
+yes
+exit=0

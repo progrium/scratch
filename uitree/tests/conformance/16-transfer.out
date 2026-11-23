@@ -1,0 +1,39 @@
+# the drop file lists the types a node takes
+ok
+file text
+|
+# a drop is a request; the offer is in drag/N
+resync - -
+drop pick notes drag=7 pt=40,212 types=text,uri win=main
+text
+uri
+hello world
+ok
+# drag/7 goes once the request is answered and the reads are done
+no
+# refuse
+ok
+no
+# a drop with no answer is refused after the timeout
+no
+# starting a drag: dragstart, the client writes the offer, dragend
+ok
+ok
+text
+|
+resync - -
+dragstart - card drag=10 win=main
+note-42
+resync - -
+dragend - card drag=10 op=move result=dropped win=main
+# copy lines in one write make one clipboard of several types
+ok
+resync - -
+clip - - gen=N
+text
+x.conformance.card
+Quarterly report|
+card id=42|
+# writing one clipdata file makes the clipboard just that type
+text
+exit=0

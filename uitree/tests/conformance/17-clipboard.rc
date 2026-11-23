@@ -1,0 +1,13 @@
+#!/bin/rc
+# 17-clipboard: core.md § Clipboard. $ui/clip is the clipboard as text
+# (headless: one in memory); a write copies, a read pastes.
+# needs: W2 W3 W4
+. ./lib.rc
+
+echo 'copied text' >$k/clip
+val $k/clip
+echo 'line one
+line two' >$k/clip
+val $k/clip
+echo -n >$k/clip
+val $k/clip

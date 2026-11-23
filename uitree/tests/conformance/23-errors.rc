@@ -1,0 +1,49 @@
+#!/bin/rc
+# 23-errors: core.md § Errors. A write that produces each phrase a core
+# host can produce (disabled is in 09-forms, too large in 24-limits, app
+# gone in 26-lifecycle; permission denied and unsupported belong to the
+# optional layers), the phrase: detail form, and errors being loud: the
+# host's standard error (23-errors.err) and an error event.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+mainwin
+wn=$k/win/main
+r=$wn
+wq $r/ctl new div card
+
+{
+	echo '# unknown command'
+	wd $r/ctl frobnicate
+	echo '# bad syntax'
+	w $r/ctl 'new div x style=''unclosed'
+	echo '# bad value'
+	w $r/card/style 'w=wide'
+	echo '# unknown type'
+	wd $r/ctl new widget x
+	echo '# unknown style word'
+	wd $r/card/style flexx
+	echo '# type is fixed'
+	inj frame 'win=main'
+	w $r/card/type text
+	echo '# not found'
+	w $r/ctl delete nope
+	echo '# in use'
+	w $r/ctl new div card
+	echo '# no batch'
+	w $k/ctl commit
+	echo '# the error events, one per failure, in order'
+	evs 'win=main'
+} <[3]$wn/events
+
+echo '# gone: the node went away while its file was open'
+wq $r/ctl new text tmp
+{
+	wq $r/ctl delete tmp
+	@{echo x >[1=3]} >[2]/tmp/w.err
+	phrase </tmp/w.err
+} >[3]$r/tmp/text
+echo '# app-level files: errors without win= have paths from $ui'
+{
+	w $k/ctl frobnicate
+	evs
+} <[3]$k/events

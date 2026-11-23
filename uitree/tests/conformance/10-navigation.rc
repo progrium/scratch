@@ -1,0 +1,60 @@
+#!/bin/rc
+# 10-navigation: components.md § Profiles (nav). A settings sidebar, its
+# child and slot rules, tabs and their value, breadcrumb items, toolbar
+# slots and a link.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile nav
+wq $k/ctl window settings
+wn=$k/win/settings
+r=$wn
+
+echo '# a settings sidebar'
+w $r/style h-flex size-full
+w $r/ctl 'new sidebar nav
+new div page : flex-1 p=24'
+w $r/nav/ctl 'new sidebar-group g label=Settings'
+w $r/nav/g/ctl 'new sidebar-item general label=General icon=settings active tag=page:general
+new sidebar-item account label=Account icon=user tag=page:account
+new sidebar-item keys label=Shortcuts icon=keyboard tag=page:keys'
+cat $r/tree
+echo '# a sidebar takes sidebar-group children and its header and footer slots'
+w $r/nav/ctl new text stray
+w $r/nav/ctl new text header 'text=App'
+echo '# sidebar items click with their tag'
+{
+	inj event click 'win=settings' 'node=nav/g/account'
+	evs 'win=settings'
+} <[3]$wn/events
+
+echo '# tabs: value is the selected tab''s name'
+w $r/page/ctl new tabs t underline
+w $r/page/t/ctl 'new tab a label=One
+new tab b label=Two closable'
+w $r/page/t/a/ctl new text body 'text=''first panel'''
+w $r/page/t/value b
+val $r/page/t/value
+w $r/page/t/value c
+val $r/page/t/value
+echo '# tabs take only tab children'
+w $r/page/t/ctl new div x
+echo '# a user switch is a change'
+{
+	inj mirror 'win=settings' 'node=page/t' 'file=value' 'value=a'
+	inj event change 'win=settings' 'node=page/t' 'value=a'
+	evs 'win=settings'
+} <[3]$wn/events
+val $r/page/t/value
+
+echo '# breadcrumb items'
+w $r/page/ctl new breadcrumb crumbs
+echo 'home|Home
+docs|Docs' | tr '|' '	' >$r/page/crumbs/items
+cat $r/page/crumbs/items
+echo '# a toolbar''s slots'
+w $r/page/ctl 'new toolbar bar
+new button bar/left label=Back'
+w $r/page/ctl new text bar/middle 'text=x'
+echo '# a link'
+w $r/page/ctl new link help 'label=Help' 'href=https://example.com/help'
+cat $r/page/help/tree

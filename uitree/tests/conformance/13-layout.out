@@ -1,0 +1,32 @@
+# every layout type
+ok
+ok
+ok
+ok
+# a resizable takes only panel children
+ok
+ok
+unknown type
+2
+# accordion: value lists the open items
+ok
+ok
+ok
+a b
+|
+not found
+a b
+|
+unknown type
+# a user toggle is a change
+resync - -
+change - acc value=b via=user win=main
+b
+|
+# collapsible
+ok
+ok
+collapsible c
+  text trigger  text=More
+  text content  text=Hidden
+exit=0

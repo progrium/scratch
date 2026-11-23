@@ -1,0 +1,103 @@
+#!/bin/rc
+# 21-tree-docs: core.md § Documents. Reading and writing a node's tree
+# file with core.md's sign-in document, a save that restores, keeping
+# children whose name and type match, here-values, and refusals.
+# needs: W1 W2 W3 W4
+. ./lib.rc
+need profile form
+need profile nav
+mainwin
+wn=$k/win/main
+r=$wn
+
+cat >$r/tree <<'END_DOC'
+div root  : v-flex size-full p=24 gap=16
+  text title  text='Sign in'  : text-xl font-semibold
+  form f
+    field user  label=Email
+      input in  placeholder=you@example.com
+    field pass  label=Password
+      input in  secret
+    field go
+      button submit  primary  label='Sign in'  tag=login  : w-full
+  link help  label='Forgot password?'  href=https://example.com/reset
+END_DOC
+
+echo '# the sign-in document reads back as written'
+cat $r/tree | tee /tmp/canon.ui
+echo '# the directory view is the same tree'
+val $r/title/text $r/f/user/in/placeholder $r/f/go/submit/tag
+val $r/order $r/f/order
+echo '# the same document in other spacing and order reads back the same'
+cat >$r/tree <<'END_DOC'
+div root : v-flex size-full p=24 gap=16
+  text title text='Sign in' : text-xl font-semibold
+  form f
+    field user label=Email
+      input in placeholder=you@example.com
+    field pass label=Password
+      input in secret=on
+    field go
+      button submit label='Sign in' primary tag=login : w-full
+  link help label='Forgot password?' href=https://example.com/reset
+END_DOC
+cat $r/tree >/tmp/screen.ui
+cmp -s /tmp/canon.ui /tmp/screen.ui && echo same
+echo '# a save and restore round-trips'
+cat /tmp/screen.ui >$r/tree
+cat $r/tree >/tmp/screen2.ui
+cmp -s /tmp/screen.ui /tmp/screen2.ui && echo same
+
+echo '# a rewrite keeps children whose name and type match, so their state survives'
+echo 'Ada' >$r/f/user/in/value
+wq $wn/focus f/user/in
+cat >$r/tree <<'END_DOC'
+div root  : v-flex size-full p=24 gap=16
+  form f
+    field user  label='Your email'
+      input in  placeholder=you@example.com
+  text title  text='Welcome back'
+END_DOC
+val $r/f/user/in/value $wn/focus
+val $r/order
+exists $r/help $r/f/pass
+echo '# a child whose type changed is replaced, so its state goes'
+cat >$r/tree <<'END_DOC'
+div root
+  form f
+    field user
+      textarea in
+END_DOC
+val $r/f/user/in/type $r/f/user/in/value
+
+echo '# a here-value in a document'
+cat >$r/tree <<'END_DOC'
+div root
+  text notes  text=<<END
+# Notes
+
+- one
+- two
+END
+END_DOC
+val $r/notes/text
+cat $r/tree
+
+echo '# a document with a bad line changes nothing'
+cat >$r/tree <<'END_DOC'
+div root
+  nosuchtype x
+END_DOC
+exists $r/notes $r/x
+echo '# indentation that skips a level'
+cat >$r/tree <<'END_DOC'
+div root
+      text deep
+END_DOC
+exists $r/notes $r/deep
+echo '# the root line must match the node it is written to'
+cat >$r/tree <<'END_DOC'
+text root
+END_DOC
+val $r/type
+exists $r/notes
