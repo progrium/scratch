@@ -1,0 +1,11 @@
+type    button-group  tier=component  since=1.0
+prop    multiple    bool
+prop    value       text  file
+prop    dir         enum=row,col  default=row
+prop    disabled    bool
+prop    controlled  bool
+word    multiple disabled controlled  kind=flag
+word    primary secondary danger info success warning ghost link outline  kind=variant
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   button

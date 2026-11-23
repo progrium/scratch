@@ -1,0 +1,4 @@
+type    avatar-group  tier=component  since=1.0
+prop    max  number
+word    xs sm md lg  kind=size
+child   avatar

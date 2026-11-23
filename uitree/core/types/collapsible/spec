@@ -1,0 +1,7 @@
+type    collapsible  tier=component  profile=layout  since=1.0
+prop    open  bool  default=off
+word    open  kind=flag
+event   change  kind=state
+slot    trigger
+slot    content
+child   none

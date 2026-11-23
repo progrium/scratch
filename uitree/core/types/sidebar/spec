@@ -1,0 +1,9 @@
+type    sidebar  tier=component  profile=nav  since=1.0
+prop    collapsed    bool
+prop    side         enum=left,right  default=left
+prop    collapsible  enum=icon,off  default=icon
+word    collapsed  kind=flag
+event   collapse  kind=state
+slot    header
+slot    footer
+child   sidebar-group

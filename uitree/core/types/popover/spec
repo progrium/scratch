@@ -1,0 +1,10 @@
+type    popover  tier=overlay  profile=overlay  since=1.0
+prop    anchor     path
+prop    placement  enum=top-start,top,top-end,bottom-start,bottom,bottom-end,left-start,left,left-end,right-start,right,right-end  default=bottom-start
+prop    trigger    enum=click,hover  default=click
+prop    open       bool  default=off  readonly
+verb    open   class=activate
+verb    close  class=activate
+event   open   kind=action
+event   close  kind=action
+child   any

@@ -1,0 +1,10 @@
+type    color-picker  tier=component  since=1.0
+prop    value       text  file
+prop    swatches    text  file
+prop    disabled    bool
+prop    controlled  bool
+word    disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+event   commit  kind=action
+child   none

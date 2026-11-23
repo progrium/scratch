@@ -1,0 +1,16 @@
+type    list  tier=component  profile=data  since=1.0
+prop    items       data  file
+prop    fields      text  file
+prop    value       text  file
+prop    selectable  bool  default=off
+prop    multiple    bool  default=off
+prop    searchable  bool  default=off
+prop    loading     bool  default=off
+prop    query       text  file
+word    selectable multiple searchable loading  kind=flag
+event   select           kind=state
+event   open             kind=action
+event   scrolled-to-end  kind=action
+slot    row
+child   none
+file    items  format=items

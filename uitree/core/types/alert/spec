@@ -1,0 +1,12 @@
+type    alert  tier=component  profile=feedback  since=1.0
+prop    title     text  file
+prop    text      text  file
+prop    variant   enum=info,success,warning,error  default=info
+prop    closable  bool  default=off
+prop    banner    bool  default=off
+prop    icon      word
+word    closable banner  kind=flag
+word    info success warning error  kind=variant
+word    xs sm md lg  kind=size
+event   close  kind=action
+child   none

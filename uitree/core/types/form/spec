@@ -1,0 +1,7 @@
+type    form  tier=component  profile=form  since=1.0
+prop    dir          enum=row,col
+prop    labels       enum=top,side
+prop    label-width  number
+word    xs sm md lg  kind=size
+event   submit  kind=action
+child   field
