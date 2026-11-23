@@ -19,6 +19,7 @@
 #   H9BUILD_RAILPACK  a Railpack binary to use instead of the release
 #   H9BUILD_MEMORY  guest memory for the build machines (default 4G)
 #   H9BUILD_RUBY_COMPILE=1  build Ruby from source rather than use mise's precompiled one
+#   H9BUILD_REPLAN=1  run Railpack's planner even if the source hasn't changed
 #   HTTPS_PROXY, SSL_CERT_FILE  passed into the guest when set
 set -eu
 
@@ -68,7 +69,8 @@ arm64 | aarch64) arch=aarch64 rparch=arm64 ;;
 *) die "unsupported architecture $(uname -m)" ;;
 esac
 
-sha() { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi | cut -c1-16; }
+if command -v sha256sum >/dev/null; then sha256=sha256sum; else sha256='shasum -a 256'; fi
+sha() { $sha256 | cut -c1-16; }
 
 # h9 with the proxy settings, if any, passed in. The guest sees the CA bundle
 # at /mnt/term/cwd/.ca.pem, so each run's cwd gets a copy.
@@ -190,7 +192,7 @@ builder=$(root builder $BUILDER_PACKAGES)
 # The output. The layers and their keys stay between builds, so a layer
 # whose inputs haven't changed is used again; the per-app caches stay too.
 mkdir -p "$out/layers" "$out/cache"
-rm -f "$out/plan.json" "$out/env" "$out/run" "$out/layers.txt" "$out"/*.txt
+rm -f "$out/env" "$out/run" "$out/layers.txt"
 rm -rf "$out/layers"/*.tmp "$out/layers"/*.keep
 
 # The source is at /h9build/src/NAME in the guest, under its own name, as
@@ -207,8 +209,32 @@ guest() {
 		--env "H9BUILD_RUBY_COMPILE=${H9BUILD_RUBY_COMPILE:-}" "$@"
 }
 
-log "planning"
-guest /bin/sh /h9build/guest/plan.sh
+# The plan, and what plan.sh reads from it, are kept with a key: the
+# source's files, Railpack, and plan.sh. Planning runs Railpack in a machine,
+# which is most of a build with nothing changed, so it's skipped when the key
+# matches. Railpack resolves versions when it plans, so a kept plan keeps the
+# versions it resolved until the source changes; H9BUILD_REPLAN=1 plans again.
+planfiles="plan.json steps.txt keys.txt shared.txt deploy.txt apt-build.txt apt-runtime.txt"
+plankey=$(
+	{
+		echo "$arch $RAILPACK_VERSION"
+		ls -lL "$railpack"
+		$sha256 <"$here/guest/plan.sh"
+		# shellcheck disable=SC2086
+		(cd "$src" && find . -path "./$(basename "$out")" -prune -o -type f -exec $sha256 {} + | LC_ALL=C sort -k2)
+	} | sha
+)
+planned=1
+[ "${H9BUILD_REPLAN:-}" = 1 ] || [ "$(cat "$out/plan.key" 2>/dev/null)" != "$plankey" ] && planned=
+for f in $planfiles; do [ -e "$out/$f" ] || planned=; done
+if [ -n "$planned" ]; then
+	log "plan: unchanged"
+else
+	(cd "$out" && rm -f plan.key $planfiles)
+	log "planning"
+	guest /bin/sh /h9build/guest/plan.sh
+	echo "$plankey" >"$out/plan.key"
+fi
 # Railpack downloads the mise it pins on its first run; keep it for the next.
 for m in "$out"/cache/mise-bin/mise-*; do
 	[ -e "$m" ] || continue
@@ -228,23 +254,56 @@ base=$(root base $BASE_PACKAGES $(wolfi "$out/apt-runtime.txt"))
 # The layers, each built as the up layer over the builder root and the layers
 # below it, from the plan's steps for it. Each is built in LAYER.tmp and
 # moved into place when its steps succeed, so a failed step leaves no layer.
+#
+# The runtime layer is shared: it's built once into the cache, under a key of
+# the builder root and the plan's runtime steps (shared.txt: its tools and
+# their versions), and every app whose plan has the same steps uses it, so a
+# runtime is installed once per machine rather than once per app. OUT/layers/
+# runtime links to it. The files its steps copy from the source (a
+# mise.toml) are app-specific, so they're taken out of the shared layer and
+# made again in the deps layer.
+read -r shared copies <"$out/shared.txt"
+layerdir() { if [ "$1" = runtime ]; then echo "$cache/runtimes/$rkey"; else echo "$out/layers/$1"; fi; }
 lower=
-key=$(basename "$builder")
 for l in runtime deps app; do
-	key=$(printf '%s %s\n' "$key" "$(awk -v l="$l" '$1 == l { print $2 }' "$out/keys.txt")" | sha)
-	d=$out/layers/$l
-	if [ -d "$d" ] && [ "$(cat "$d.key" 2>/dev/null)" = "$key" ]; then
-		log "layer $l: unchanged"
-	else
-		rm -rf "$d" "$d.key"
-		mkdir -p "$d.tmp"
-		if grep -q " $l " "$out/steps.txt"; then
-			log "layer $l"
-			# shellcheck disable=SC2086
-			guest $lower --dir "$d.tmp:#L:up" --tmp '#L/tmp' /bin/sh /h9build/guest/build.sh "$l"
+	if [ "$l" = runtime ]; then
+		rkey=$(printf '%s %s %s %s\n' "$arch" "$(basename "$builder")" "$shared" "${H9BUILD_RUBY_COMPILE:-}" | sha)
+		# The chain goes on from the app's own runtime key, which counts all
+		# the files the runtime steps copy, as the deps layer makes them.
+		key=$(printf '%s %s\n' "$rkey" "$(awk '$1 == "runtime" { print $2 }' "$out/keys.txt")" | sha)
+		d=$(layerdir runtime)
+		if [ -d "$d" ]; then
+			log "layer runtime: shared, ${d#"$cache/"}"
+		else
+			t=$d.tmp.$$
+			rm -rf "$t"
+			mkdir -p "$t"
+			if grep -q " runtime " "$out/steps.txt"; then
+				log "layer runtime: building, to share as ${d#"$cache/"}"
+				guest --dir "$t:#L:up" --tmp '#L/tmp' /bin/sh /h9build/guest/build.sh runtime
+			fi
+			rm -rf "$t/app"
+			# Another build may have made it meanwhile; either is the same.
+			if [ -d "$d" ]; then rm -rf "$t"; else mv "$t" "$d"; fi
 		fi
-		mv "$d.tmp" "$d"
-		echo "$key" >"$d.key"
+		rm -rf "$out/layers/runtime" "$out/layers/runtime.key"
+		ln -s "$d" "$out/layers/runtime"
+	else
+		key=$(printf '%s %s\n' "$key" "$(awk -v l="$l" '$1 == l { print $2 }' "$out/keys.txt")" | sha)
+		d=$out/layers/$l
+		if [ -d "$d" ] && [ "$(cat "$d.key" 2>/dev/null)" = "$key" ]; then
+			log "layer $l: unchanged"
+		else
+			rm -rf "$d" "$d.key"
+			mkdir -p "$d.tmp"
+			if grep -q " $l " "$out/steps.txt" || { [ "$l" = deps ] && [ "$copies" = copies ]; }; then
+				log "layer $l"
+				# shellcheck disable=SC2086
+				guest $lower --dir "$d.tmp:#L:up" --tmp '#L/tmp' /bin/sh /h9build/guest/build.sh "$l"
+			fi
+			mv "$d.tmp" "$d"
+			echo "$key" >"$d.key"
+		fi
 	fi
 	lower="$lower --dir $d:#L"
 done
@@ -305,7 +364,9 @@ q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 	echo 'here=$(cd "$(dirname "$0")" && pwd)'
 	echo '# shellcheck disable=SC2086'
 	printf 'exec "${H9:-h9}" ${H9_FLAGS:-} --dir %s' "$(q "$base:#L")"
-	while IFS= read -r l; do printf ' --dir "$here/layers/%s:#L"' "$l"; done <"$out/layers.txt"
+	while IFS= read -r l; do
+		if [ "$l" = runtime ]; then printf ' --dir %s' "$(q "$(layerdir runtime):#L")"; else printf ' --dir "$here/layers/%s:#L"' "$l"; fi
+	done <"$out/layers.txt"
 	printf ' --net enable --env HOME=/root'
 	while IFS= read -r kv; do printf ' --env %s' "$(q "$kv")"; done <"$out/env"
 	printf ' /bin/sh -c %s sh "$@"\n' "$(q 'cd /app 2>/dev/null; if [ $# -gt 0 ]; then exec "$@"; fi; exec sh -c "$H9BUILD_START"')"
@@ -314,5 +375,5 @@ chmod +x "$out/run"
 
 log "done: $out (run it with $out/run)"
 set -- "$base"
-while IFS= read -r l; do set -- "$@" "$out/layers/$l"; done <"$out/layers.txt"
+while IFS= read -r l; do set -- "$@" "$(layerdir "$l")"; done <"$out/layers.txt"
 du -sh "$@" | sed "s|$cache|\$cache|; s|$out/||" >&2
