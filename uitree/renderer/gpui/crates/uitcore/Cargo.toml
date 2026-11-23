@@ -1,0 +1,10 @@
+[package]
+name = "uitcore"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Safe wrapper over uitcore.h: borrowed reads tied to the pump, input calls"
+
+[dependencies]
+uitcore-sys.workspace = true

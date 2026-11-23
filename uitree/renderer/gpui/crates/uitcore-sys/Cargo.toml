@@ -1,0 +1,13 @@
+[package]
+name = "uitcore-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+links = "uitcore"
+description = "Hand-written bindings to uitree/core/include/uitcore.h; build.rs builds libuitcore.a with zig build"
+
+[features]
+default = ["h9"]
+# Link hyper9 into the core (-Dh9=true), so uit_run_machine works.
+h9 = []

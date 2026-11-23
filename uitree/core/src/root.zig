@@ -9,6 +9,7 @@ pub const tree = @import("tree/root.zig");
 pub const ninep = @import("ninep/root.zig");
 pub const machine = @import("machine/root.zig");
 pub const abi = @import("abi.zig");
+pub const spike = @import("spike/root.zig");
 
 comptime {
     // Keep the C exports in every artifact that links the core.

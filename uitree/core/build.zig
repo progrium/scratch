@@ -9,8 +9,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    // Off in the scaffold so the core builds without the submodule. The
-    // spike (W0) turns it on once machine/ calls h9.Machine.
+    // Off by default so `zig build test` needs no submodule. Renderers
+    // build with -Dh9=true (renderer/gpui's build.rs does), which links
+    // h9.Machine into libuitcore.a and installs libkern.a beside it.
     const with_h9 = b.option(bool, "h9", "Link hyper9 for h9 sandboxes (default false)") orelse false;
 
     const core = b.addModule("uitcore", .{
@@ -29,7 +30,17 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .gfx = @as([]const u8, "none"),
-        })) |h9| core.addImport("h9", h9.module("h9"));
+        })) |h9| {
+            const h9mod = h9.module("h9");
+            core.addImport("h9", h9mod);
+            // A static library doesn't carry the libraries its modules
+            // link, so install them for the renderer to link too (the
+            // drawterm kern library, libkern.a).
+            for (h9mod.link_objects.items) |lo| switch (lo) {
+                .other_step => |step| b.installArtifact(step),
+                else => {},
+            };
+        }
     }
     const opts = b.addOptions();
     opts.addOption(bool, "h9", with_h9);
@@ -51,7 +62,9 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "uitcore", .module = core }},
         }),
     });
-    b.installArtifact(headless);
+    // Zig can't supply an MSVC libc to link an exe; the library still
+    // builds for x86_64-windows-msvc, which is what a Rust MSVC build links.
+    if (target.result.abi != .msvc) b.installArtifact(headless);
 
     const tests = b.addTest(.{ .root_module = core });
     const test_step = b.step("test", "Run the core's unit tests");
