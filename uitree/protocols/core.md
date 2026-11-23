@@ -281,6 +281,26 @@ are `background foreground muted muted-foreground primary
 primary-foreground accent accent-foreground border ring danger success
 warning radius`.
 
+**Look tokens.** Besides colors, every host has six tokens for the rest of
+the look, in `theme/tokens` like the colors and written the same way:
+
+| Token | Value | Default | |
+| --- | --- | --- | --- |
+| `radius` | points | `6` | corner radius of controls; `0` squares them |
+| `radius-lg` | points | `8` | corner radius of large surfaces (dialogs, notifications) |
+| `font-size` | points | `16` | the base text size |
+| `font-family` | one line of text | `system` | the UI font; `system` is the host's own |
+| `spacing` | points | `4` | one step of the spacing scale: `p-4` is 4 steps, so 16 points by default |
+| `shadow` | `on` or `off` | `on` | whether controls and surfaces draw shadows |
+
+A value of the wrong kind fails the write with `bad value`. `spacing`
+scales the scale words (`p-4`, `gap-2`, `w-8`) and `rem` lengths, as a
+rem is four steps; lengths written in points (`p=16`) don't change. Each
+host maps these to its own units and shows what it can: the terminal host
+turns `spacing` into cells and squares its box corners at `radius 0`,
+and has no use for font or shadow. A named theme may set look tokens too
+(several GPUI Kit themes turn `shadow` off).
+
 **Named themes.** A named theme is a palette: a value for some of the
 color tokens, for one mode. The host lists the ones it has in
 `theme/names`, read-only, one line per theme: its name (quoted when it

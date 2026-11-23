@@ -62,7 +62,11 @@ as the palettes `tools/style-gen` resolves from gpui-component's
 `themes/*.json` (`core/types/themes`). The core owns `theme/name` and
 resolves every token through the selected palette; `theme.rs` copies the
 tokens into GPUI Kit's `ThemeColor` on `UIT_CMD_THEME`, as it does for
-`theme/tokens`. `theme load PATH` still loads a GPUI Kit JSON file directly.
+`theme/tokens`. The look tokens, read as text with `uit_token_text`, set
+`Theme`'s `radius`, `radius_lg`, `font_size`, `font_family` (`system` is
+GPUI Kit's own) and `shadow`; `spacing` sets every window's rem size (4
+times the step), so the Tailwind scale words and rem text sizes follow it.
+`theme load PATH` still loads a GPUI Kit JSON file directly.
 
 Style: the core hands over parsed words (`uit_style`), tokens already
 resolved to RGBA. `styling.rs` maps them with the dispatch table that

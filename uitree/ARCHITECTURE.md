@@ -144,7 +144,11 @@ owns the selection: `theme/name` takes the registered names and family
 names, `theme/names` lists them, and `uit_token` (so `uit_style`'s colors
 and `theme/tokens`) resolves through the selected palette. A renderer
 needs no theme logic of its own: on `UIT_CMD_THEME` it re-reads the mode
-and tokens. Both renderers register all of `core/types/themes`.
+and tokens. Both renderers register all of `core/types/themes`. The
+look tokens (`radius`, `radius-lg`, `font-size`, `font-family`,
+`spacing`, `shadow`) are `types.style.value_tokens`; renderers read
+them as text with `uit_token_text` (ABI 5) and map them to their own
+units.
 
 ## Working on a workstream
 

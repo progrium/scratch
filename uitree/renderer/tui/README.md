@@ -68,7 +68,10 @@ and 16 tall. Lengths convert on the axis they apply to (`p=16` is two
 columns at the sides and one row above and below), columns rounding to
 nearest and rows rounding down unless three quarters full, so 8-point
 vertical gaps collapse instead of doubling a form. Tailwind scale words
-(`p-4`, `gap-2`, `w-1-2`) are 4 points a step. A border is a whole cell,
+(`p-4`, `gap-2`, `w-1-2`) are 4 points a step, or what the `spacing`
+look token says; `radius 0` squares every rounded box corner. The other
+look tokens (font size and family, shadow) have nothing to change in a
+cell grid. A border is a whole cell,
 so a bordered box written 2 rows tall gets 3.
 
 **Layout.** Every node is a Yoga node. A div with no direction stacks

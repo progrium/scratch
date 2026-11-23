@@ -119,6 +119,22 @@ light
 |
 resync - -
 theme - - mode=light via=ctl
+# the look tokens: their defaults, a theme that sets one, writes, and values of the wrong kind
+radius 6
+radius-lg 8
+font-size 16
+font-family system
+spacing 4
+shadow on
+shadow off
+ok
+font-size 14
+font-family Iosevka Term
+spacing 5
+shadow off
+bad value
+bad value
+bad value
 # theme load with a missing file
 not found
 exit=0

@@ -23,6 +23,7 @@ pub const Source = struct {
         style: *const fn (*anyopaque, Node) []const core.StyleWord,
         lines: *const fn (*anyopaque, std.mem.Allocator, Node, []const u8) anyerror![]core.Core.Line,
         token: *const fn (*anyopaque, []const u8) ?u32,
+        tokenText: *const fn (*anyopaque, []const u8) ?[]const u8,
         emit: *const fn (*anyopaque, Node, []const u8, []const Attr) void,
         mirror: *const fn (*anyopaque, Node, []const u8, []const u8) void,
         key: *const fn (*anyopaque, []const u8, []const u8, Node) bool,
@@ -55,6 +56,10 @@ pub const Source = struct {
     }
     pub fn token(s: Source, name: []const u8) ?u32 {
         return s.vt.token(s.ptr, name);
+    }
+    /// A look token's value (`spacing`, `radius`), as text.
+    pub fn tokenText(s: Source, name: []const u8) ?[]const u8 {
+        return s.vt.tokenText(s.ptr, name);
     }
     pub fn emit(s: Source, n: Node, name: []const u8, attrs: []const Attr) void {
         s.vt.emit(s.ptr, n, name, attrs);
@@ -141,6 +146,11 @@ const core_vt: Source.VTable = .{
             return K(p).token(name);
         }
     }.f,
+    .tokenText = struct {
+        fn f(p: *anyopaque, name: []const u8) ?[]const u8 {
+            return K(p).tokenText(name);
+        }
+    }.f,
     .emit = struct {
         fn f(p: *anyopaque, n: Node, name: []const u8, attrs: []const Attr) void {
             K(p).emit(n, name, attrs) catch |e| std.log.warn("emit {s}: {t}", .{ name, e });
@@ -175,6 +185,8 @@ pub const Fake = struct {
     a: std.mem.Allocator,
     nodes: std.ArrayList(FNode) = .empty,
     tokens: std.StringHashMapUnmanaged(u32) = .empty,
+    /// Look tokens (`spacing 8`), as text.
+    texts: std.StringHashMapUnmanaged([]const u8) = .empty,
     /// What the UI sent, one line per call: `emit click inc`, `mirror n value x`.
     log: std.ArrayList(u8) = .empty,
 
@@ -341,6 +353,11 @@ pub const Fake = struct {
         .token = struct {
             fn f(p: *anyopaque, name: []const u8) ?u32 {
                 return F(p).tokens.get(name);
+            }
+        }.f,
+        .tokenText = struct {
+            fn f(p: *anyopaque, name: []const u8) ?[]const u8 {
+                return F(p).texts.get(name);
             }
         }.f,
         .emit = struct {

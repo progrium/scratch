@@ -121,5 +121,18 @@ echo '# empty goes back to the default look and the preferred mode'
 	val $t/name $t/mode
 	evs
 } <[3]$k/events
+echo '# the look tokens: their defaults, a theme that sets one, writes, and values of the wrong kind'
+grep '^(radius|radius-lg|font-size|font-family|spacing|shadow) ' $t/tokens
+wq $t/name 'Hybrid Light'
+grep '^shadow ' $t/tokens
+wq $t/name ''
+w $t/tokens 'font-size 14
+font-family Iosevka Term
+spacing 5
+shadow off'
+grep '^(font-size|font-family|spacing|shadow) ' $t/tokens
+w $t/tokens 'spacing -1'
+w $t/tokens 'shadow maybe'
+w $t/tokens 'font-size large'
 echo '# theme load with a missing file'
 w $k/ctl theme load /nonexistent/theme.json

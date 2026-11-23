@@ -321,9 +321,9 @@ pub const Snapshot = struct {
                 .theme_tokens => {
                     for (t.cat.theme_tokens) |tk|
                         w.print("{s} {s}\n", .{ tk.name, st.tokenValue(tk) }) catch |e| return out(e);
-                    for (treem.length_tokens) |l| w.print("{s} {s}\n", .{ l.name, st.token(l.name) orelse l.value }) catch |e| return out(e);
+                    for (types.style.value_tokens) |v| w.print("{s} {s}\n", .{ v.name, st.valueTokenValue(v) }) catch |e| return out(e);
                     if (t.cat.theme_tokens.len == 0) for (st.tokens.items) |tk| {
-                        if (state.inList(&.{ "radius", "radius-lg" }, tk.name.bytes)) continue;
+                        if (types.style.valueToken(tk.name.bytes) != null) continue;
                         w.print("{s} {s}\n", .{ tk.name.bytes, tk.val.bytes }) catch |e| return out(e);
                     };
                 },

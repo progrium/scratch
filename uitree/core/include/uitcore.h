@@ -1,6 +1,9 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
+ * Version 5: version 4 plus uit_token_text, for the look tokens that
+ * aren't colors (radius, radius-lg, font-size, font-family, spacing,
+ * shadow).
  * Version 4: version 3 plus uit_themes: the renderer registers the named
  * themes it draws.
  * Version 3: version 2 plus the transfer layer's uit_drag: a platform drop
@@ -45,7 +48,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 4u
+#define UIT_ABI_VERSION 5u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -353,6 +356,11 @@ int    uit_asset(UitCore *, UitStr name, UitStr *out);
 uint32_t uit_theme_dark(UitCore *);
 /* A token's color for the current mode, 0xRRGGBBAA. 1 found, 0 not. */
 int      uit_token(UitCore *, UitStr name, uint32_t *rgba);
+/* Any token's value for the current mode, as theme/tokens reads it: a
+ * color as #rrggbb[aa], or a look token's value: radius, radius-lg,
+ * font-size and spacing in points, font-family as text (`system` is the
+ * host's UI font), shadow as on or off. 1 found, 0 not. Since version 5. */
+int      uit_token_text(UitCore *, UitStr name, UitStr *out);
 
 /* ---------------------------------------------------------------------
  * Input from the UI; queued and applied in order at the next pump

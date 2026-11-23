@@ -161,6 +161,8 @@ pub const Ui = struct {
     win: []const u8 = "main",
     title: []const u8 = "",
     shown: bool = false,
+    /// `radius 0`: square corners everywhere, read each frame.
+    square: bool = false,
 
     /// The frame: boxes and their text live here until the next build.
     arena: std.heap.ArenaAllocator,
@@ -329,6 +331,20 @@ pub const Ui = struct {
     /// Builds the frame for the window, lays it out in w×h cells and
     /// draws it into g (which must be w wide and h+1 tall: row 0 is the
     /// title bar).
+    /// The look tokens a terminal can show: `spacing` (points per scale
+    /// step, so `p-4` is wider or narrower) and `radius` (0 squares every
+    /// rounded corner). Font size and family and shadows mean nothing in a
+    /// cell grid.
+    fn readLook(ui: *Ui) void {
+        const num = struct {
+            fn f(s: ?[]const u8) ?f32 {
+                return std.fmt.parseFloat(f32, std.mem.trim(u8, s orelse return null, " \n")) catch null;
+            }
+        }.f;
+        style.step = num(ui.src.tokenText("spacing")) orelse 4;
+        ui.square = if (num(ui.src.tokenText("radius"))) |r| r == 0 else false;
+    }
+
     pub fn frame(ui: *Ui, g: *Grid) !void {
         const before = ui.focused;
         try ui.frameOnce(g);
@@ -339,6 +355,7 @@ pub const Ui = struct {
 
     fn frameOnce(ui: *Ui, g: *Grid) !void {
         _ = ui.arena.reset(.retain_capacity);
+        ui.readLook();
         ui.root = null;
         ui.overlay_roots = .empty;
         ui.hits = .empty;
@@ -824,7 +841,7 @@ pub const Ui = struct {
         const r = b.rect;
         const x1 = r.x + r.w - 1;
         const y1 = r.y + r.h - 1;
-        const rounded = b.st.look.rounded;
+        const rounded = b.st.look.rounded and !ui.square;
         var x = r.x;
         while (x <= x1) : (x += 1) {
             if (br[0]) g.put(x, r.y, b.clip, "─", pen);
@@ -2042,6 +2059,33 @@ test "the counter lays out centered, and a click reaches the div" {
     _ = ui.onMouse(.{ .x = col, .y = 4, .kind = .press });
     _ = ui.onMouse(.{ .x = col, .y = 4, .kind = .release });
     try testing.expect(std.mem.startsWith(u8, f.log.items, "emit click inc "));
+}
+
+test "look tokens: spacing scales the Tailwind steps, radius 0 squares corners" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try source.Fake.init(arena.allocator());
+    try f.set(".", "style", "v-flex size-full");
+    _ = try f.new("div", "box", &.{}, "w-4 h-8 border-1 rounded-md");
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    defer style.step = 4;
+    var g: Grid = undefined;
+    // The default 4 points a step: w-4 is 16 points, 2 columns, drawn 3
+    // wide since a border needs a cell each side.
+    try render(f, 20, 8, &ui, &g);
+    var r = try rowText(&g, 1);
+    try testing.expect(std.mem.indexOf(u8, r, "╭─╮ ") != null);
+    testing.allocator.free(r);
+    g.deinit(testing.allocator);
+    // spacing 8: 32 points, 4 columns; radius 0: square.
+    try f.texts.put(f.a, "spacing", "8");
+    try f.texts.put(f.a, "radius", "0");
+    try render(f, 20, 8, &ui, &g);
+    defer g.deinit(testing.allocator);
+    r = try rowText(&g, 1);
+    defer testing.allocator.free(r);
+    try testing.expect(std.mem.indexOf(u8, r, "┌──┐ ") != null);
 }
 
 test "a form: field labels, an input that types, Enter submits the form" {

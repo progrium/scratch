@@ -116,7 +116,7 @@ pub const Catalog = struct {
                 Diag.set(diag, "themes: {s}: named twice", .{t.name});
                 return error.BadSyntax;
             };
-            if (c.theme_tokens.len > 0) for (t.tokens) |p| if (!c.isThemeToken(p.name)) {
+            if (c.theme_tokens.len > 0) for (t.tokens) |p| if (style.valueToken(p.name) == null and !c.isThemeToken(p.name)) {
                 Diag.set(diag, "themes: {s}: no token {s}", .{ t.name, p.name });
                 return error.BadSyntax;
             };

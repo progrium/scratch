@@ -72,12 +72,6 @@ pub const state_events = [_][]const u8{ "change", "select", "cursor", "resize", 
 /// keeps them unless the document names them.
 pub const state_props = [_][]const u8{ "value", "selection", "expanded", "layout", "open", "collapsed", "page", "query", "sizes", "checked" };
 
-/// Theme tokens that are lengths, not colors, with their defaults.
-pub const length_tokens = [_]struct { name: []const u8, value: []const u8 }{
-    .{ .name = "radius", .value = "6" },
-    .{ .name = "radius-lg", .value = "8" },
-};
-
 /// Window placement hints `pos=` takes besides `x,y`.
 pub const pos_hints = [_][]const u8{ "center", "top-left", "top-right", "bottom-left", "bottom-right", "tray" };
 
@@ -1638,11 +1632,6 @@ const Tx = struct {
         try tx.st.assets.append(tx.gpa(), .{ .name = nb, .val = val, .ver = tx.gen });
     }
 
-    fn isLengthToken(name: []const u8) bool {
-        for (length_tokens) |l| if (std.mem.eql(u8, l.name, name)) return true;
-        return false;
-    }
-
     fn writeTokens(tx: *Tx, data: []const u8) Error!void {
         const Set = struct { name: []const u8, value: []const u8 };
         var set: std.ArrayList(Set) = .empty;
@@ -1653,8 +1642,12 @@ const Tx = struct {
             const sp = std.mem.indexOfAny(u8, line, " \t") orelse return tx.fail(.bad_syntax, "tokens: {s}", .{line});
             const name = line[0..sp];
             const value = trimmed(line[sp..]);
-            if (isLengthToken(name)) {
-                if (!types.style.isNumber(value)) return tx.fail(.bad_value, "{s}: a number", .{name});
+            if (types.style.valueToken(name)) |vt| {
+                if (!types.style.checkValue(vt.kind, value)) return tx.fail(.bad_value, "{s}: {s}", .{ name, switch (vt.kind) {
+                    .length => "a number, 0 or more",
+                    .text => "one line of text",
+                    .flag => "on or off",
+                } });
             } else if (tx.cat().theme_tokens.len == 0 or tx.cat().isThemeToken(name)) {
                 if (!types.style.isColor(value)) return tx.fail(.bad_value, "{s}: a color", .{name});
             } else return tx.fail(.not_found, "token: {s}", .{name});

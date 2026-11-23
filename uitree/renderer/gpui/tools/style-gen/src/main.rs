@@ -9,8 +9,9 @@
 //!   type whose descriptor lists them.
 //! * `core/types/theme-tokens`: `name light dark` per line.
 //! * `core/types/themes`: every theme GPUI Kit ships, as a palette: the
-//!   tokens whose resolved value differs from the default for its mode
-//!   (the renderer-neutral form renderers register with `uit_themes`).
+//!   tokens whose resolved value differs from the default for its mode,
+//!   and the look tokens (`radius`, `shadow`, ...) it sets (the
+//!   renderer-neutral form renderers register with `uit_themes`).
 //! * `table.rs` and `theme.rs`: the renderer's dispatch table, each wire
 //!   name with the GPUI method it calls, plus theme defaults and sets.
 //!
@@ -143,7 +144,8 @@ const PALETTE_HEADER: &str = "\
 # Named themes, renderer-neutral: one `theme NAME` block per theme, then
 # its `mode` (light or dark), its `family` (the GPUI Kit theme set it
 # came from), and each theme token whose value differs from that mode's
-# default in theme-tokens. Renderers register this text with uit_themes.
+# default in theme-tokens, then the look tokens it sets (radius, radius-lg,
+# font-size, font-family, shadow). Renderers register this with uit_themes.
 ";
 
 /// One theme as a palette: the tokens that differ from its mode's default.
@@ -784,11 +786,33 @@ fn build_theme(src: &Sources) -> (String, Vec<(String, String, String)>, Vec<Pal
             t.apply_config(&std::rc::Rc::new(cfg.clone()));
             let got = values(&t.colors);
             let base = if dark_mode { &dark } else { &light };
-            let tokens = names
+            let mut tokens: Vec<(String, String)> = names
                 .iter()
                 .filter(|n| got[**n] != base[**n])
                 .map(|n| (dash(n), got[*n].clone()))
                 .collect();
+            // The look tokens, where the theme sets them apart from
+            // Theme::default() (the core's value_tokens defaults).
+            let d = Theme::default();
+            let num = |p: gpui::Pixels| {
+                let f = f32::from(p);
+                if f.fract() == 0. { format!("{}", f as i64) } else { format!("{f}") }
+            };
+            if t.radius != d.radius {
+                tokens.push(("radius".into(), num(t.radius)));
+            }
+            if t.radius_lg != d.radius_lg {
+                tokens.push(("radius-lg".into(), num(t.radius_lg)));
+            }
+            if t.font_size != d.font_size {
+                tokens.push(("font-size".into(), num(t.font_size)));
+            }
+            if cfg.font_family.is_some() && t.font_family != d.font_family {
+                tokens.push(("font-family".into(), t.font_family.to_string()));
+            }
+            if t.shadow != d.shadow {
+                tokens.push(("shadow".into(), if t.shadow { "on" } else { "off" }.into()));
+            }
             palettes.push(Palette {
                 name: cfg.name.to_string(),
                 mode: if dark_mode { "dark" } else { "light" },

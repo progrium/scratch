@@ -456,6 +456,12 @@ impl Core {
         (unsafe { sys::uit_token(self.raw, s(name), &mut v) } == 1).then_some(v)
     }
 
+    /// Any token's value as text (`radius` is `6`, `shadow` is `on`).
+    pub fn token_text(&self, name: &str) -> Option<String> {
+        let mut out = UitStr::EMPTY;
+        (unsafe { sys::uit_token_text(self.raw, s(name), &mut out) } == 1).then(|| text(out).into_owned())
+    }
+
     pub fn emit(&self, n: Node, name: &str, attrs: &[(&str, &str)]) -> Result<(), Error> {
         let a: Vec<sys::UitAttr> = attrs.iter().map(|(k, v)| sys::UitAttr { name: s(k), value: s(v) }).collect();
         self.check(unsafe { sys::uit_emit(self.raw, n, s(name), a.as_ptr(), a.len()) })

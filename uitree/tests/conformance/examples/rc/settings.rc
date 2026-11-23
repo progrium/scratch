@@ -8,7 +8,8 @@
 # Shows: sidebar navigation, pages kept alive and switched with order (so
 # their controls keep their values), switch, select, slider, radio-group,
 # number-input, a table of shortcuts read from the key bindings, a theme
-# picker filled from the host's theme/names, theme tokens changed live,
+# picker filled from the host's theme/names, look tokens (radius, font
+# size, spacing) changed live,
 # settings saved as name=value lines.
 . ./lib.rc
 
@@ -52,7 +53,9 @@ div root  : h-flex items-stretch size-full bg=background
           field radius  label='Corner radius'
             slider in  min=0  max=16  step=1  value=6  tag=set:radius
           field size  label='Font size'
-            slider in  min=11  max=18  step=1  value=14  tag=set:font-size
+            slider in  min=11  max=20  step=1  value=16  tag=set:font-size
+          field spacing  label=Spacing  description='Points per step of the spacing scale.'
+            slider in  min=2  max=8  step=1  value=4  tag=set:spacing
       alert note  variant=info  title='Changes apply right away'  text='Every style that names a theme token re-resolves on the next frame.'
     div account  : v-flex gap=24 max-w=560
       text h  text=Account  : text-xl font-semibold
@@ -116,7 +119,7 @@ fn apply {
 		echo $1 >$ui/theme/mode
 	case theme
 		echo $"* >$ui/theme/name
-	case radius
+	case radius font-size spacing
 		echo $n $1 >$ui/theme/tokens
 	}
 }

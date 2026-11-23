@@ -255,6 +255,13 @@ pub const Core = struct {
         try check(c.uit_themes(k.p, str(text)));
     }
 
+    /// Any token's value as text: a look token (`spacing` is `4`).
+    pub fn tokenText(k: Core, name: []const u8) ?[]const u8 {
+        var out: c.UitStr = .{};
+        if (c.uit_token_text(k.p, str(name), &out) != 1) return null;
+        return slice(out);
+    }
+
     pub fn token(k: Core, name: []const u8) ?u32 {
         var rgba: u32 = 0;
         if (c.uit_token(k.p, str(name), &rgba) != 1) return null;
