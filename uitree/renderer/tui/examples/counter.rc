@@ -1,0 +1,42 @@
+#!/bin/rc
+# counter.rc: uitreefs's counter in the draft 0.2 spelling, for the terminal host.
+#
+#	uitree-tui -t Counter rc counter.rc
+#
+# Differences from uitreefs/examples/rc/counter.rc: style words are dashed
+# (items-center, rounded-full, ...), and the event names the node by its
+# window-relative path (click inc inc win=main ...).
+. ./lib.rc
+m=$ui/win/main
+
+# One style for both round buttons.
+b='size=40 flex items-center justify-center rounded-full border-1 border-color=border text-xl cursor-pointer hover:bg=accent active:bg=muted'
+
+echo 'set . title=Counter size=300,180 pos=center : h-flex size-full items-center justify-center gap=20 bg=background
+new div dec tag=dec on=click : '$b'
+new text n text=0 : text-3xl font-semibold w=72 text-center
+new div inc tag=inc on=click : '$b'
+new text dec/t text=−
+new text inc/t text=+' >$m/ctl
+
+echo '=      inc
+-      dec
+0      reset' >$ui/keys
+echo 'item inc    label=Increment  key==
+item dec    label=Decrement  key=-
+sep
+item reset  label=Reset      key=0' >$ui/menu/Counter
+
+n=0
+cat $ui/events | while(ev=`{read}){
+	o=$n
+	switch($ev(1)^:^$ev(2)){
+	case click:inc action:inc
+		n=`{add $n 1}
+	case click:dec action:dec
+		n=`{add $n -1}
+	case action:reset
+		n=0
+	}
+	if(! ~ $n $o) echo 'set n text='$n >$m/ctl
+}

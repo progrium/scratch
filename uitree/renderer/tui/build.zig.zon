@@ -1,0 +1,21 @@
+.{
+    .name = .uitree_tui,
+    .version = "0.0.0",
+    .fingerprint = 0xff9ca2de8fea21b0, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // The core, linked as libuitcore.a through include/uitcore.h only.
+        .uitcore = .{ .path = "../../core" },
+        // Terminal I/O. The last commit before libvaxis moved to Zig 0.17.
+        .vaxis = .{
+            .url = "git+https://github.com/rockorager/libvaxis#5b0c724e6434de3a259e790e94954d110688ce5f",
+            .hash = "vaxis-0.6.0-BWNV_FcJDQAY-hi2JHq9u7MWVRxQOg0S7V0YBnvfHtmf",
+        },
+        // Flexbox layout (C API over C++), compiled from source.
+        .yoga = .{
+            .url = "git+https://github.com/facebook/yoga#042f5013152eb81c1552dec945b88f7b95ca350f",
+            .hash = "N-V-__8AAOYl0gAU76B1VRPFD9AWvy2VkOef2jN0B3sISTeO",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "types", "examples" },
+}

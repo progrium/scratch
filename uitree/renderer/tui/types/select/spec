@@ -1,0 +1,12 @@
+type    select  tier=component  profile=form  since=1.0
+prop    items        data  file
+prop    value        word
+prop    placeholder  text  file
+prop    searchable   bool
+prop    disabled     bool
+prop    controlled   bool
+word    searchable disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none
+file    items  format=items

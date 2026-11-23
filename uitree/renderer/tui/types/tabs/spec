@@ -1,0 +1,6 @@
+type    tabs  tier=component  profile=nav  since=1.0
+prop    value  child
+word    underline pill outline segmented folder  kind=variant
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   tab

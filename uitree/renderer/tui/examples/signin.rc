@@ -1,0 +1,49 @@
+#!/bin/rc
+# signin.rc: a sign-in form with validation errors on the fields, then a
+# welcome panel.
+#
+#	uitree-tui -t 'Sign in' rc signin.rc
+#
+# uitreefs/examples/rc/signin.rc in the draft 0.2 spelling. Differences:
+# the subtree is built with `new` lines (the spike core has no `tree`
+# file), and the welcome is a panel that replaces the form, not a dialog
+# in over/ (the spike core has no overlays; W3).
+. ./lib.rc
+m=$ui/win/main
+
+echo 'set . title=''Sign in'' size=400,440 pos=center resizable=off : v-flex size-full p=24 gap=16 bg=background
+new text title text=''Sign in'' : text-xl font-semibold
+new form f tag=login
+new field f/user required label=Email
+new input f/user/in placeholder=you@example.com
+new field f/pass required label=Password
+new input f/pass/in secret
+new field f/go
+new button f/go/submit label=''Sign in'' primary : w-full
+new link help label=''Forgot password?'' href=https://example.com/reset' >$m/ctl
+echo f/user/in >$m/focus
+
+cat $ui/events | while(ev=`{read}){
+	switch($ev(1)^:^$ev(2)){
+	case click:login submit:login
+		u=`{cat $m/f/user/in/value}
+		p=`{cat $m/f/pass/in/value}
+		ue=''
+		pe=''
+		if(! ~ $"u *@*.*) ue='Enter an email address, like you@example.com'
+		if(~ $#p 0) pe='Enter your password'
+		echo 'set f/user error='''$ue'''
+set f/pass error='''$pe'''' >$m/ctl
+		if(~ $"ue^$"pe ''){
+			echo 'delete f
+delete help
+new div hi : v-flex gap=16 p=16 border-1 rounded-lg border-color=border
+new text hi/t text=Welcome : font-semibold
+new text hi/d text=''Signed in as '$"u''' : text-color=muted-foreground
+new div hi/footer : h-flex justify-end
+new button hi/footer/ok label=Continue tag=ok primary' >$m/ctl
+		}
+	case click:ok
+		echo quit >$ui/ctl
+	}
+}

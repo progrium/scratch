@@ -1,0 +1,4 @@
+type    separator  tier=component  profile=layout  since=1.0
+prop    dir    enum=row,col  default=row
+prop    label  text  file
+child   none
