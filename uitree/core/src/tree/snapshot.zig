@@ -136,12 +136,14 @@ pub const Snapshot = struct {
 
     pub fn kindOf(s: *const Snapshot, loc: Loc) Kind {
         return switch (loc) {
-            .dir, .drag, .type_dir, .node => .dir,
+            .dir, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .node => .dir,
+            .drag_types, .drag_item_file => .readonly,
+            .clipdata => .bytes,
             .app => |f| switch (f) {
                 .ctl => .ctl,
                 .events => .events,
                 .trace => .trace,
-                .version, .style_words => .readonly,
+                .version, .style_words, .clip_types => .readonly,
                 .keys, .theme_tokens => .data,
                 .clip => .bytes,
                 else => .text,
@@ -183,14 +185,17 @@ pub const Snapshot = struct {
             },
             .app => |f| switch (f) {
                 .keys => st.keys_ver,
-                .clip => st.clip_ver,
+                .clip, .clip_types => st.clip_ver,
                 .theme_tokens => st.tokens_ver,
                 .theme_name, .theme_pref, .theme_mode => st.theme_ver,
                 .ctl, .events, .trace, .version, .style_words => 0,
             },
             .menu => |m| if (std.mem.eql(u8, m, "bar")) st.bar_ver else if (st.menu(m)) |x| x.ver else 0,
             .asset => |m| if (st.asset(m)) |x| x.ver else 0,
-            .drag, .drag_data => |n| if (st.drag(n)) |x| x.ver else 0,
+            .drag, .drag_types, .drag_data_dir, .drag_items => |n| if (st.drag(n)) |x| x.ver else 0,
+            .drag_data => |x| if (st.drag(x.n)) |dg| (if (dg.offer.rep(x.ty)) |r| r.ver else dg.ver) else 0,
+            .drag_item, .drag_item_file => |x| if (st.drag(x.n)) |dg| dg.ver else 0,
+            .clipdata => st.clip_ver,
             else => 0,
         };
     }
@@ -204,7 +209,7 @@ pub const Snapshot = struct {
         switch (loc) {
             .dir => |d| switch (d) {
                 .root => {
-                    try names.appendSlice(arena, &.{ "version", "ctl", "events", "trace", "keys", "clip", "menu", "theme", "asset", "types", "style", "win" });
+                    try names.appendSlice(arena, &.{ "version", "ctl", "events", "trace", "keys", "clip", "clipdata", "file", "menu", "theme", "asset", "types", "style", "win" });
                     if (st.drags.items.len > 0) try names.append(arena, "drag");
                 },
                 .menu => {
@@ -217,8 +222,22 @@ pub const Snapshot = struct {
                 .style => try names.append(arena, "words"),
                 .win => for (st.wins.items) |w| try names.append(arena, w.nameStr()),
                 .drag => for (st.drags.items) |dg| try names.append(arena, try std.fmt.allocPrint(arena, "{d}", .{dg.n})),
+                .clipdata => {
+                    try names.append(arena, "types");
+                    if (st.clipdata) |o| for (o.reps.items) |r| {
+                        if (!std.mem.eql(u8, r.ty.bytes, "types")) try names.append(arena, r.ty.bytes);
+                    };
+                },
+                // Served by the 9P side from the tree's file handles.
+                .file => {},
             },
-            .drag => try names.append(arena, "data"),
+            .drag => |n| {
+                try names.appendSlice(arena, &.{ "types", "data" });
+                if (st.drag(n).?.offer.items.items.len > 0) try names.append(arena, "item");
+            },
+            .drag_data_dir => |n| for (st.drag(n).?.offer.reps.items) |r| try names.append(arena, r.ty.bytes),
+            .drag_items => |n| for (0..st.drag(n).?.offer.items.items.len) |i| try names.append(arena, try std.fmt.allocPrint(arena, "{d}", .{i})),
+            .drag_item => try names.append(arena, "file"),
             .type_dir => try names.appendSlice(arena, &.{ "spec", "version" }),
             .node => |h| {
                 const n = st.node(h).?;
@@ -268,10 +287,25 @@ pub const Snapshot = struct {
             }
         }.f;
         switch (loc) {
-            .dir, .drag, .type_dir, .node => return error.BadValue,
+            .dir, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .node => return error.BadValue,
+            .drag_types => |n| {
+                (st.drag(n) orelse return error.NotFound).offer.writeTypes(w) catch |e| return out(e);
+            },
+            .drag_data => |x| {
+                const dg = st.drag(x.n) orelse return error.NotFound;
+                return (dg.offer.rep(x.ty) orelse return error.NotFound).val.bytes;
+            },
+            .drag_item_file => |x| {
+                const dg = st.drag(x.n) orelse return error.NotFound;
+                return line(arena, dg.offer.items.items[x.i].bytes);
+            },
+            .clipdata => |ty| {
+                const o = st.clipdata orelse return error.NotFound;
+                return (o.rep(ty) orelse return error.NotFound).val.bytes;
+            },
             .app => |f| switch (f) {
                 .version => {
-                    w.print("uitree 1.0\nhost {s}\nlayer core 1.0\nlayer components 1.0\n", .{t.cfg.host}) catch |e| return out(e);
+                    w.print("uitree 1.0\nhost {s}\nlayer core 1.0\nlayer components 1.0\nlayer transfer 1.0\n", .{t.cfg.host}) catch |e| return out(e);
                     for (types.profiles) |pr| if (t.cat.claims(pr.name)) w.print("profile {s}\n", .{pr.name}) catch |e| return out(e);
                     w.print("cmdkey {s}\nfeature batch\n", .{t.cfg.cmdkey}) catch |e| return out(e);
                 },
@@ -279,6 +313,10 @@ pub const Snapshot = struct {
                 .events, .trace => return "",
                 .keys => return line(arena, Blob.str(st.keys)),
                 .clip => return Blob.str(st.clip),
+                .clip_types => {
+                    if (st.clipdata) |o| o.writeTypes(w) catch |e| return out(e);
+                    w.print("gen {d}\n", .{st.clip_gen}) catch |e| return out(e);
+                },
                 .theme_tokens => {
                     const dark = st.dark();
                     for (t.cat.theme_tokens) |tk| {
@@ -302,7 +340,6 @@ pub const Snapshot = struct {
                 return line(arena, x.val.bytes);
             },
             .asset => |m| return (st.asset(m) orelse return error.NotFound).val.bytes,
-            .drag_data => |n| return (st.drag(n) orelse return error.NotFound).val.bytes,
             .type_file => |f| {
                 if (std.mem.eql(u8, f.name, "spec")) return f.ty.spec;
                 var buf: [128]u8 = undefined;

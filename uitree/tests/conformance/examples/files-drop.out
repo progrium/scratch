@@ -1,0 +1,21 @@
+# the listing takes files
+file
+# copied in
+drop
+dropped.txt
+'two words.md'
+report.csv
+sub
+from the desktop
+# hi
+name,qty
+bolts,40
+nuts,12
+a note
+# the drag is gone and every handle released
+no
+# the listing shows them
+drop
+dropped.txt
+'two words.md'
+-- stderr

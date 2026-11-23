@@ -4,7 +4,7 @@ file text
 |
 # a drop is a request; the offer is in drag/N
 resync - -
-drop pick notes drag=7 pt=40,212 types=text,uri win=main
+drop pick notes drag=7 pt=40,212 types=text,uri via=user win=main
 text
 uri
 hello world
@@ -24,7 +24,6 @@ text
 resync - -
 dragstart - card drag=10 win=main
 note-42
-resync - -
 dragend - card drag=10 op=move result=dropped win=main
 # copy lines in one write make one clipboard of several types
 ok

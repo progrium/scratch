@@ -1,6 +1,9 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
+ * Version 3: version 2 plus the transfer layer's uit_drag: a platform drop
+ * passes file=HOST-PATH and TYPE=BYTES attrs that the core turns into the
+ * offer and file handles, START and END send dragstart and dragend.
  * Version 2: version 1 (frozen by the spike, W0) plus uit_asset. A change after the freeze bumps
  * UIT_ABI_VERSION and is announced to W3 (tree), W6 (GPUI) and W7 (TUI).
  * Adding a UIT_CMD_* tag, a UIT_ARG_* kind or a UitErr code is not a
@@ -40,7 +43,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 2u
+#define UIT_ABI_VERSION 3u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -382,7 +385,23 @@ typedef struct {
     size_t n_attrs;
 } UitDragMsg;
 
-/* Transfer layer. START returns the drag number in *drag. */
+/* Transfer layer (transfer.md).
+ *
+ * START: client node `node` (`on` has `drag`) starts a drag; the core
+ *   makes drag/N offering its `drag-types`, sends `dragstart`, and returns
+ *   N in *drag.
+ * DROP: a drag is dropped on `node` at x,y. With drag 0 it comes from the
+ *   platform and attrs are its offer: each `file=HOST-PATH` becomes a
+ *   read-only file handle ($ui/file/ID) and an item of type `file`; any
+ *   other `TYPE=BYTES` (text=, uri=, html=) one representation. The client
+ *   sees bytes and handle names, never host paths. With drag N it is
+ *   START's drag. The core sends the `drop` request (drag=N types=...
+ *   pt=X,Y) and returns its seq in *drag (0 if the default applied). The
+ *   answer comes as UIT_CMD_ANSWER: accept, or refuse (the default), which
+ *   releases the handles the drop made.
+ * END: START's drag ended, result=dropped|cancelled in attrs; the core
+ *   sends `dragend` (with the target's op=) and drops drag/N.
+ * OVER is the renderer's own business (the drop-over style). */
 int uit_drag(UitCore *, const UitDragMsg *, uint64_t *drag);
 
 #ifdef __cplusplus

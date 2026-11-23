@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 2;
+pub const UIT_ABI_VERSION: u32 = 3;
 
 #[repr(C)]
 pub struct UitCore {

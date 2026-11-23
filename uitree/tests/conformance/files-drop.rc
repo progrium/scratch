@@ -1,0 +1,54 @@
+#!/bin/rc
+# files-drop.rc: drive examples/rc/files.rc through a drop from the
+# desktop, as run-examples does after the tree-building phase: two files
+# held in memory and one host directory (fixtures/drop) dropped on the
+# listing. The example copies each handle's bytes into its directory and
+# releases the handle. Prints what it copied.
+#
+#	uitree-headless rc files-drop.rc
+. ./lib.rc
+
+d=/tmp/files-drop
+rm -rf $d
+mkdir -p $d
+cp examples/rc/files.rc examples/rc/lib.rc $d/
+@{ cd $d; rc files.rc >/tmp/ex.out >[2]/tmp/ex.err } &
+
+# Wait for the listing, then for the example's event loop to subscribe.
+L=$k/win/main/split/right/v/list
+i=0
+while(! test -e $L/rows && ! ~ $i 30) {
+	sleep 0.5
+	i=`{echo $i | awk '{ print $1 + 1 }'}
+}
+sleep 1
+echo '# the listing takes files'
+cat $L/drop
+
+inj drag 'n=40' 'type=file' 'name=dropped.txt' 'data=''from the desktop'''
+inj drag 'n=40' 'type=file' 'name=''two words.md''' 'data=''# hi'''
+inj drag 'n=40' 'type=file' 'path=fixtures/drop'
+inj event drop 'win=main' 'node=split/right/v/list' 'drag=40' 'types=file' 'pt=10,10'
+
+i=0
+while(! test -e $d/drop/sub/note.txt && ! ~ $i 30) {
+	sleep 0.5
+	i=`{echo $i | awk '{ print $1 + 1 }'}
+}
+sleep 0.5
+echo '# copied in'
+ls -p $d | grep -v '^(files|lib)\.rc$'
+ls -p $d/drop
+cat $d/dropped.txt
+echo
+cat $d/'two words.md'
+echo
+cat $d/drop/report.csv $d/drop/sub/note.txt
+echo '# the drag is gone and every handle released'
+exists $k/drag/40
+ls $k/file
+echo '# the listing shows them'
+awk -F'	' '{ print $1 }' $L/rows | grep -v '^(files|lib)\.rc$'
+echo '-- stderr'
+cat /tmp/ex.err
+echo quit >$k/ctl

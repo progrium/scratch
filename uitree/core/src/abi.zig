@@ -25,7 +25,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 2;
+pub const abi_version: u32 = 3;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -232,7 +232,6 @@ pub const Core = struct {
     /// last pump.
     pinned: ?*treem.state.State = null,
     styles: std.AutoHashMapUnmanaged(treem.Handle, []const UitStyleWord) = .empty,
-    next_drag: u64 = 1,
     /// Wakes the renderer while a batch or a request has a deadline.
     timer: ?std.Thread = null,
     timers_due: std.atomic.Value(bool) = .init(false),
@@ -933,38 +932,86 @@ pub const UIT_DRAG_OVER: u32 = 1;
 pub const UIT_DRAG_DROP: u32 = 2;
 pub const UIT_DRAG_END: u32 = 3;
 
-/// Transfer layer. START makes `drag/N` (its data from a `data=` attr);
-/// DROP sends the `drop` request to the node, answered `accept` or
-/// `refuse` (default) by UIT_CMD_ANSWER; END drops `drag/N`. OVER is the
-/// renderer's own business (`drop-over` style).
+/// Transfer layer (transfer.md).
+///
+/// START: client node `node` (`on` has `drag`) starts a drag. The core
+/// makes `drag/N` offering the node's `drag-types`, sends `dragstart`, and
+/// returns N in `*drag`.
+///
+/// DROP: a drag is dropped on `node` at `x,y`. With `drag` 0 it comes from
+/// the platform, and `attrs` are its offer: each `file=HOST-PATH` becomes a
+/// read-only file handle (`$ui/file/ID`) and an item of type `file`, and
+/// any other `TYPE=BYTES` (`text=`, `uri=`, `html=`) one representation.
+/// Host paths never reach the client. With `drag` N it is START's drag.
+/// The core sends the `drop` request (`drag=N types=... pt=X,Y`) and
+/// returns its seq in `*drag` (0 when the default applied at once); the
+/// answer, `accept` or `refuse` (the default), comes back as
+/// UIT_CMD_ANSWER. A refused drop releases the handles it made.
+///
+/// END: START's drag ended, `result=dropped|cancelled`. The core sends
+/// `dragend` (with the `op=` its target accepted) and drops `drag/N`.
+///
+/// OVER is the renderer's own business (`drop-over` style).
 export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
     if (input(c)) |r| return r;
     const m = msg orelse return UIT_EINVAL;
     const as = attrsOf(c.gpa, m.attrs, m.n_attrs) catch return UIT_ENOMEM;
     defer c.gpa.free(as);
+    var arena: std.heap.ArenaAllocator = .init(c.gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const t = c.tree;
     switch (m.kind) {
         UIT_DRAG_START => {
-            const n = c.next_drag;
-            c.next_drag += 1;
-            var data: []const u8 = "";
-            for (as) |x| if (std.mem.eql(u8, x.key, "data")) {
-                data = x.value;
-            };
-            c.tree.dragData(n, data) catch |e| return c.fail(e);
+            const n = t.dragStart(0, m.node) catch |e| return c.fail(e);
+            const nb = std.fmt.allocPrint(a, "{d}", .{n}) catch return UIT_ENOMEM;
+            _ = t.emit(.{ .name = "dragstart", .node = m.node, .attrs = &.{.{ .key = "drag", .value = nb }} }) catch |e| return c.fail(e);
             if (drag) |d| d.* = n;
         },
         UIT_DRAG_DROP => {
-            var all: std.ArrayList(proto.ctl.Attr) = .empty;
-            defer all.deinit(c.gpa);
-            var nb: [24]u8 = undefined;
-            var pb: [48]u8 = undefined;
-            all.append(c.gpa, .{ .key = "drag", .value = std.fmt.bufPrint(&nb, "{d}", .{m.drag}) catch "" }) catch return UIT_ENOMEM;
-            all.append(c.gpa, .{ .key = "pt", .value = std.fmt.bufPrint(&pb, "{d},{d}", .{ @as(i64, @intFromFloat(@round(m.x))), @as(i64, @intFromFloat(@round(m.y))) }) catch "" }) catch return UIT_ENOMEM;
-            all.appendSlice(c.gpa, as) catch return UIT_ENOMEM;
-            const seq = c.tree.request(.{ .name = "drop", .node = m.node, .attrs = all.items }, "refuse") catch |e| return c.fail(e);
+            var n = m.drag;
+            if (n == 0) {
+                for (as) |x| {
+                    if (std.mem.eql(u8, x.key, "file")) {
+                        // A path the host can't read is left out of the offer.
+                        const id = t.files.addHost(x.value) catch |e| switch (e) {
+                            error.OutOfMemory => return UIT_ENOMEM,
+                            else => continue,
+                        };
+                        n = t.dragFile(n, id) catch |e| return c.fail(e);
+                    } else if (treem.path.typeId(x.key)) {
+                        n = t.dragData(n, x.key, x.value) catch |e| return c.fail(e);
+                    }
+                }
+                // Nothing the client could read: no drop.
+                if (n == 0) return UIT_EINVAL;
+            }
+            const all = [_]proto.ctl.Attr{
+                .{ .key = "drag", .value = std.fmt.allocPrint(a, "{d}", .{n}) catch return UIT_ENOMEM },
+                .{ .key = "types", .value = t.dragTypes(a, n) catch return UIT_ENOMEM },
+                .{ .key = "pt", .value = std.fmt.allocPrint(a, "{d},{d}", .{ @as(i64, @intFromFloat(@round(m.x))), @as(i64, @intFromFloat(@round(m.y))) }) catch return UIT_ENOMEM },
+            };
+            const seq = t.request(.{ .name = "drop", .node = m.node, .attrs = &all }, "refuse") catch |e| return c.fail(e);
             if (drag) |d| d.* = seq;
         },
-        UIT_DRAG_END => c.tree.dragDone(m.drag) catch |e| return c.fail(e),
+        UIT_DRAG_END => {
+            var result: []const u8 = "cancelled";
+            for (as) |x| if (std.mem.eql(u8, x.key, "result")) {
+                result = x.value;
+            };
+            const op = t.takeDragOp(m.drag);
+            var ev: [3]proto.ctl.Attr = undefined;
+            ev[0] = .{ .key = "drag", .value = std.fmt.allocPrint(a, "{d}", .{m.drag}) catch return UIT_ENOMEM };
+            ev[1] = .{ .key = "result", .value = result };
+            var ne: usize = 2;
+            if (op) |o| if (std.mem.eql(u8, result, "dropped")) {
+                ev[2] = .{ .key = "op", .value = o };
+                ne = 3;
+            };
+            if (m.node != 0 and t.st.node(m.node) != null)
+                _ = t.emit(.{ .name = "dragend", .node = m.node, .attrs = ev[0..ne] }) catch |e| return c.fail(e);
+            t.dragDone(m.drag) catch |e| return c.fail(e);
+        },
         UIT_DRAG_OVER => {},
         else => return UIT_EINVAL,
     }

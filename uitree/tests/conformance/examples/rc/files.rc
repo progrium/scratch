@@ -1,0 +1,187 @@
+#!/bin/rc
+# files.rc: a file browser for the current directory. Folders on the left,
+# a sortable listing on the right, a breadcrumb, previews in a sheet, a
+# context menu with Delete, and drag-and-drop from the desktop to copy in.
+#
+#	uitree -t Files rc files.rc
+#
+# Shows: tree and table fed from walk(1) and ls(1) through awk, resizable
+# panels, breadcrumb, a context-menu bound to the table, alert-dialog,
+# a sheet holding an editor, markdown or image, img data written as bytes
+# (guest paths are not host paths), and drops (transfer.md): files dropped
+# from the desktop arrive as file handles, $ui/file/ID, whose bytes this
+# copies in. A host path never reaches the app.
+# Needs: profiles data, nav, overlay, edit; drop needs layer transfer
+. ./lib.rc
+
+m=$ui/win/main
+echo 'set . title=Files size=980,620 min=640,400 pos=center' >$m/ctl
+
+cat >$m/tree <<'END'
+div root  : size-full bg=background
+  resizable split  dir=row  : size-full
+    panel left  size=240  min=160
+      tree dirs  selectable  : size-full p=4
+    panel right
+      div v  : v-flex size-full
+        div bar  : h-flex items-center gap=4 px=12 py=8 border-b-1 border-color=border
+          button up  icon=arrow-up  tag=up  ghost sm
+          breadcrumb crumbs  : flex-1
+          button mk  icon=folder-plus  tag=mkdir  ghost sm
+        table list  stripe  sortable  sorted  resizable  selectable=row  drop=file  : flex-1 drop-over:bg=accent
+        status-bar st
+          text left  : text-xs text-color=muted-foreground
+END
+T=$m/split/right/v/list
+cat >$T/columns <<'END'
+name Name     320 sort
+kind Kind     90  sort
+size Size     90  sort align=right
+mod  Modified 160 sort
+END
+
+o=$m/over
+echo 'new context-menu menu anchor=split/right/v/list
+new alert-dialog del title=Delete confirm=Delete cancel=Keep variant=danger tag=del
+new sheet preview side=right size=560' >$o/ctl
+echo 'item open    label=Open
+item delete  label=Delete…  key=cmd-backspace
+sep
+item reveal  label=''Copy path''' >$o/menu/menu
+echo 'cmd-backspace  delete
+cmd-up         up
+cmd-shift-n    mkdir' >$ui/keys
+
+dir=.
+sel=()
+
+fn dirs {
+	{
+		echo '.	-	'^`{basename `{pwd}}^'	icon=folder'
+		walk -d -n 1,4 . | sed 's,^\./,,' | grep -v '^\.$' |
+			awk 'BEGIN { OFS = "\t" } { p = $0; if(!sub(/\/[^\/]*$/, "", p)) p = "."; n = split($0, a, "/"); print $0, p, a[n], "icon=folder" }'
+	} >$m/split/left/dirs/items
+}
+fn list {
+	ls -lp $dir | awk 'BEGIN { OFS = "\t" } {
+		n = $10; for(i = 11; i <= NF; i++) n = n " " $i
+		k = ($1 ~ /^d/) ? "folder" : "file"
+		print n, n, k, (k == "folder" ? "" : $6), $7 " " $8 " " $9
+	}' >$T/rows
+	echo `{ls $dir | wc -l} items >$m/split/right/v/st/left/text
+	# breadcrumb: one item per path prefix
+	echo $dir | awk -v 'top='^`{basename `{pwd}} 'BEGIN { OFS = "\t" } {
+		print ".", top
+		if($0 == ".") exit
+		n = split($0, a, "/"); p = ""
+		for(i = 1; i <= n; i++) { p = (i == 1) ? a[1] : p "/" a[i]; print p, a[i] }
+	}' >$m/split/right/v/bar/crumbs/items
+}
+fn go {
+	dir=$1
+	sel=()
+	list
+}
+fn preview {
+	f=$dir/$1
+	P=$o/preview
+	switch($1){
+	case *.md
+		echo 'sheet preview side=right size=560
+  markdown m  selectable  : size-full p=16' >$P/tree
+		cat $f >$P/m/text
+	case *.png *.jpg *.jpeg *.gif
+		echo 'sheet preview side=right size=560
+  img i  : w-full' >$P/tree
+		cat $f >$P/i/data
+	case *
+		echo 'sheet preview side=right size=560
+  editor e  readonly  line-numbers  : size-full' >$P/tree
+		switch($1){
+		case *.rs; echo rust >$P/e/language
+		case *.go; echo go >$P/e/language
+		case *.c *.h; echo c >$P/e/language
+		case *.rc *.sh; echo bash >$P/e/language
+		case *.py; echo python >$P/e/language
+		}
+		cat $f >$P/e/value
+	}
+	echo $1 >$P/title
+	echo open >$P/ctl
+}
+# copydir from to: copy a dropped directory's tree. Not dircp: a handle
+# serves its directories read-only, and tar would give the copies that
+# mode before filling them.
+fn copydir {
+	ifs='
+' {
+		for(e in `{cd $1 && walk -d .}) mkdir -p $2/$e
+		for(e in `{cd $1 && walk -f .}) cp $1/$e $2/$e
+	}
+}
+fn open {
+	if(test -d $dir/$1) {
+		if(~ $dir .) go $1
+		if not go $dir/$1
+	}
+	if not preview $1
+}
+
+dirs
+go .
+n=0
+
+# Clicks, keys and menu items share keys; selections and opens are told
+# apart by the node's path, the event's third word.
+cat $ui/events | while(ev=`{read}){
+	switch($ev(1)^:^$ev(2)^:^$ev(3)){
+	case select:*:split/left/dirs
+		go `{attr value}
+	case select:*:split/right/v/list
+		sel=`{attr row}
+	case open:*
+		open `{attr row}
+	case click:*:split/right/v/bar/crumbs
+		go `{attr id}
+	case *:up:*
+		if(! ~ $dir .) go `{echo $dir | sed 's,/[^/]*$,,; s,^[^/]*$,.,'}
+	case *:mkdir:*
+		n=`{add $n 1}
+		mkdir $dir/new-folder-$n && dirs && list
+	case action:open:*
+		if(! ~ $#sel 0) open $sel
+	case action:delete:*
+		if(! ~ $#sel 0){
+			echo 'Delete '^$"sel^'?' >$o/del/title
+			echo 'It will be removed from '^$dir^'. This cannot be undone.' >$o/del/description
+			echo open >$o/del/ctl
+		}
+	case action:reveal:*
+		if(! ~ $#sel 0) echo `{pwd}^/^$dir^/^$"sel >$ui/clip
+	case confirm:del:*
+		rm -r $dir/$"sel; sel=(); dirs; list
+	case drop:*
+		# A drop from the desktop offers type file: data/file lists the
+		# names, and item/N/file names item N's handle, file/ID. Read the
+		# handle names, accept (the offer goes, the handles stay), then
+		# copy each handle's bytes in under its name and release it.
+		d=$ui/drag/`{attr drag}
+		s=`{attr seq}
+		hs=()
+		if(test -d $d/item) hs=`{cat $d/item/*/file}
+		if(~ $#hs 0) echo refuse 'seq='^$s >$T/ctl
+		if not {
+			echo accept 'seq='^$s >$T/ctl
+			for(h in $hs) {
+				f=$ui/$h
+				ifs='
+' { name=`{cat $f/name} }
+				if(test -d $f/dir) copydir $f/dir $dir/$name
+				if not cp $f/data $dir/$name
+				echo release >$f/ctl
+			}
+			dirs
+			list
+		}
+	}
+}

@@ -65,6 +65,7 @@ PR into `uitree` says which scripts it makes pass.
 | 26-lifecycle | core § Commands (`quit`), the host's exit status | |
 | 27-descriptors | components § The descriptor, § Profiles: the host accepts and refuses exactly what its descriptors say | |
 | 28-feedback | components § Profiles (feedback) | profile feedback |
+| 29-file-drops | transfer.md § Host files (file drops as handles: `item/N/file`, `$ui/file/ID/`, release) | layer transfer |
 
 01 to 26 keep uitreefs's numbers and topics. Three changed shape:
 13 was editor, markdown and dock, which are uitreefs extras the spec
@@ -148,12 +149,14 @@ fails the write with the usual phrases.
 
 | Line | Does |
 | --- | --- |
-| `event NAME [win=W] [node=PATH] [key=K] [attr=value ...]` | Send event NAME as if the user caused it. `node=` is window-relative (default `.` with `win=`, `-` without). The host fills the key from the tag (inherited from the nearest tagged ancestor) unless `key=` gives it, and fills `seq=`. It adds `via=user` to state events unless the line gives `via=`. If NAME is a request the client asked for (core.md § Requests, transfer.md), it is sent and waits for an answer like a real one, and its default applies on the same rules. A name the spec doesn't list (the suite uses `sync`) is an action event |
+| `event NAME [win=W] [node=PATH] [key=K] [attr=value ...]` | Send event NAME as if the user caused it. `dragstart` with `drag=N` first makes drag N from the node's `drag-types`, so the client can write its offer; `dragend` with `drag=N` drops it after. `node=` is window-relative (default `.` with `win=`, `-` without). The host fills the key from the tag (inherited from the nearest tagged ancestor) unless `key=` gives it, and fills `seq=`. It adds `via=user` to state events unless the line gives `via=`. If NAME is a request the client asked for (core.md § Requests, transfer.md), it is sent and waits for an answer like a real one, and its default applies on the same rules. A name the spec doesn't list (the suite uses `sync`) is an action event |
 | `mirror [win=W] [node=PATH] file=NAME value=TEXT` | The component's own state changed this file, as when the user types: no event, no trace. With no `node=`, `file` is a window file (`focus`) |
 | `bounds win=W node=PATH value='x y w h'` | The last layout put the node there |
 | `frame [win=W]` | A frame was drawn, for one window or all. Until one is, a node's `type` stays writable |
 | `tick SECONDS` | Advance the fake clock and run what falls due: batch timeouts, request defaults |
 | `drag n=N type=TYPE data=TEXT` | Add representation TYPE, holding TEXT, to the offer at `$ui/drag/N/`, making it if needed, as a platform drag would before a `drop` names `drag=N` |
+| `drag n=N type=file name=NAME data=BYTES` | Add a file item to drag N's offer, as a platform file drop would: a read-only file handle under `$ui/file/` holding BYTES (in memory), a `file name=NAME size=N` line in `data/file`, and its handle's name in `item/I/file` |
+| `drag n=N type=file path=PATH` | The same for a host file or directory, PATH relative to the directory the host runs in (the suite uses `fixtures/drop`): the handle serves the host file's bytes, or for a directory its tree under `dir/` |
 | `key win=W stroke=KEYS` | The user pressed KEYS in window W: the host resolves `keys` with the focused node's contexts and sends `action ID PATH via=key win=W`, or nothing if no binding applies |
 | `menu item=ID` | The user chose the menu item with that ID: `action ID - via=menu`, or the item's role |
 | `appearance mode=light\|dark` | The operating system's appearance changed |
