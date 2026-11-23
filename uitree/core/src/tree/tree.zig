@@ -123,6 +123,8 @@ pub const CmdTag = enum(u32) {
     answer = 12,
     redraw = 13,
     theme_load = 14,
+    /// An `asset/NAME` was written or removed: re-read it with uit_asset.
+    assets = 15,
 };
 
 /// A command for the renderer (uitcore.h's UitHostCmd). Which fields are
@@ -1361,6 +1363,7 @@ const Tx = struct {
                     if (std.mem.eql(u8, m.name.bytes, name)) break i;
                 } else return tx.fail(.not_found, "{s}", .{p});
                 const m = tx.st.assets.orderedRemove(i);
+                try tx.cmd(.{ .tag = .assets, .name = try tx.a.dupe(u8, name) });
                 m.name.unref(tx.gpa());
                 m.val.unref(tx.gpa());
                 return tx.log("remove path={s}", .{p});
@@ -1451,6 +1454,7 @@ const Tx = struct {
         if (!state.validName(name)) return tx.fail(.bad_value, "asset name: {s}", .{name});
         if (data.len > proto.limits.data_file) return tx.fail(.too_large, "asset/{s}", .{name});
         try tx.logWrite(try std.fmt.allocPrint(tx.a, "asset/{s}", .{name}), data, false);
+        try tx.cmd(.{ .tag = .assets, .name = try tx.a.dupe(u8, name) });
         const val = try tx.blob(data);
         for (tx.st.assets.items) |*m| if (std.mem.eql(u8, m.name.bytes, name)) {
             m.val.unref(tx.gpa());

@@ -25,7 +25,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 1;
+pub const abi_version: u32 = 2;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -105,6 +105,7 @@ pub const UIT_CMD_COMPONENT_VERB: u32 = 11;
 pub const UIT_CMD_ANSWER: u32 = 12;
 pub const UIT_CMD_REDRAW: u32 = 13;
 pub const UIT_CMD_THEME_LOAD: u32 = 14;
+pub const UIT_CMD_ASSETS: u32 = 15;
 
 pub const UitCtl = extern struct {
     verb: UitStr = .{},
@@ -828,6 +829,12 @@ pub const UIT_MENU_ITEM: u32 = 0;
 pub const UIT_MENU_SEP: u32 = 1;
 pub const UIT_MENU_SUB: u32 = 2;
 
+export fn uit_asset(c: *Core, name: UitStr, out: ?*UitStr) c_int {
+    const m = c.st().asset(name.slice()) orelse return 0;
+    if (out) |o| o.* = UitStr.of(m.val.bytes);
+    return 1;
+}
+
 export fn uit_theme_dark(c: *Core) u32 {
     return @intFromBool(c.st().dark());
 }
@@ -973,7 +980,7 @@ test "header and abi.zig agree on the version and the constants" {
     const consts = .{
         .{ "UIT_EINVAL = -1", UIT_EINVAL },           .{ "UIT_ENOTSUP = -7", UIT_ENOTSUP },
         .{ "UIT_ETYPES = -11", UIT_ETYPES },          .{ "UIT_CMD_WINDOW = 1", UIT_CMD_WINDOW },
-        .{ "UIT_CMD_THEME_LOAD = 14", UIT_CMD_THEME_LOAD }, .{ "UIT_ARG_TEXT = 6", UIT_ARG_TEXT },
+        .{ "UIT_CMD_THEME_LOAD = 14", UIT_CMD_THEME_LOAD }, .{ "UIT_CMD_ASSETS = 15", UIT_CMD_ASSETS }, .{ "UIT_ARG_TEXT = 6", UIT_ARG_TEXT },
         .{ "UIT_STATE_GROUP_HOVER = 6", UIT_STATE_GROUP_HOVER },
     };
     inline for (consts) |k| {
@@ -1095,6 +1102,11 @@ test "window props, lines, overlays, menus, keys, tokens" {
     try std.testing.expectEqual(@as(usize, 4), nm);
     try std.testing.expectEqual(UIT_MENU_SUB, mi.?[2].kind);
     try std.testing.expectEqual(@as(u32, 1), mi.?[3].depth);
+    try write(core, "asset/logo", "<svg/>");
+    var av: UitStr = .{};
+    try std.testing.expectEqual(@as(c_int, 1), uit_asset(core, UitStr.lit("logo"), &av));
+    try std.testing.expectEqualStrings("<svg/>", av.slice());
+    try std.testing.expectEqual(@as(c_int, 0), uit_asset(core, UitStr.lit("nope"), &av));
     try write(core, "theme/tokens", "primary #0b5cff");
     var rgba: u32 = 0;
     try std.testing.expectEqual(@as(c_int, 1), uit_token(core, UitStr.lit("primary"), &rgba));
