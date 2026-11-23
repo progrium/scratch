@@ -85,7 +85,14 @@ $1 == "prop" {
 	if(form == "text") good = "hello"
 	else if(form == "word") { good = "w"; bad = "\047two words\047" }
 	else if(form == "bool") { good = "on"; bad = "maybe" }
-	else if(form == "number") { good = "1"; bad = "abc" }
+	else if(form == "number") {
+		good = bad = ""
+		lo = attr("min"); hi = attr("max")
+		good = (lo != "" ? lo : "1")
+		bad = "abc"
+		if(hi != "") set("bad value", label "=" (hi + 1) " (over max=" hi ")", name "=" (hi + 1))
+		if(lo != "") set("bad value", label "=" (lo - 1) " (under min=" lo ")", name "=" (lo - 1))
+	}
 	else if(index(form, "enum=") == 1) {
 		split(substr(form, 6), vals, ",")
 		good = vals[1]

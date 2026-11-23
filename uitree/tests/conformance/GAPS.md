@@ -125,17 +125,12 @@ layer's Open questions. Carried-over items from uitreefs's GAPS.md that
     is porting. W1's descriptors are the authority: where they differ,
     fix the golden. 09 to 13, 22, 28.
 
-29a. **Ranges in descriptors.** The descriptor grammar has no way to say a
-    number's range (`progress` 0 to 100), so by components.md's "accept
-    everything its descriptors list" a host must take `value=140`. The
-    suite no longer tests a range (28). *Suggest:* `number min=0 max=100`
-    on `prop` lines. Owner: W1, components.md.
-29b. **Wrong slot names.** uitreefs refused a child named like no slot of
-    a slots-only type with `bad value`; with `child none` the descriptor
-    says `unknown type`. The suite follows the descriptor (27) and no longer
-    tests a wrong slot name by hand (10). W1's `toolbar` takes `child any`
-    and lost uitreefs's `left center right` slots: a port gap for W1, not
-    something the suite depends on.
+29a. **Ranges in descriptors.** Settled by W1 (PR 6): `prop NAME number
+    min=N max=N`, in components.md's prop line; `progress` value is 0 to
+    100. 27 checks max+1 and min-1 are refused; 28 checks 140.
+29b. **Toolbar slots.** uitreefs's `toolbar` takes any child (its slotted
+    one is `status-bar`, a host extra), so 10 tests no slot names, and 27
+    checks slots from whatever descriptors say.
 
 ## Against hyper9 and h9
 
