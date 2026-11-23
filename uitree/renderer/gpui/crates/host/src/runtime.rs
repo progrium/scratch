@@ -477,15 +477,23 @@ fn web_drops(cx: &mut App) {
                 PlatformInput::FileDrop(FileDropEvent::Submit { position }),
             ];
             for ev in events {
+                let (tx, rx) = futures::channel::oneshot::channel::<()>();
                 cx.update(|cx| {
                     // gpui_web has one window: the canvas.
                     let Some(w) = cx.active_window().or_else(|| cx.windows().first().copied()) else { return };
                     let _ = w.update(cx, |_, window, cx| {
                         window.dispatch_event(ev, cx);
                         window.refresh();
+                        // On after the frame this event draws: next-frame
+                        // callbacks run as a frame starts, so wait for two.
+                        window.on_next_frame(move |window, _| {
+                            window.on_next_frame(move |_, _| {
+                                let _ = tx.send(());
+                            });
+                        });
                     });
                 });
-                cx.background_executor().timer(std::time::Duration::from_millis(50)).await;
+                let _ = rx.await;
             }
         }
     })
@@ -493,7 +501,7 @@ fn web_drops(cx: &mut App) {
 }
 
 /// In the browser: where GPUI Kit's icons are fetched from, as
-/// `{WEB_ASSETS}/assets/icons/NAME.svg` (uitree/web/build.sh copies them).
+/// `{WEB_ASSETS}/assets/icons/NAME.svg` (uitree/web/build.zig copies them).
 /// An absolute URL: the fetch has no page to resolve a relative one against.
 #[cfg(target_family = "wasm")]
 pub static WEB_ASSETS: std::sync::OnceLock<String> = std::sync::OnceLock::new();

@@ -1,0 +1,103 @@
+name: uitree-web
+
+# The browser target (uitree/web/README.md): `zig build web` builds both
+# renderers, the core and h9's browser host into uitree/web/zig-out, and
+# `zig build test` drives every example in headless Chromium on both
+# renderers (test/run.mjs). On main, zig-out is the demo site, published
+# to GitHub Pages (Settings > Pages > Source: GitHub Actions).
+#
+# root.h9a needs a 386 root: unpacked from the pinned 9front release's ISO
+# (hyper9's tools/isoroot.zig) and cached until the pins change. The GPUI
+# renderer builds on the nightly in uitree/web/rust-nightly.
+
+on:
+  push:
+    branches: [uitree, main]
+    paths: ["uitree/**", ".github/workflows/uitree-web.yml"]
+  pull_request:
+    branches: [uitree, main]
+    paths: ["uitree/**", ".github/workflows/uitree-web.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: uitree/web
+
+jobs:
+  web:
+    name: build and browser tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - id: pin
+        working-directory: .
+        run: |
+          echo "zig=$(uitree/tools/zig-pin)" >>"$GITHUB_OUTPUT"
+          echo "nightly=$(cat uitree/web/rust-nightly)" >>"$GITHUB_OUTPUT"
+          echo "bindgen=$(sed -n '/^name = "wasm-bindgen"$/{n;s/^version = "\(.*\)"/\1/p;}' uitree/renderer/gpui/Cargo.lock)" >>"$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with: { version: "${{ steps.pin.outputs.zig }}" }
+      - run: rustup toolchain install "${{ steps.pin.outputs.nightly }}" --profile minimal -t wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: uitree/renderer/gpui
+          key: web-${{ steps.pin.outputs.nightly }}
+      - uses: taiki-e/install-action@v2
+        with: { tool: "wasm-bindgen@${{ steps.pin.outputs.bindgen }}" }
+      - run: sudo apt-get update && sudo apt-get install -y binaryen brotli
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: actions/cache@v4
+        id: root
+        with:
+          path: uitree/third_party/hyper9/.local/9front/root386
+          key: uitree-root386-${{ hashFiles('uitree/third_party/hyper9/scripts/pins.sh', 'uitree/third_party/hyper9/tools/isoroot.zig') }}
+      - name: 9front 386 root from the ISO
+        if: steps.root.outputs.cache-hit != 'true'
+        working-directory: uitree/third_party/hyper9
+        run: |
+          scripts/fetch.sh iso386
+          . scripts/pins.sh
+          zig build isoroot -- ".local/9front/9front-$NINEFRONT_RELEASE.386.iso" .local/9front/root386
+          rm -f .local/9front/*.iso
+      - run: zig build web
+      - name: Playwright's Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - run: zig build test -- --shots "$RUNNER_TEMP/shots"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uitree-web-shots
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+      # The site: zig-out without the .gz and .br copies (Pages compresses).
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: rsync -a --exclude '*.gz' --exclude '*.br' zig-out/ "$RUNNER_TEMP/site/"
+      - if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with: { path: "${{ runner.temp }}/site" }
+
+  pages:
+    name: publish the demo site
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

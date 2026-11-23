@@ -17,7 +17,7 @@ pin=$(pin_of "$here/core/build.zig.zon")
 [ "${1:-}" = check ] || { echo "$pin"; exit 0; }
 
 bad=0
-for f in renderer/tui/build.zig.zon third_party/hyper9/build.zig.zon; do
+for f in renderer/tui/build.zig.zon web/build.zig.zon third_party/hyper9/build.zig.zon; do
 	if [ ! -f "$here/$f" ]; then
 		echo "zig-pin: $f is missing (git submodule update --init uitree/third_party/hyper9)" >&2
 		bad=1

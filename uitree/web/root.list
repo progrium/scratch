@@ -1,4 +1,4 @@
-# The root the examples boot (build.sh packs it into dist/h9/root.h9a with
+# The root the examples boot (build.zig packs it into zig-out/h9/root.h9a with
 # hyper9's tools/webroot.zig): what they run and no more, since every byte
 # is downloaded per page. hyper9's own src/web/root.list is a larger demo
 # root, with rio, acme and their font; uitree's examples draw through $ui

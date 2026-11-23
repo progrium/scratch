@@ -1,15 +1,15 @@
 #!/usr/bin/env node
-// A static server for dist/ that serves build.sh's precompressed copies:
+// A static server for zig-out/ that serves zig build web's precompressed copies:
 // FILE.br or FILE.gz when the browser accepts it, as a CDN or nginx's
 // brotli_static would, so the transfer sizes match a real deployment.
 //
-//	node serve.mjs [dir] [port]     (default dist, 8000; LOG=1 logs each
+//	node serve.mjs [dir] [port]     (default zig-out, 8000; LOG=1 logs each
 //	                                 file served and its bytes)
 import { createServer } from 'node:http';
 import { stat, readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 
-const dir = process.argv[2] ?? new URL('dist', import.meta.url).pathname;
+const dir = process.argv[2] ?? new URL('zig-out', import.meta.url).pathname;
 const port = Number(process.argv[3] ?? 8000);
 const types = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript',

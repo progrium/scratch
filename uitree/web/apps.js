@@ -1,5 +1,5 @@
-// The examples the page can run, and how: build.sh copies each one's files
-// into dist/apps/NAME/, and the app runs in /app with them (h9's cwd).
+// The examples the page can run, and how: build.zig copies each one's files
+// into zig-out/apps/NAME/, and the app runs in /app with them (h9's cwd).
 // `argv` is the command line in the app's directory, as the native
 // `uitree -t TITLE ...` takes it (tests/conformance/examples).
 

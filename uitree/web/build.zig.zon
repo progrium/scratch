@@ -1,0 +1,8 @@
+.{
+    .name = .uitree_web,
+    .version = "0.0.0",
+    .fingerprint = 0x20cad75e26f3b9f0, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{ "build.zig", "build.zig.zon" },
+}

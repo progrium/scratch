@@ -1,7 +1,7 @@
 // The demo's service worker (cache.js registers it): every same-origin GET
 // is answered from a cache once fetched, so h9.wasm, root.h9a, the GPUI
-// module and the rest download once, not per page or per iframe. build.sh
-// stamps VERSION with a hash of dist/, so a rebuild starts a new cache and
+// module and the rest download once, not per page or per iframe. zig build web
+// stamps VERSION with a hash of zig-out/, so a rebuild starts a new cache and
 // drops the old one; until then nothing is fetched twice.
 const VERSION = 'dev';
 const CACHE = `uitree-${VERSION}`;

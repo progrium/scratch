@@ -1,9 +1,11 @@
 // Drives the examples in headless Chromium on both renderers and checks
 // that each feature they use works (README.md § Tests):
 //
-//	node test/run.mjs [--base URL] [--only APP,...] [--renderer gpui|tui] [--shots DIR]
+//	node test/run.mjs [--dir DIR | --base URL] [--only APP,...] [--renderer gpui|tui] [--shots DIR]
 //
-// Serve dist/ first (python3 -m http.server -d dist 8765). Each case
+// --dir serves DIR (zig build web's zig-out/, the default) with serve.mjs
+// for the run; --base tests pages served elsewhere. `zig build test`
+// runs this on a fresh build. Each case
 // finds nodes through $ui (probe.js: a node's bounds file), acts with the
 // real mouse and keyboard, and checks the tree or the app's own output.
 import { createRequire } from 'node:module';
@@ -11,7 +13,19 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 import { cases } from './cases.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
-const base = arg('--base', 'http://localhost:8765/');
+let base = arg('--base', '');
+let server;
+if (!base) {
+  // serve.mjs on a free port, for the run.
+  const { spawn } = await import('node:child_process');
+  const dir = arg('--dir', new URL('../zig-out', import.meta.url).pathname);
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  server = spawn(process.execPath, [new URL('../serve.mjs', import.meta.url).pathname, dir, String(port)], { stdio: 'ignore' });
+  base = `http://localhost:${port}/`;
+  for (let i = 0; ; i++) {
+    try { await fetch(base); break; } catch (e) { if (i > 50) throw e; await new Promise((r) => setTimeout(r, 100)); }
+  }
+}
 const only = arg('--only', '')?.split(',').filter(Boolean);
 const renderers = arg('--renderer', 'gpui,tui').split(',');
 const shots = arg('--shots', '');
@@ -56,6 +70,7 @@ for (const r of renderers) {
   }
 }
 await browser.close();
+server?.kill();
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
 

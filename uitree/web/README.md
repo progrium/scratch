@@ -1,4 +1,4 @@
-# uitree/web: uitree in the browser (spike)
+# uitree/web: uitree in the browser
 
 ![The counter on both renderers in one page: GPUI on the left, the terminal renderer in xterm.js on the right](screenshots/both-renderers.png)
 
@@ -21,15 +21,27 @@ page (main thread)                                   Worker, one per app
 cd uitree/third_party/hyper9 && scripts/fetch.sh iso386 &&
   zig build isoroot -- .local/9front/9front-11952.386.iso .local/9front/root386   # once
 cargo install wasm-bindgen-cli --version 0.2.130                                   # Cargo.lock's
-# and wasm-opt from binaryen (any recent release); brotli, if installed, too
-cd uitree/web && ./build.sh            # dist/: everything the page loads
-node serve.mjs                         # http://localhost:8000, dist/ with its .br and .gz
+# and wasm-opt from binaryen (any recent release), rustup, and brotli if installed
+cd uitree/web && zig build web         # zig-out/: everything the pages load
+node serve.mjs                         # http://localhost:8000, zig-out/ with its .br and .gz
+zig build test                         # the browser tests (below)
 ```
 
-Needs JavaScript Promise Integration: Chrome or Edge 137 or later (h9's own
-requirement). `core-test.html` runs the core with no renderer and prints
-the tree; `tui-test.html` is the terminal alone. `GPUI=0 ./build.sh` skips
-the Rust build.
+`zig build web` (`build.zig`, the default step) runs each part's own
+build: h9's `zig build web`, the core's and the terminal renderer's
+`zig build -Dtarget=wasm32-wasi`, and Cargo for the GPUI renderer on the
+nightly named in `rust-nightly` (rustup installs it on first use), then
+wasm-bindgen. `-Dgpui=false` skips the Rust build, `-Droot386=DIR` names
+another 386 root, `-Doptimize=` sets the Zig parts' mode (ReleaseSmall).
+
+CI (`.github/workflows/uitree-web.yml`) builds and tests the target on
+every change to uitree, and on main publishes zig-out/ to GitHub Pages as
+the demo site.
+
+Needs JavaScript Promise Integration, which is standardized and shipping
+in current browsers (h9's own requirement). `core-test.html` runs the core
+with no renderer and prints the tree; `tui-test.html` is the terminal
+alone.
 
 ## How it fits together
 
@@ -109,8 +121,9 @@ terminal renderer in the browser link `libuitcore.a`.
 
 - **gpui-kit forces gpui_web's `multithreaded` feature** (through
   gpui-pre-platform's defaults), and `wasm_thread` needs nightly. The build
-  uses `RUSTC_BOOTSTRAP=1`; the app uses `single_threaded_web()`, so no
-  worker threads start. GPUI Kit's own story-web pins a nightly instead.
+  pins one (`rust-nightly`, as GPUI Kit's own story-web does); the app uses
+  `single_threaded_web()`, so no worker threads start. The desktop build
+  stays on stable.
 - **No system fonts in the browser.** gpui_web resolves `.SystemUIFont` to
   IBM Plex Sans and panics without it, so the host bundles IBM Plex Sans and
   JetBrains Mono (OFL, from story-web) under `crates/web/fonts`.
@@ -140,8 +153,8 @@ and a menu bar).
 `test/run.mjs` drives them in headless Chromium on both renderers:
 
 ```sh
-cd dist && python3 -m http.server 8765 &
-cd .. && node test/run.mjs        # --only APP,... --renderer gpui|tui --shots DIR
+zig build test                    # builds, then serves zig-out/ for the run
+node test/run.mjs                 # on zig-out/ as built: --only APP,... --renderer gpui|tui --shots DIR
 ```
 
 `probe.js` is a 9P client of the page's core, a connection of its own
@@ -168,7 +181,7 @@ What the tests found, and fixed:
   form's tag fired as a submit (hello said "Hello, stranger!" when you
   clicked its field). A press only places the caret now (native too).
 - **GPUI Kit's icons** are fetched one by one when drawn, from
-  `assets/icons/`; `build.sh` copies them and the page passes the URL.
+  `assets/icons/`; the build copies them and the page passes the URL.
 - **No menu bar in the browser**: GPUI Kit's AppMenuBar now draws the
   app's menus at the top of the window, on the web only.
 - **Links on the terminal renderer** open in a new tab (`tui.open`).
@@ -197,7 +210,7 @@ Still not working, or not covered:
 
 What a page downloads, from this build: ReleaseSmall Zig, Rust in Cargo's
 `web` profile (opt-level `z`, fat LTO, one codegen unit), names stripped.
-gzip is `gzip -9`, brotli is quality 11, as build.sh writes them beside
+gzip is `gzip -9`, brotli is quality 11, as the build writes them beside
 each file.
 
 | File | Raw | gzip | brotli |
@@ -236,14 +249,14 @@ window spans whole binaries (each 9front command links its own libc) where
 gzip's 32 KB doesn't. The browser can't decompress brotli itself
 (`DecompressionStream` has gzip and deflate only, Chromium 158), so it has
 to come from the server: nginx's `brotli_static`, Caddy's `file_server
-precompressed`, or a CDN that compresses. `node serve.mjs` serves dist/
-that way, with the .br and .gz files build.sh writes.
+precompressed`, or a CDN that compresses. `node serve.mjs` serves zig-out/
+that way, with the .br and .gz files the build writes.
 
 **Caching.** `sw.js`, a service worker (`cache.js`, imported by apps.js,
 registers it), answers every same-origin GET from a cache once it has
 fetched it, so h9.wasm, root.h9a and the GPUI module download once per
-build, not once per page or iframe. build.sh stamps the cache's name with a
-hash of dist/, so a new build replaces it; an unstamped `sw.js` (the source
+build, not once per page or iframe. The build stamps the cache's name with a
+hash of zig-out/, so a new build replaces it; an unstamped `sw.js` (the source
 copy) caches nothing. The first page a browser opens isn't controlled until
 the worker activates (it claims the page then), so a file that page fetched
 before that is fetched once more, through the cache, on the next one.
