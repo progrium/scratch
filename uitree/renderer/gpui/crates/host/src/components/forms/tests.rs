@@ -6,12 +6,13 @@ use gpui::TestAppContext;
 
 use crate::testing::Harness;
 
-const R: &str = "windows/main/root";
+const R: &str = "win/main";
 
 fn window(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Forms size=600,800");
-    h.write(&format!("{R}/style"), "v_flex size_full p=8 gap=8");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full p=8 gap=8");
     h
 }
 
@@ -31,20 +32,20 @@ fn every_form_type_renders(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full p=8 gap=8'
-  button b  label=Save  icon=check  style='primary sm'
+        "div root : v-flex size-full p=8 gap=8
+  button b  label=Save  icon=check primary sm
   button-group g  value=b
     button a  label=Day
     button b  label=Week
   dropdown-button more  label=More
   checkbox cb  label='Remember me'  value=mixed
-  radio-group rg  value=m  dir=h
+  radio-group rg  value=m  dir=row
   switch sw  label=Wi-Fi  value=on
-  toggle tg  label=B  style=outline
-  slider sl  min=0  max=100  value='20 80'  style=w=200
-  input in  placeholder=Name  flags=cleanable
+  toggle tg  label=B outline
+  slider sl  min=0  max=100  value='20 80' : w=200
+  input in  placeholder=Name  cleanable=on
     icon prefix  name=search
-  textarea ta  placeholder=Notes  auto_grow=3,8
+  textarea ta  placeholder=Notes  auto-grow=3,8
   number-input ni  value=3  min=0  max=10
   otp-input otp  length=4
   select sel  placeholder=Pick
@@ -53,7 +54,7 @@ fn every_form_type_renders(cx: &mut TestAppContext) {
   calendar cal  value=2026-11-21
   color-picker col  value=#0b5cffff
   rating r  max=5  value=3
-  form f  labels=side  label_width=120
+  form f  labels=side  label-width=120
     field name  label=Name  required=on  error='Needed'
       input in
   field lone  label=Alone  description=Hint
@@ -77,7 +78,7 @@ fn every_form_type_renders(cx: &mut TestAppContext) {
 #[gpui::test]
 fn button_click(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new button save label=Save style=primary tag=save\nnew button off label=No disabled=on");
+    h.ctl(R, "new button save label=Save tag=save primary\nnew button off label=No disabled=on");
     let mut ev = h.subscribe("events");
     h.click(&format!("{R}/save"));
     h.click(&format!("{R}/off"));
@@ -90,7 +91,7 @@ fn button_click(cx: &mut TestAppContext) {
 fn checkbox_switch_toggle_change(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(R, "new checkbox cb label=Remember\nnew switch sw label=Wifi value=on\nnew toggle tg label=B");
-    let mut ev = h.subscribe("windows/main/events");
+    let mut ev = h.subscribe("win/main/events");
     h.click(&format!("{R}/cb"));
     h.click(&format!("{R}/sw"));
     h.click(&format!("{R}/tg"));
@@ -136,7 +137,7 @@ fn input_typing_mirrors_value_without_text_in_events(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(R, "new form f");
     h.ctl(&format!("{R}/f"), "new field name label=Name");
-    h.ctl(&format!("{R}/f/name"), "new input in tag=name style=w=200");
+    h.ctl(&format!("{R}/f/name"), "new input in tag=name : w=200");
     let mut ev = h.subscribe("events");
     h.click(&format!("{R}/f/name/in"));
     h.keys("main", "A d a");
@@ -152,7 +153,7 @@ fn input_typing_mirrors_value_without_text_in_events(cx: &mut TestAppContext) {
 #[gpui::test]
 fn client_value_write_reaches_the_input(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new input in style=w=200");
+    h.ctl(R, "new input in : w=200");
     h.write(&format!("{R}/in/value"), "Grace\n");
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
@@ -172,19 +173,22 @@ fn client_value_write_reaches_the_input(cx: &mut TestAppContext) {
 #[gpui::test]
 fn secret_input_value_stays_out_of_the_trace(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new input pw flags=secret style=w=200");
+    // `trace` is a stream, like `events`.
+    let mut tr = h.subscribe("trace");
+    h.ctl(R, "new input pw secret=on : w=200");
     h.click(&format!("{R}/pw"));
     h.keys("main", "s 3 c r 3 t");
     assert_eq!(h.read(&format!("{R}/pw/value")).as_deref(), Some("s3cr3t"));
     h.write(&format!("{R}/pw/value"), "hunter2");
-    let trace = h.read("trace").unwrap_or_default();
+    let trace = h.events(&mut tr).join("\n");
+    assert!(trace.contains("pw"), "the trace saw the writes: {trace}");
     assert!(!trace.contains("hunter2") && !trace.contains("s3cr3t"), "{trace}");
 }
 
 #[gpui::test]
 fn number_input_change_has_value(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new number-input n value=3 min=0 max=10 style=w=200");
+    h.ctl(R, "new number-input n value=3 min=0 max=10 : w=200");
     let mut ev = h.subscribe("events");
     h.click(&format!("{R}/n"));
     h.keys("main", "end 5");
@@ -196,7 +200,7 @@ fn number_input_change_has_value(cx: &mut TestAppContext) {
 #[gpui::test]
 fn textarea_keeps_newlines(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new textarea t rows=3 style=w=200");
+    h.ctl(R, "new textarea t rows=3 : w=200");
     h.write(&format!("{R}/t/value"), "one\ntwo\n");
     assert_eq!(h.read(&format!("{R}/t/value")).as_deref(), Some("one\ntwo\n"));
     h.click(&format!("{R}/t"));
@@ -208,7 +212,7 @@ fn textarea_keeps_newlines(cx: &mut TestAppContext) {
 #[gpui::test]
 fn select_follows_value_and_items(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new select lang searchable=on style=w=200");
+    h.ctl(R, "new select lang searchable=on : w=200");
     h.write(&format!("{R}/lang/items"), "rs\tRust\ngo\tGo\n");
     h.write(&format!("{R}/lang/value"), "go");
     let n = h.node(&format!("{R}/lang"));
@@ -216,7 +220,7 @@ fn select_follows_value_and_items(cx: &mut TestAppContext) {
         .cx
         .update(|cx| {
             let st = n.host.states.borrow();
-            let e = st.get(n.path()).and_then(|s| s.entity.clone())?;
+            let e = st.get(&n.node()).and_then(|s| s.entity.clone())?;
             let e = e.downcast::<gpui_component::select::SelectState<super::pickers::Items>>().ok()?;
             e.read(cx).selected_value().map(|v| v.to_string())
         });
@@ -227,12 +231,12 @@ fn select_follows_value_and_items(cx: &mut TestAppContext) {
 #[gpui::test]
 fn slider_client_write_and_range(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new slider v min=0 max=100 step=5 value=40 style=w=200");
+    h.ctl(R, "new slider v min=0 max=100 step=5 value=40 : w=200");
     h.write(&format!("{R}/v/value"), "60");
     let n = h.node(&format!("{R}/v"));
     let v = h.cx.update(|cx| {
         let st = n.host.states.borrow();
-        let e = st.get(n.path()).and_then(|s| s.entity.clone())?;
+        let e = st.get(&n.node()).and_then(|s| s.entity.clone())?;
         let e = e.downcast::<gpui_component::slider::SliderState>().ok()?;
         Some(e.read(cx).value().end())
     });
@@ -246,7 +250,7 @@ fn slider_client_write_and_range(cx: &mut TestAppContext) {
 #[gpui::test]
 fn radio_and_rating_clicks(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new radio-group size style=w=200\nnew rating r max=5");
+    h.ctl(R, "new radio-group size : w=200\nnew rating r max=5");
     h.write(&format!("{R}/size/items"), "s\tSmall\n");
     let mut ev = h.subscribe("events");
     // One item fills the group, so its middle is that radio.
@@ -290,7 +294,7 @@ fn button_group_and_dropdown(cx: &mut TestAppContext) {
 #[gpui::test]
 fn gallery_form_stories_render(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/rc/gallery");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gallery");
     for story in ["button", "toggles", "input", "select", "slider", "date"] {
         let doc = std::fs::read_to_string(format!("{dir}/{story}/tree")).unwrap();
         h.ctl(R, &format!("new scroll {story}"));

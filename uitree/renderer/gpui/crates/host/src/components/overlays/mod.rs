@@ -30,9 +30,7 @@ use crate::data_lines::{MenuKind, MenuLine};
 use super::nav::{no_verb, part, part_id, spec, text_or_default};
 use crate::{Component, ComponentRegistry, NodeState, NodeView, RenderCx};
 
-// uitreefs-spelled render tests: not built until they are ported to 0.2
-// as the core serves what they need (README § Tests).
-#[cfg(any())]
+#[cfg(test)]
 mod tests;
 
 pub fn register(reg: &mut ComponentRegistry) {
@@ -313,7 +311,7 @@ fn dialog(rcx: &mut RenderCx, node: &NodeView, kind: Kind) -> AnyElement {
     let alert = kind == Kind::AlertDialog;
     let width = super::nav::number(node, "width", if alert { 420. } else { 480. }) as f32;
     let modal = alert || text_or_default(node, "modal") != "off";
-    let closes = !alert && text_or_default(node, "overlay_closable") != "off";
+    let closes = !alert && text_or_default(node, "overlay-closable") != "off";
     let keyboard = alert || text_or_default(node, "keyboard") != "off";
     let fh = rcx.focus_handle(node);
     let st = rcx.state::<OverlayState>(node);
@@ -394,7 +392,7 @@ fn dialog(rcx: &mut RenderCx, node: &NodeView, kind: Kind) -> AnyElement {
 fn sheet(rcx: &mut RenderCx, node: &NodeView) -> AnyElement {
     let side = text_or_default(node, "side");
     let size = super::nav::number(node, "size", 350.) as f32;
-    let closes = text_or_default(node, "overlay_closable") != "off";
+    let closes = text_or_default(node, "overlay-closable") != "off";
     let fh = rcx.focus_handle(node);
     let st = rcx.state::<OverlayState>(node);
     let head = header(rcx, node, true);
@@ -468,8 +466,8 @@ fn state_of(node: &NodeView) -> Option<Entity<OverlayState>> {
 fn delays(node: &NodeView, kind: Kind) -> (u64, u64) {
     match kind {
         Kind::HoverCard => (
-            super::nav::number(node, "open_delay", 600.).max(0.) as u64,
-            super::nav::number(node, "close_delay", 300.).max(0.) as u64,
+            super::nav::number(node, "open-delay", 600.).max(0.) as u64,
+            super::nav::number(node, "close-delay", 300.).max(0.) as u64,
         ),
         _ => (0, 150),
     }
@@ -698,7 +696,7 @@ fn context_menu(rcx: &mut RenderCx, node: &NodeView) -> AnyElement {
                         .hover(move |s| s.bg(accent).text_color(accent_fg))
                         .on_click(move |_, window, cx| {
                             set_open(&n, false, window, cx);
-                            n.emitter().event("action", &[("id", &id)]);
+                            n.emitter().menu_action(&id);
                         });
                 } else {
                     row = row.opacity(0.5);

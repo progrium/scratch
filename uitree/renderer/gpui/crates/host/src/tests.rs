@@ -1,11 +1,7 @@
 //! Render tests for the host and the element tier, on GPUI's test platform,
 //! against the real core over 9P (spec 0.2 spelling).
 //!
-//! These cover what the core serves today (the W0 spike's tree: `ctl`
-//! with `new`/`set`/`delete`/`quit`, prop files, `keys`, `menu/NAME`, the
-//! app `events`). The uitreefs host tests for windows other than `main`,
-//! `focus` and `bounds` files, `tree` documents, batches, key contexts and
-//! theme files come back as W3 lands those parts of the core.
+//! The uitreefs host tests, ported; the component groups have their own.
 
 use gpui::TestAppContext;
 
@@ -136,4 +132,142 @@ fn quit_ends_the_app(cx: &mut TestAppContext) {
     h.ctl("", "quit");
     assert!(h.quit_called());
     assert!(h.events(&mut ev).contains(&"<eof>".to_string()));
+}
+
+#[gpui::test]
+fn click_and_hover_send_events_with_tag(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(M, "new div card tag=open:42 : w=100 h=40");
+    h.write(&format!("{M}/card/on"), "click hover");
+    let mut ev = h.subscribe("events");
+    h.click(&format!("{M}/card"));
+    let lines = h.events(&mut ev);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("click open:42 card win=main ")),
+        "{lines:?}"
+    );
+    assert!(lines.iter().any(|l| l.starts_with("hover ") && l.contains("value=on")), "{lines:?}");
+}
+
+#[gpui::test]
+fn key_events_and_focus_file(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(M, "new div k : w=100 h=40");
+    h.write(&format!("{M}/k/on"), "key focus click");
+    let mut ev = h.subscribe("events");
+    h.click(&format!("{M}/k"));
+    assert_eq!(h.read(&format!("{M}/focus")).as_deref(), Some("k"));
+    h.keys("main", "a");
+    let lines = h.events(&mut ev);
+    assert!(lines.iter().any(|l| l.starts_with("focus ")), "{lines:?}");
+    // The host sends `key=a`; the core currently takes a `key=` attribute
+    // as the routing word, so the key lands in word 2 (asked of W3).
+    assert!(lines.iter().any(|l| l.starts_with("key ") && (l.contains("key=a") || l.starts_with("key a "))), "{lines:?}");
+}
+
+#[gpui::test]
+fn focus_file_write_moves_focus(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(M, "new div a : w=10 h=10\nnew div b : w=10 h=10");
+    h.write(&format!("{M}/b/on"), "focus");
+    h.write(&format!("{M}/focus"), "b");
+    assert_eq!(h.read(&format!("{M}/focus")).as_deref(), Some("b"));
+}
+
+#[gpui::test]
+fn keymap_context_limits_binding(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(M, "new div ed : w=50 h=50\nnew div other : w=50 h=50");
+    h.write(&format!("{M}/ed/context"), "editor");
+    h.write(&format!("{M}/ed/on"), "key focus");
+    h.write(&format!("{M}/other/on"), "key focus");
+    h.write("keys", "ctrl-e escape-ed context=editor\n");
+    let mut ev = h.subscribe("events");
+    h.write(&format!("{M}/focus"), "other");
+    h.keys("main", "ctrl-e");
+    assert!(!h.events(&mut ev).iter().any(|l| l.starts_with("action escape-ed ")));
+    h.write(&format!("{M}/focus"), "ed");
+    h.keys("main", "ctrl-e");
+    let lines = h.events(&mut ev);
+    assert!(
+        lines.iter().any(|l| l.starts_with("action escape-ed ed win=main")),
+        "{lines:?}"
+    );
+}
+
+#[gpui::test]
+fn disabled_action_sends_nothing(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.write("keys", "ctrl-s save\n");
+    h.ctl("", "set save enabled=off");
+    let mut ev = h.subscribe("events");
+    h.keys("main", "ctrl-s");
+    assert!(!h.events(&mut ev).iter().any(|l| l.starts_with("action save ")));
+}
+
+#[gpui::test]
+fn window_close_without_reader_closes(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl("", "window other");
+    // A new window stays hidden until it has content or is shown.
+    h.ctl("win/other", "show");
+    assert!(h.has_window("other"));
+    h.ctl("win/other", "close");
+    h.settle();
+    assert!(!h.has_window("other"));
+    assert!(h.has_window("main"));
+}
+
+#[gpui::test]
+fn window_destroy(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl("", "window other");
+    h.ctl("win/other", "show");
+    assert!(h.has_window("other"));
+    h.ctl("win/other", "destroy");
+    assert!(!h.has_window("other"));
+}
+
+#[gpui::test]
+fn window_verbs_dont_panic(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(M, "set . title=Renamed size=500,400");
+    h.ctl(M, "notify 'Saved draft' type=success");
+    h.ctl(M, "activate");
+}
+
+#[gpui::test]
+fn theme_mode_and_tokens(cx: &mut TestAppContext) {
+    use gpui_component::ActiveTheme as _;
+    let mut h = window(cx);
+    h.write("theme/mode", "dark");
+    assert!(h.cx.update(|cx| cx.theme().mode.is_dark()));
+    h.write("theme/tokens", "primary #ff0000\n");
+    let c = h.cx.update(|cx| crate::theme::token(cx, "primary")).unwrap();
+    let rgba: gpui::Rgba = c.into();
+    assert!(rgba.r > 0.99 && rgba.g < 0.01, "{rgba:?}");
+}
+
+#[gpui::test]
+fn tree_document_renders(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.write(
+        &format!("{M}/tree"),
+        "div root : v-flex size-full p=24 gap=16\n  text title  text='Sign in' : text-xl font-semibold\n  div row : h-flex gap=8\n    text a  text=A\n",
+    );
+    let [_, _, w, hh] = h.bounds(&format!("{M}/title"));
+    assert!(w > 0. && hh > 0.);
+    h.bounds(&format!("{M}/row/a"));
+}
+
+#[gpui::test]
+fn scroll_origin_round_trips(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(M, "new scroll sc : h=40 w=100 overflow-y-scroll");
+    h.ctl(&format!("{M}/sc"), "new div a : h=200 w=100");
+    h.write(&format!("{M}/sc/origin"), "0 30");
+    let o = h.read(&format!("{M}/sc/origin")).unwrap_or_default();
+    assert_eq!(o.trim(), "0 30");
 }

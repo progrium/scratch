@@ -33,9 +33,7 @@ use crate::data_lines::Item;
 
 use crate::{Component, ComponentRegistry, NodeView, RenderCx};
 
-// uitreefs-spelled render tests: not built until they are ported to 0.2
-// as the core serves what they need (README § Tests).
-#[cfg(any())]
+#[cfg(test)]
 pub(crate) mod tests;
 
 pub fn register(reg: &mut ComponentRegistry) {
@@ -514,7 +512,7 @@ impl Component for PaginationNode {
             .unwrap_or_else(|| number(node, "page", 1.))
             .max(1.) as usize;
         let total = number(node, "total", 0.).max(0.);
-        let per = number(node, "per_page", 10.).max(1.);
+        let per = number(node, "per-page", 10.).max(1.);
         let pages = ((total / per).ceil() as usize).max(1);
         let em = node.emitter();
         let state = rcx.state::<Local>(node);

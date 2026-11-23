@@ -120,26 +120,6 @@ fn split_words(l: &str) -> Vec<String> {
     out
 }
 
-/// The renderer-side stand-in for `uit_lines` while the core lacks it.
-fn fallback_lines(t: &str) -> Vec<Line> {
-    t.split('\n')
-        .map(|l| l.strip_suffix('\r').unwrap_or(l))
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| {
-            let body = l.trim_start_matches(' ');
-            let indent = ((l.len() - body.len()) / 2) as u32;
-            let fields = if body.contains('\t') {
-                body.split('\t').map(str::to_string).collect()
-            } else if body.starts_with("# ") {
-                vec!["#".to_string(), body[2..].to_string()]
-            } else {
-                split_words(body)
-            };
-            Line { fields, indent }
-        })
-        .collect()
-}
-
 fn slice<'a, T>(p: *const T, n: usize) -> &'a [T] {
     if p.is_null() || n == 0 { &[] } else { unsafe { std::slice::from_raw_parts(p, n) } }
 }
@@ -241,6 +221,8 @@ pub enum HostCmd {
     Answer { seq: u64, answer: Ctl },
     Redraw { win: String },
     ThemeLoad { path: String },
+    /// `asset/NAME` was written or removed.
+    Assets { name: String },
     Other(u32),
 }
 
@@ -406,6 +388,7 @@ impl Core {
                     answer: if c.ctl.verb.len > 0 { Ctl::copy(&c.ctl) } else { answer_ctl(&text(c.answer)) },
                 },
                 sys::UIT_CMD_THEME_LOAD => HostCmd::ThemeLoad { path: text(c.name).into_owned() },
+                sys::UIT_CMD_ASSETS => HostCmd::Assets { name: text(c.name).into_owned() },
                 t => HostCmd::Other(t),
             });
         }
@@ -505,17 +488,9 @@ impl Core {
     }
 
     /// A data file split into lines and fields per its format. Copied.
-    ///
-    /// Until the core implements `uit_lines` (the spike returns
-    /// `UIT_ENOTSUP`), this falls back to splitting the prop's text here:
-    /// lines on newlines, fields on tabs, or on blanks with the one quoting
-    /// rule when the line has no tab. The fallback goes when W3 lands.
     pub fn lines(&self, n: Node, file: &str) -> Vec<Line> {
         let mut out = sys::UitLines { lines: std::ptr::null(), n: 0 };
         let r = unsafe { sys::uit_lines(self.raw, n, s(file), &mut out) };
-        if r == sys::UIT_ENOTSUP {
-            return self.prop(n, file).map(fallback_lines).unwrap_or_default();
-        }
         if r < 0 {
             return Vec::new();
         }
@@ -592,13 +567,20 @@ impl Core {
         self.check(unsafe { sys::uit_mirror(self.raw, n, s(file), v) })
     }
 
-    /// `UIT_ENOTSUP` from a core that doesn't keep bounds yet is not an error.
+    /// A node's bounds from the last layout, for its `bounds` file.
     pub fn bounds(&self, n: Node, b: [f32; 4]) {
         unsafe { sys::uit_bounds(self.raw, n, b[0], b[1], b[2], b[3]) };
     }
 
     pub fn frame_drawn(&self, win: &str) {
         unsafe { sys::uit_frame_drawn(self.raw, s(win)) };
+    }
+
+    /// An app asset's bytes (`$ui/asset/NAME`), borrowed until the next pump.
+    pub fn asset(&self, name: &str) -> Option<&[u8]> {
+        let mut out = UitStr::EMPTY;
+        let r = unsafe { sys::uit_asset(self.raw, s(name), &mut out) };
+        (r == 1).then(|| slice(out.ptr, out.len))
     }
 
     pub fn menu_action(&self, id: &str) {

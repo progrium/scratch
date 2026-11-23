@@ -152,7 +152,7 @@ impl Component for DiffComponent {
         }
         el.child(
             Diff::new(&state)
-                .line_number(node.flag("line_numbers"))
+                .line_number(node.flag("line-numbers"))
                 .size_full()
                 .flex_1(),
         )

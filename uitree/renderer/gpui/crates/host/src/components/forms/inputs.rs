@@ -159,7 +159,7 @@ impl Component for InputC {
     }
     fn create(&self, node: &NodeView, window: &mut Window, cx: &mut App) -> Option<AnyEntity> {
         let v = value_of(node);
-        let max_len = num(node, "max_len").map(|n| n.max(0.) as usize);
+        let max_len = num(node, "max-len").map(|n| n.max(0.) as usize);
         let state = cx.new(|cx| {
             let mut s = InputState::new(window, cx)
                 .placeholder(node.text("placeholder").unwrap_or_default())
@@ -189,7 +189,7 @@ impl Component for InputC {
                 let m = has_flag(node, "secret");
                 s.update(cx, |s, cx| s.set_masked(m, window, cx));
             }
-            "mask" | "max_len" => rebuild(node, window, cx),
+            "mask" | "max-len" => rebuild(node, window, cx),
             _ => {}
         }
     }
@@ -222,7 +222,7 @@ impl Component for InputC {
 /// `auto_grow=min,max`.
 fn auto_grow(node: &NodeView) -> Option<(usize, usize)> {
     let v: Vec<usize> = node
-        .text("auto_grow")?
+        .text("auto-grow")?
         .split(|c: char| c == ',' || c.is_whitespace())
         .filter_map(|x| x.parse::<f64>().ok().map(|f| f.max(1.) as usize))
         .collect();
@@ -273,7 +273,7 @@ impl Component for TextareaC {
                     s.update(cx, |s, cx| s.set_rows(r.max(1.) as usize, cx));
                 }
             }
-            "auto_grow" => {
+            "auto-grow" => {
                 if let Some((a, b)) = auto_grow(node) {
                     s.update(cx, |s, cx| s.set_auto_grow(a, b, cx));
                 }

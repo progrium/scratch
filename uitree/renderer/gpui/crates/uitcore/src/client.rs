@@ -145,7 +145,7 @@ impl Client {
     /// Writes a whole file (open, write, clunk): what `echo x > file` does.
     pub fn put(&mut self, path: &str, data: &str) -> io::Result<()> {
         let mut f = self.open(path, 1)?;
-        let r = self.write(&mut f, data.as_bytes());
+        let r = data.as_bytes().chunks(60 << 10).try_for_each(|c| self.write(&mut f, c));
         let c = self.close(f);
         r.and(c)
     }

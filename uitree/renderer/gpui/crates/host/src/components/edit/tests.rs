@@ -5,12 +5,13 @@ use gpui::TestAppContext;
 use super::editor::EditorNode;
 use crate::testing::Harness;
 
-const R: &str = "windows/main/root";
+const R: &str = "win/main";
 
 fn window(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Test size=640,480");
-    h.write(&format!("{R}/style"), "v_flex size_full p=8 gap=4");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full p=8 gap=4");
     h
 }
 
@@ -26,7 +27,7 @@ fn editor(h: &Harness, path: &str) -> gpui::Entity<EditorNode> {
         .host
         .states
         .borrow()
-        .get(path)
+        .get(&n.node())
         .and_then(|s| s.entity.clone());
     super::entity::<EditorNode>(st.as_ref()).expect("editor state")
 }
@@ -41,7 +42,7 @@ fn editor_renders_with_its_files(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(
         R,
-        "new editor e language=rust line_numbers=on tab_size=2 style='h=200 w_full'",
+        "new editor e language=rust line-numbers=on tab-size=2 : h=200 w-full",
     );
     let e = format!("{R}/e");
     h.write(
@@ -68,14 +69,14 @@ fn editor_renders_with_its_files(cx: &mut TestAppContext) {
             .is_err()
     );
     h.write(&format!("{e}/language"), "go");
-    h.write(&format!("{e}/soft_wrap"), "on");
+    h.write(&format!("{e}/soft-wrap"), "on");
     h.write(&format!("{e}/readonly"), "on");
 }
 
 #[gpui::test]
 fn editor_typing_mirrors_value_and_sends_change_and_cursor(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new editor e style='h=200 w_full'");
+    h.ctl(R, "new editor e : h=200 w-full");
     let e = format!("{R}/e");
     h.write(&format!("{e}/value"), "hello");
     let mut ev = h.subscribe(&format!("{e}/events"));
@@ -101,7 +102,7 @@ fn editor_typing_mirrors_value_and_sends_change_and_cursor(cx: &mut TestAppConte
 #[gpui::test]
 fn editor_client_writes_are_not_user_changes(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new editor e style='h=200 w_full'");
+    h.ctl(R, "new editor e : h=200 w-full");
     let e = format!("{R}/e");
     let mut ev = h.subscribe(&format!("{e}/events"));
     h.write(&format!("{e}/value"), "one\ntwo\nthree\n");
@@ -118,21 +119,22 @@ fn editor_client_writes_are_not_user_changes(cx: &mut TestAppContext) {
 #[gpui::test]
 fn editor_save_comes_from_the_client_binding(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new editor e style='h=200 w_full' context=editor");
+    h.ctl(R, "new editor e context=editor : h=200 w-full");
     let e = format!("{R}/e");
-    h.write("keymap", "ctrl-s save context=editor\n");
+    h.write("keys", "ctrl-s save context=editor\n");
     let mut ev = h.subscribe("events");
     h.click(&e);
     h.keys("main", "ctrl-s");
     let lines = h.events(&mut ev);
-    assert!(has(&lines, "save ", &[" e win="]), "{lines:?}");
-    assert!(!has(&lines, "action ", &["id=save"]), "{lines:?}");
+    // 0.2: the core matches `keys` and names the focused editor.
+    assert!(has(&lines, "action save e win=main", &["via=key"]), "{lines:?}");
+    assert!(!has(&lines, "save ", &[]), "{lines:?}");
 }
 
 #[gpui::test]
 fn editor_save_falls_back_to_the_platform_key(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new editor e style='h=200 w_full'");
+    h.ctl(R, "new editor e : h=200 w-full");
     let e = format!("{R}/e");
     let mut ev = h.subscribe("events");
     h.click(&e);
@@ -144,7 +146,7 @@ fn editor_save_falls_back_to_the_platform_key(cx: &mut TestAppContext) {
 #[gpui::test]
 fn editor_complete_is_a_request_answered_through_a_file(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new editor e style='h=200 w_full'");
+    h.ctl(R, "new editor e : h=200 w-full");
     let e = format!("{R}/e");
     // Without `complete` in `on`, typing asks nothing.
     let mut ev = h.subscribe(&format!("{e}/events"));
@@ -194,7 +196,7 @@ fn markdown_and_html_render(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(
         R,
-        "new markdown m selectable=on style=w_full\nnew html x style=w_full",
+        "new markdown m selectable=on : w-full\nnew html x : w-full",
     );
     h.write(
         &format!("{R}/m/text"),
@@ -213,7 +215,7 @@ fn markdown_and_html_render(cx: &mut TestAppContext) {
 #[gpui::test]
 fn diff_from_old_and_new_and_from_a_patch(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new diff d path=src/a.rs style='h=200 w_full'");
+    h.ctl(R, "new diff d path=src/a.rs : h=200 w-full");
     let d = format!("{R}/d");
     h.write(&format!("{d}/old"), "a\nb\nc\n");
     h.write(&format!("{d}/new"), "a\nB\nc\nd\n");
@@ -240,7 +242,7 @@ fn message_list_and_bubble_render(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(
         R,
-        "new message-list msgs style='h=300 w_full'\nnew bubble b role=user text=Hi style=filled",
+        "new message-list msgs : h=300 w-full\nnew bubble b role=user text=Hi filled",
     );
     let m = format!("{R}/msgs");
     h.write(

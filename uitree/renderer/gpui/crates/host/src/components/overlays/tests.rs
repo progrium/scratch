@@ -3,27 +3,28 @@
 use std::time::Duration;
 
 use gpui::{Modifiers, MouseButton, TestAppContext, point, px};
-use proto::ErrorKind;
+use crate::testing::{ErrorKind, WriteError};
 
 use crate::components::nav::tests::{click_at, click_part, seq_of};
 use crate::testing::Harness;
 
-const W: &str = "windows/main";
-const R: &str = "windows/main/root";
-const O: &str = "windows/main/overlays";
+const W: &str = "win/main";
+const R: &str = "win/main";
+const O: &str = "win/main/over";
 
 fn window(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Test size=800,600");
-    h.write(&format!("{R}/style"), "v_flex size_full p=8 gap=4");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full p=8 gap=4");
     h
 }
 
-fn kind(r: crate::VerbResult) -> Option<ErrorKind> {
+fn kind(r: Result<(), WriteError>) -> Option<ErrorKind> {
     r.err().map(|e| e.kind)
 }
 
-fn open_file(h: &Harness, name: &str) -> String {
+fn open_file(h: &mut Harness, name: &str) -> String {
     h.read(&format!("{O}/{name}/open")).unwrap_or_default()
 }
 
@@ -36,10 +37,10 @@ fn overlays_live_in_overlays(cx: &mut TestAppContext) {
         kind(h.try_write(&format!("{O}/ctl"), "new alert-dialog x variant=sideways")),
         Some(ErrorKind::BadValue)
     );
-    h.ctl(R, "new div more style='w=60 h=24'");
-    h.ctl(O, "new popover pop anchor=root/more placement=bottom-start trigger=click");
+    h.ctl(R, "new div more : w=60 h=24");
+    h.ctl(O, "new popover pop anchor=more placement=bottom-start trigger=click");
     assert_eq!(
-        kind(h.try_write(&format!("{O}/ctl"), "new popover pop2 anchor=root/nope")),
+        kind(h.try_write(&format!("{O}/ctl"), "new popover pop2 anchor=nope")),
         Some(ErrorKind::NotFound)
     );
     assert_eq!(
@@ -47,7 +48,7 @@ fn overlays_live_in_overlays(cx: &mut TestAppContext) {
         Some(ErrorKind::BadValue)
     );
     let ctl = h.read(&format!("{O}/pop/ctl")).unwrap();
-    assert!(ctl.contains("open\n") && ctl.contains("close\n"), "{ctl}");
+    assert!(ctl.contains("open activate\n") && ctl.contains("close activate\n"), "{ctl}");
 }
 
 #[gpui::test]
@@ -55,14 +56,14 @@ fn dialog_open_close_verbs(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(O, "new dialog about title=About width=420 modal=on keyboard=on");
     let d = format!("{O}/about");
-    h.ctl(&d, "new text body text='uitreefs 0.1'\nnew div footer style='h_flex justify_end'");
+    h.ctl(&d, "new text body text='uitreefs 0.1'\nnew div footer : h-flex justify-end");
     h.ctl(&format!("{d}/footer"), "new text ok text=OK tag=about-ok");
-    assert_eq!(open_file(&h, "about"), "off");
+    assert_eq!(open_file(&mut h, "about"), "off");
     let mut ev = h.subscribe(&format!("{W}/events"));
     h.events(&mut ev);
     // `open` in the same write as `new` works too.
     h.write(&format!("{d}/ctl"), "open");
-    assert_eq!(open_file(&h, "about"), "on");
+    assert_eq!(open_file(&mut h, "about"), "on");
     let [_, _, w, hh] = h.bounds(&d);
     // `bounds` is the box inside the 1px border.
     assert!((w - 420.).abs() <= 2., "{w}");
@@ -71,7 +72,7 @@ fn dialog_open_close_verbs(cx: &mut TestAppContext) {
     assert!(h.bounds(&format!("{d}/body"))[2] > 0., "body drawn");
     assert_eq!(h.read(&format!("{W}/focus")).as_deref(), Some("over/about"));
     h.write(&format!("{d}/ctl"), "close");
-    assert_eq!(open_file(&h, "about"), "off");
+    assert_eq!(open_file(&mut h, "about"), "off");
     // Client verbs send no events.
     assert!(h.events(&mut ev).is_empty());
     // The tree document leaves out `open`.
@@ -84,7 +85,7 @@ fn new_then_open_in_one_write(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(O, "new dialog hi title=Welcome width=320");
     h.write(&format!("{O}/hi/ctl"), "open");
-    assert_eq!(open_file(&h, "hi"), "on");
+    assert_eq!(open_file(&mut h, "hi"), "on");
 }
 
 #[gpui::test]
@@ -103,13 +104,13 @@ fn dialog_escape_asks_to_close(cx: &mut TestAppContext) {
         .unwrap_or_else(|| panic!("{lines:?}"))
         .clone();
     h.ctl(&d, &format!("keep seq={}", seq_of(&req)));
-    assert_eq!(open_file(&h, "d"), "on");
+    assert_eq!(open_file(&mut h, "d"), "on");
     // The close button asks too; this time answer close.
     click_part(&mut h, &format!("{d}#close"));
     let lines = h.events(&mut ev);
     let req = lines.iter().find(|l| l.starts_with("close ")).unwrap_or_else(|| panic!("{lines:?}"));
     h.ctl(&d, &format!("close seq={}", seq_of(req)));
-    assert_eq!(open_file(&h, "d"), "off");
+    assert_eq!(open_file(&mut h, "d"), "off");
 }
 
 #[gpui::test]
@@ -120,17 +121,17 @@ fn dialog_overlay_click_with_no_reader_closes(cx: &mut TestAppContext) {
     // The backdrop, well away from the panel.
     click_at(&mut h, "main", 790., 590.);
     h.settle();
-    assert_eq!(open_file(&h, "d"), "off");
+    assert_eq!(open_file(&mut h, "d"), "off");
 }
 
 #[gpui::test]
 fn dialog_overlay_closable_off(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(O, "new dialog d title=Edit width=300 overlay_closable=off");
+    h.ctl(O, "new dialog d title=Edit width=300 overlay-closable=off");
     h.write(&format!("{O}/d/ctl"), "open");
     click_at(&mut h, "main", 790., 590.);
     h.settle();
-    assert_eq!(open_file(&h, "d"), "on");
+    assert_eq!(open_file(&mut h, "d"), "on");
 }
 
 #[gpui::test]
@@ -155,7 +156,7 @@ fn alert_dialog_confirm_and_cancel(cx: &mut TestAppContext) {
         lines.iter().any(|l| l.starts_with("confirm del over/confirm-del win=main")),
         "{lines:?}"
     );
-    assert_eq!(open_file(&h, "confirm-del"), "off");
+    assert_eq!(open_file(&mut h, "confirm-del"), "off");
     h.write(&format!("{a}/ctl"), "open");
     click_part(&mut h, &format!("{a}#cancel"));
     let lines = h.events(&mut ev);
@@ -165,7 +166,7 @@ fn alert_dialog_confirm_and_cancel(cx: &mut TestAppContext) {
     h.keys("main", "escape");
     let lines = h.events(&mut ev);
     assert!(lines.iter().any(|l| l.starts_with("cancel ")), "{lines:?}");
-    assert_eq!(open_file(&h, "confirm-del"), "off");
+    assert_eq!(open_file(&mut h, "confirm-del"), "off");
 }
 
 #[gpui::test]
@@ -184,15 +185,15 @@ fn sheet_sides_and_close(cx: &mut TestAppContext) {
     // Overlay click asks; with no reader the default closes.
     click_at(&mut h, "main", 400., 20.);
     h.settle();
-    assert_eq!(open_file(&h, "s"), "off");
+    assert_eq!(open_file(&mut h, "s"), "off");
 }
 
 #[gpui::test]
 fn popover_toggles_on_its_anchor(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new div more style='w=60 h=24 bg=primary'");
+    h.ctl(R, "new div more : w=60 h=24 bg=primary");
     h.write(&format!("{R}/more/on"), "click");
-    h.ctl(O, "new popover pop anchor=root/more placement=bottom-start trigger=click tag=pop");
+    h.ctl(O, "new popover pop anchor=more placement=bottom-start trigger=click tag=pop");
     h.ctl(&format!("{O}/pop"), "new text t text='Hello from a popover'");
     let mut ev = h.subscribe(&format!("{W}/events"));
     h.events(&mut ev);
@@ -200,7 +201,7 @@ fn popover_toggles_on_its_anchor(cx: &mut TestAppContext) {
     let lines = h.events(&mut ev);
     assert!(lines.iter().any(|l| l.starts_with("click ") && l.contains(" more win=")), "anchor keeps its click: {lines:?}");
     assert!(lines.iter().any(|l| l.starts_with("open ") && l.contains(" over/pop win=") && l.contains(" pop ")), "{lines:?}");
-    assert_eq!(open_file(&h, "pop"), "on");
+    assert_eq!(open_file(&mut h, "pop"), "on");
     // Placed below the anchor, left edges aligned.
     let [ax, ay, _, ah] = h.bounds(&format!("{R}/more"));
     let [px_, py, pw, _] = h.bounds(&format!("{O}/pop"));
@@ -209,41 +210,41 @@ fn popover_toggles_on_its_anchor(cx: &mut TestAppContext) {
     assert!(pw > 0.);
     // A click inside the panel keeps it open; outside closes it.
     h.click(&format!("{O}/pop/t"));
-    assert_eq!(open_file(&h, "pop"), "on");
+    assert_eq!(open_file(&mut h, "pop"), "on");
     click_at(&mut h, "main", 700., 500.);
     let lines = h.events(&mut ev);
     assert!(lines.iter().any(|l| l.starts_with("close ") && l.contains(" over/pop win=")), "{lines:?}");
-    assert_eq!(open_file(&h, "pop"), "off");
+    assert_eq!(open_file(&mut h, "pop"), "off");
     // The anchor toggles: open, then closed.
     h.click(&format!("{R}/more"));
-    assert_eq!(open_file(&h, "pop"), "on");
+    assert_eq!(open_file(&mut h, "pop"), "on");
     h.click(&format!("{R}/more"));
-    assert_eq!(open_file(&h, "pop"), "off");
+    assert_eq!(open_file(&mut h, "pop"), "off");
 }
 
 #[gpui::test]
 fn popover_escape_closes(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new div more style='w=60 h=24'");
-    h.ctl(O, "new popover pop anchor=root/more");
+    h.ctl(R, "new div more : w=60 h=24");
+    h.ctl(O, "new popover pop anchor=more");
     h.write(&format!("{O}/pop/ctl"), "open");
-    assert_eq!(open_file(&h, "pop"), "on");
+    assert_eq!(open_file(&mut h, "pop"), "on");
     h.keys("main", "escape");
-    assert_eq!(open_file(&h, "pop"), "off");
+    assert_eq!(open_file(&mut h, "pop"), "off");
 }
 
 #[gpui::test]
 fn hover_card_opens_after_its_delay(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new div who style='w=80 h=24'\nnew div away style='w=80 h=24'");
-    h.ctl(O, "new hover-card card anchor=root/who open_delay=200 close_delay=100");
+    h.ctl(R, "new div who : w=80 h=24\nnew div away : w=80 h=24");
+    h.ctl(O, "new hover-card card anchor=who open-delay=200 close-delay=100");
     h.ctl(&format!("{O}/card"), "new text t text='@progrium'");
     // GPUI's test scheduler runs timers once nothing else is ready, so the
     // delay itself isn't observable here; the timer path is.
     h.hover(&format!("{R}/who"));
     h.cx.executor().advance_clock(Duration::from_millis(250));
     h.settle();
-    assert_eq!(open_file(&h, "card"), "on");
+    assert_eq!(open_file(&mut h, "card"), "on");
     // Away from both the anchor and the card (which covers `away`).
     {
         let mut v = h.visual("main");
@@ -252,14 +253,14 @@ fn hover_card_opens_after_its_delay(cx: &mut TestAppContext) {
     h.settle();
     h.cx.executor().advance_clock(Duration::from_millis(150));
     h.settle();
-    assert_eq!(open_file(&h, "card"), "off");
+    assert_eq!(open_file(&mut h, "card"), "off");
 }
 
 #[gpui::test]
 fn context_menu_on_right_click(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new div list style='w=300 h=200'");
-    h.ctl(O, "new context-menu menu anchor=root/list tag=ctx");
+    h.ctl(R, "new div list : w=300 h=200");
+    h.ctl(O, "new context-menu menu anchor=list tag=ctx");
     let m = format!("{O}/menu");
     h.write(
         &format!("{m}/menu"),
@@ -277,17 +278,21 @@ fn context_menu_on_right_click(cx: &mut TestAppContext) {
         v.simulate_mouse_up(p, MouseButton::Right, Modifiers::none());
     }
     h.settle();
-    assert_eq!(open_file(&h, "menu"), "on");
+    assert_eq!(open_file(&mut h, "menu"), "on");
     let [mx, my, _, _] = h.bounds(&m);
     assert_eq!((mx, my), (x + 30., y + 40.), "the menu opens at the pointer");
     // A disabled item does nothing.
     click_part(&mut h, &format!("{m}#item:rename"));
-    assert_eq!(open_file(&h, "menu"), "on");
+    assert_eq!(open_file(&mut h, "menu"), "on");
+    // A menu action names no node, so it goes to the app's `events`.
+    let mut app = h.subscribe("events");
+    h.events(&mut app);
     click_part(&mut h, &format!("{m}#item:dup"));
-    let lines = h.events(&mut ev);
+    let lines = h.events(&mut app);
     assert!(
-        lines.iter().any(|l| l.starts_with("action dup over/menu win=main")),
+        // core.md § Menus: an item sends `action ID - via=menu`.
+        lines.iter().any(|l| l.starts_with("action dup - ") && l.contains("via=menu")),
         "{lines:?}"
     );
-    assert_eq!(open_file(&h, "menu"), "off");
+    assert_eq!(open_file(&mut h, "menu"), "off");
 }

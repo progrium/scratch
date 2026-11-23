@@ -21,6 +21,7 @@ pub(crate) enum Input {
     Event { node: Node, name: String, attrs: Vec<(String, String)> },
     Request { node: Node, name: String, attrs: Vec<(String, String)>, default: String },
     Mirror { node: Node, file: String, value: Vec<u8> },
+    MenuAction { id: String },
 }
 
 fn refs(a: &[(String, String)]) -> Vec<(&str, &str)> {
@@ -37,6 +38,11 @@ pub(crate) fn drain_input(inner: &Rc<Inner>, batch: Vec<Input>) {
                 }
             }
             Input::Request { node, name, attrs, default } => inner.request(node, Pending::Component(node), &name, &refs(&attrs), &default),
+            Input::MenuAction { id } => {
+                if let Ok(core) = inner.core.try_borrow() {
+                    core.menu_action(&id);
+                }
+            }
             Input::Mirror { node, file, value } => {
                 if let Ok(core) = inner.core.try_borrow() {
                     let _ = core.mirror(node, &file, &value);
@@ -100,6 +106,8 @@ pub(crate) struct Inner {
     pub clipboard: crate::clipboard::State,
     /// Per-frame timings for --bench: (ABI reads, whole render).
     pub frames: RefCell<Vec<(std::time::Duration, std::time::Duration)>>,
+    /// App assets read so far, dropped on `UIT_CMD_ASSETS`.
+    pub assets: RefCell<HashMap<String, Rc<[u8]>>>,
 }
 
 pub(crate) fn is_dark(a: gpui::WindowAppearance) -> bool {
@@ -162,9 +170,28 @@ impl Inner {
         self.view(r)
     }
 
+    /// The window's overlays to draw, bottom first: the closed anchored
+    /// ones (popover, hover-card, context-menu), which draw only the
+    /// listeners that open them on their anchor, then the open ones in the
+    /// core's order (`uit_overlays` lists only open overlays).
     pub fn overlay_views(self: &Rc<Self>, win: &str) -> Vec<NodeView> {
-        let o: Vec<Node> = self.core.borrow().overlays(win).to_vec();
-        o.into_iter().filter_map(|k| self.view(k)).collect()
+        let open: Vec<Node> = self.core.borrow().overlays(win).to_vec();
+        let prefix = format!("{win}/over/");
+        let mut closed: Vec<(String, Node)> = self
+            .index
+            .borrow()
+            .iter()
+            .filter(|(p, n)| p.strip_prefix(&prefix).is_some_and(|r| !r.contains('/')) && !open.contains(n))
+            .map(|(p, n)| (p.clone(), *n))
+            .collect();
+        closed.sort();
+        closed
+            .into_iter()
+            .map(|(_, n)| n)
+            .filter_map(|k| self.view(k))
+            .filter(|v| matches!(v.ty(), "popover" | "hover-card" | "context-menu"))
+            .chain(open.into_iter().filter_map(|k| self.view(k)))
+            .collect()
     }
 
     pub fn prop(&self, n: Node, file: &str) -> Option<Rc<[u8]>> {
@@ -209,18 +236,10 @@ impl Inner {
         if let Some(s) = self.cache.borrow().get(&n).and_then(|c| c.style.clone()) {
             return s;
         }
-        // Bare variant and size words arrive as `word=on` props.
-        let mut words: Vec<&str> = Vec::new();
-        if let Some(spec) = node.spec() {
-            for w in spec.variants.iter().chain(&spec.sizes) {
-                if node.flag(w) {
-                    words.push(w);
-                }
-            }
-        }
+        // A node's variant and size words come first, as bare base words.
         let p = {
             let core = self.core.borrow();
-            Rc::new(crate::styling::parse(core.style(n), &words))
+            Rc::new(crate::styling::parse(core.style(n)))
         };
         self.cache.borrow_mut().entry(n).or_default().style = Some(p.clone());
         p
@@ -338,6 +357,7 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
         quitting: Cell::new(false),
         clipboard: Default::default(),
         frames: Default::default(),
+        assets: Default::default(),
     });
     crate::theme::init(&inner, cx);
     crate::actions::init(&inner, cx);
@@ -610,6 +630,10 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
             }
         }
         HostCmd::Redraw { win } => notify_window(inner, &win, cx),
+        HostCmd::Assets { name } => {
+            inner.assets.borrow_mut().remove(&name);
+            notify_all(inner, cx);
+        }
         HostCmd::Other(_) => {}
     }
 }

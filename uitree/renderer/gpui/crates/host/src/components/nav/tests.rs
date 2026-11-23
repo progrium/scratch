@@ -2,22 +2,23 @@
 //! GPUI's test platform.
 
 use gpui::{Modifiers, TestAppContext, point, px};
-use proto::ErrorKind;
+use crate::testing::{ErrorKind, WriteError};
 
 use super::part_bounds;
 use crate::testing::Harness;
 
-const W: &str = "windows/main";
-const R: &str = "windows/main/root";
+const W: &str = "win/main";
+const R: &str = "win/main";
 
 fn window(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Test size=800,600");
-    h.write(&format!("{R}/style"), "v_flex size_full p=8 gap=4");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full p=8 gap=4");
     h
 }
 
-fn kind(r: crate::VerbResult) -> Option<ErrorKind> {
+fn kind(r: Result<(), WriteError>) -> Option<ErrorKind> {
     r.err().map(|e| e.kind)
 }
 
@@ -30,16 +31,18 @@ pub(crate) fn click_at(h: &mut Harness, win: &str, x: f32, y: f32) {
 }
 
 pub(crate) fn click_part(h: &mut Harness, key: &str) {
+    // Parts are keyed by the renderer's path, `main/t/b#close`.
+    let key = key.strip_prefix("win/").unwrap_or(key);
     let b = part_bounds(key).unwrap_or_else(|| panic!("no part {key}"));
     let c = b.center();
-    let win = key.split('/').nth(1).unwrap_or("main").to_string();
+    let win = key.split('/').next().unwrap_or("main").to_string();
     click_at(h, &win, f32::from(c.x), f32::from(c.y));
 }
 
 /// Clicks along a line until an event starting with `name` arrives.
 fn scan_click(
     h: &mut Harness,
-    sub: &mut tree::Subscription,
+    sub: &mut crate::testing::Subscription,
     from: (f32, f32),
     step: (f32, f32),
     n: usize,
@@ -57,8 +60,8 @@ fn scan_click(
 }
 
 fn settings(h: &mut Harness) {
-    h.write(&format!("{R}/style"), "h_flex size_full");
-    h.ctl(R, "new sidebar nav\nnew div page style='flex_1 p=24'");
+    h.write(&format!("{R}/style"), "h-flex size-full");
+    h.ctl(R, "new sidebar nav\nnew div page : flex-1 p=24");
     h.ctl(&format!("{R}/nav"), "new sidebar-group g label=Settings");
     h.ctl(
         &format!("{R}/nav/g"),
@@ -110,7 +113,7 @@ fn sidebar_toggle_collapses(cx: &mut TestAppContext) {
 #[gpui::test]
 fn tabs_value_names_a_tab(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new tabs t style=underline");
+    h.ctl(R, "new tabs t underline");
     let t = format!("{R}/t");
     h.ctl(&t, "new tab a label=One\nnew tab b label=Two closable=on");
     assert_eq!(kind(h.try_write(&format!("{t}/ctl"), "new div x")), Some(ErrorKind::UnknownType));
@@ -216,7 +219,7 @@ fn breadcrumb_click_sends_id(cx: &mut TestAppContext) {
 #[gpui::test]
 fn pagination_pages(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new pagination pg total=120 per_page=20");
+    h.ctl(R, "new pagination pg total=120 per-page=20");
     let p = format!("{R}/pg");
     h.write(&format!("{p}/page"), "3");
     assert_eq!(h.read(&format!("{p}/page")).as_deref(), Some("3"));
@@ -238,7 +241,7 @@ fn pagination_pages(cx: &mut TestAppContext) {
 #[gpui::test]
 fn stepper_changes_value(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new stepper s style='w=600'");
+    h.ctl(R, "new stepper s : w=600");
     let s = format!("{R}/s");
     h.write(&format!("{s}/items"), "cart\tCart\nship\tShipping\npay\tPayment\n");
     let [x, y, w, hh] = h.bounds(&s);
@@ -274,7 +277,8 @@ fn bars_render(cx: &mut TestAppContext) {
     h.ctl(&format!("{R}/sb"), "new text left text='Ln 1'\nnew text center text=ok\nnew text right text=UTF-8");
     assert_eq!(
         kind(h.try_write(&format!("{R}/sb/ctl"), "new text middle")),
-        Some(ErrorKind::BadValue)
+        // core.md § Errors: a child the parent can't hold.
+        Some(ErrorKind::UnknownType)
     );
     for n in ["tb", "tools", "sb", "sb/left", "sb/right", "sb/center"] {
         let [_, _, w, hh] = h.bounds(&format!("{R}/{n}"));

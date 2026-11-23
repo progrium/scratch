@@ -56,7 +56,5 @@ pub(crate) fn number(node: &NodeView, file: &str) -> Option<f32> {
     node.text(file).and_then(|s| s.trim().parse().ok())
 }
 
-// uitreefs-spelled render tests: not built until they are ported to 0.2
-// as the core serves what they need (README § Tests).
-#[cfg(any())]
+#[cfg(test)]
 mod tests;

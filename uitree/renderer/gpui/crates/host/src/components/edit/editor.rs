@@ -59,7 +59,7 @@ pub struct EditorNode {
 
 fn tab_size(node: &NodeView) -> TabSize {
     TabSize {
-        tab_size: number(node, "tab_size")
+        tab_size: number(node, "tab-size")
             .map(|n| n.max(1.) as usize)
             .unwrap_or(4),
         hard_tabs: false,
@@ -70,8 +70,8 @@ impl EditorNode {
     fn new(node: &NodeView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let value = raw_text(node, "value");
         let language = node.text("language").unwrap_or_else(|| "text".into());
-        let line_numbers = node.flag("line_numbers");
-        let soft_wrap = node.flag("soft_wrap");
+        let line_numbers = node.flag("line-numbers");
+        let soft_wrap = node.flag("soft-wrap");
         let tab = tab_size(node);
         let placeholder = node.text("placeholder").unwrap_or_default();
         let pending = Rc::new(Pending::default());
@@ -437,15 +437,15 @@ impl Component for EditorComponent {
                     let l = node.text("language").unwrap_or_else(|| "text".into());
                     st.update(cx, |s, cx| s.set_highlighter(l.trim().to_string(), cx));
                 }
-                "line_numbers" => {
-                    let v = node.flag("line_numbers");
+                "line-numbers" => {
+                    let v = node.flag("line-numbers");
                     st.update(cx, |s, cx| s.set_line_number(v, window, cx));
                 }
-                "soft_wrap" => {
-                    let v = node.flag("soft_wrap");
+                "soft-wrap" => {
+                    let v = node.flag("soft-wrap");
                     st.update(cx, |s, cx| s.set_soft_wrap(v, window, cx));
                 }
-                "tab_size" => {
+                "tab-size" => {
                     let t = tab_size(node);
                     st.update(cx, |s, cx| s.set_tab_size(t, cx));
                 }

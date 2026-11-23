@@ -212,11 +212,14 @@ impl NodeView {
     pub fn bounds(&self) -> Option<[f32; 4]> {
         self.host.bounds.borrow().get(&self.info.node).copied()
     }
-    /// An app asset (`$ui/assets/NAME`), for `src=@NAME`. The ABI has no
-    /// read for app-level files yet, so this is `None` until the core
-    /// adds one.
-    pub fn asset(&self, _name: &str) -> Option<Rc<[u8]>> {
-        None
+    /// An app asset (`$ui/asset/NAME`), for `src=@NAME`.
+    pub fn asset(&self, name: &str) -> Option<Rc<[u8]>> {
+        if let Some(a) = self.host.assets.borrow().get(name) {
+            return Some(a.clone());
+        }
+        let a: Rc<[u8]> = self.host.core.borrow().asset(name)?.into();
+        self.host.assets.borrow_mut().insert(name.to_string(), a.clone());
+        Some(a)
     }
     /// An `Emitter` for this node, usable outside render.
     pub fn emitter(&self) -> Emitter {
@@ -396,6 +399,11 @@ impl Emitter {
     /// Component state -> the node's file, as `via=user`.
     pub fn mirror(&self, file: &str, value: impl AsRef<[u8]>) {
         self.send(runtime::Input::Mirror { node: self.node, file: file.into(), value: value.as_ref().to_vec() });
+    }
+    /// A menu item was chosen (a context menu's or a menu button's): the
+    /// core sends `action ID - via=menu`, as for the menu bar.
+    pub fn menu_action(&self, id: &str) {
+        self.send(runtime::Input::MenuAction { id: id.into() });
     }
     fn send(&self, m: runtime::Input) {
         let _ = self.tx.unbounded_send(m);

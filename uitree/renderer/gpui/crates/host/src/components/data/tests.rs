@@ -4,12 +4,13 @@ use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext,
 
 use crate::testing::Harness;
 
-const R: &str = "windows/main/root";
+const R: &str = "win/main";
 
 fn window(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Test size=600,1400");
-    h.write(&format!("{R}/style"), "v_flex size_full p=8 gap=4");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full p=8 gap=4");
     h
 }
 
@@ -51,24 +52,24 @@ fn every_data_type_renders(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(
         R,
-        "new list l selectable=on style=h=80\n\
-         new virtual-list vl style=h=60\n\
-         new table t style=h=80\n\
-         new tree tr style=h=60\n\
+        "new list l selectable=on : h=80\n\
+         new virtual-list vl : h=60\n\
+         new table t : h=80\n\
+         new tree tr : h=60\n\
          new description-list dl bordered=on\n\
          new badge bd count=3\n\
-         new tag tg label=New style='primary sm'\n\
-         new avatar av name='Ada Lovelace' style=sm\n\
+         new tag tg label=New primary sm\n\
+         new avatar av name='Ada Lovelace' sm\n\
          new avatar-group ag max=2\n\
          new kbd kb key=cmd-shift-p\n\
          new progress p value=40\n\
          new progress pc variant=circle\n\
-         new spinner sp style=sm\n\
-         new skeleton sk style='h=10 w=100'\n\
+         new spinner sp sm\n\
+         new skeleton sk : h=10 w=100\n\
          new shimmer sh text=Loading\n\
          new empty em title=Nothing icon=inbox\n\
          new alert al title=Hi text=There variant=success\n\
-         new chart ch kind=bar x=m y=v style=h=80",
+         new chart ch kind=bar x=m y=v : h=80",
     );
     h.write(&format!("{R}/l/items"), &tsv("a|Apple\nb|Banana\n"));
     h.write(&format!("{R}/vl/items"), &tsv("a|Apple\n"));
@@ -76,7 +77,7 @@ fn every_data_type_renders(cx: &mut TestAppContext) {
     h.write(&format!("{R}/t/rows"), &tsv("1|x\n"));
     h.write(&format!("{R}/tr/items"), &tsv("a|-|A\n"));
     h.write(&format!("{R}/dl/items"), &tsv("Name|uitreefs\n"));
-    h.ctl(&format!("{R}/bd"), "new icon i name=bell style=size=16");
+    h.ctl(&format!("{R}/bd"), "new icon i name=bell : size=16");
     h.ctl(&format!("{R}/ag"), "new avatar a name=Ken\nnew avatar b name=Rob\nnew avatar c name=Russ");
     h.ctl(&format!("{R}/em"), "new div act");
     h.write(&format!("{R}/ch/data"), &tsv("m|v\nJan|3\nFeb|5\n"));
@@ -102,17 +103,16 @@ fn data_files_validate(cx: &mut TestAppContext) {
     assert!(h.try_write(&format!("{R}/l/items"), &tsv("|Nameless\n")).is_err());
     assert_eq!(h.read(&format!("{R}/l/items")).unwrap().lines().count(), 4);
     assert!(h.try_write(&format!("{R}/t/columns"), &tsv("a|A|wide\n")).is_err());
-    h.write(&format!("{R}/t/rows"), &tsv("1|a\n2|b\n"));
-    h.write(&format!("{R}/t/append"), &tsv("3|c\n"));
+    h.write(&format!("{R}/t/rows"), &tsv("1|a\n2|b\n3|c\n"));
     assert_eq!(h.read(&format!("{R}/t/rows")).unwrap().lines().count(), 3);
     assert!(h.try_write(&format!("{R}/t/selectable"), "column").is_err());
     assert!(h.try_write(&format!("{R}/tr/items"), "a\n").is_err());
     h.write(&format!("{R}/p/value"), "40");
-    assert!(h.try_write(&format!("{R}/p/value"), "140").is_err());
-    assert!(h.try_write(&format!("{R}/p/value"), "-1").is_err());
+    // 0.2's progress descriptor gives `value` no range, so 140 is taken.
     h.write(&format!("{R}/p/value"), "");
-    h.write(&format!("{R}/g/style"), "danger outline");
-    assert!(h.try_write(&format!("{R}/g/style"), "ghost").is_err());
+    // Variants are bare words on `set`, not style words (0.2).
+    h.ctl(R, "set g danger outline");
+    assert!(h.try_write(&format!("{R}/ctl"), "set g ghost").is_err());
     assert!(h.try_write(&format!("{R}/l/ctl"), "new text x").is_err());
     h.ctl(&format!("{R}/l"), "new div row");
 }
@@ -120,7 +120,7 @@ fn data_files_validate(cx: &mut TestAppContext) {
 #[gpui::test]
 fn list_click_selects_and_double_click_opens(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new list l selectable=on style=h=200 tag=pick");
+    h.ctl(R, "new list l selectable=on tag=pick : h=200");
     h.write(&format!("{R}/l/items"), &tsv("a|Apple\nb|Banana\nc|Cherry\n"));
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
@@ -138,7 +138,7 @@ fn list_click_selects_and_double_click_opens(cx: &mut TestAppContext) {
 #[gpui::test]
 fn list_value_write_selects_without_an_event(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new list l selectable=on style=h=200");
+    h.ctl(R, "new list l selectable=on : h=200");
     h.write(&format!("{R}/l/items"), &tsv("a|Apple\nb|Banana\n"));
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
@@ -150,7 +150,7 @@ fn list_value_write_selects_without_an_event(cx: &mut TestAppContext) {
         .host
         .states
         .borrow()
-        .get(state.path())
+        .get(&state.node())
         .and_then(|s| s.entity.clone())
         .unwrap()
         .downcast::<super::list::ListHolder>()
@@ -165,8 +165,8 @@ fn list_value_write_selects_without_an_event(cx: &mut TestAppContext) {
 #[gpui::test]
 fn list_row_template_stamps_fields(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new list l selectable=on style=h=200");
-    h.ctl(&format!("{R}/l"), "new div row style='v_flex gap=2'");
+    h.ctl(R, "new list l selectable=on : h=200");
+    h.ctl(&format!("{R}/l"), "new div row : v-flex gap=2");
     h.ctl(&format!("{R}/l/row"), "new text title text={title}\nnew text meta text='{score} by {by}'");
     h.write(&format!("{R}/l/fields"), "title\tscore\tby\n");
     h.write(&format!("{R}/l/items"), &tsv("1|Hello|10|ada\n2|World|20|ken\n"));
@@ -180,28 +180,28 @@ fn list_row_template_stamps_fields(cx: &mut TestAppContext) {
 #[gpui::test]
 fn list_scrolled_to_end_once_per_page(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new list l style=h=100");
+    h.ctl(R, "new list l : h=100");
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
     let page: String = (0..3).map(|i| format!("{i}\tItem {i}\n")).collect();
     h.write(&format!("{R}/l/items"), &page);
     h.settle();
-    let n = h.events(&mut ev).iter().filter(|l| l.starts_with("scrolled_to_end")).count();
+    let n = h.events(&mut ev).iter().filter(|l| l.starts_with("scrolled-to-end")).count();
     assert_eq!(n, 1);
     h.settle();
-    let n = h.events(&mut ev).iter().filter(|l| l.starts_with("scrolled_to_end")).count();
+    let n = h.events(&mut ev).iter().filter(|l| l.starts_with("scrolled-to-end")).count();
     assert_eq!(n, 0, "not again for the same page");
     h.write(&format!("{R}/l/loading"), "on");
     let more: String = (0..6).map(|i| format!("{i}\tItem {i}\n")).collect();
     h.write(&format!("{R}/l/items"), &more);
     h.write(&format!("{R}/l/loading"), "off");
     h.settle();
-    let n = h.events(&mut ev).iter().filter(|l| l.starts_with("scrolled_to_end")).count();
+    let n = h.events(&mut ev).iter().filter(|l| l.starts_with("scrolled-to-end")).count();
     assert_eq!(n, 1, "again for the next page");
 }
 
 fn table(h: &mut Harness) {
-    h.ctl(R, "new table t stripe=on selectable=row sortable=on style=h=300 tag=files");
+    h.ctl(R, "new table t stripe=on selectable=row sortable=on tag=files : h=300");
     h.write(
         &format!("{R}/t/columns"),
         &tsv("name|Name|200|sort\nsize|Size|90|sort|align=right\n"),
@@ -243,7 +243,7 @@ fn order_of(h: &mut Harness) -> Vec<String> {
         .host
         .states
         .borrow()
-        .get(n.path())
+        .get(&n.node())
         .and_then(|s| s.entity.clone())
         .unwrap()
         .downcast::<super::table::TableHolder>()
@@ -277,17 +277,18 @@ fn table_header_click_sends_sort(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn table_append_adds_rows(cx: &mut TestAppContext) {
+fn table_rows_rewrite_adds_rows(cx: &mut TestAppContext) {
+    // 0.2 has no `append` file: a client rewrites `rows`.
     let mut h = window(cx);
     table(&mut h);
-    h.write(&format!("{R}/t/append"), &tsv("4|d.txt|9\n"));
+    h.write(&format!("{R}/t/rows"), &tsv("1|b.txt|300\n2|a.txt|12\n3|c.txt|7\n4|d.txt|9\n"));
     assert_eq!(order_of(&mut h), ["1", "2", "3", "4"]);
 }
 
 #[gpui::test]
 fn tree_click_expands_and_selects(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new tree tr selectable=on style=h=200");
+    h.ctl(R, "new tree tr selectable=on : h=200");
     h.write(&format!("{R}/tr/items"), &tsv("src|-|src|icon=folder\nmain|src|main.rs\ndocs|-|docs\n"));
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
@@ -303,7 +304,7 @@ fn tree_click_expands_and_selects(cx: &mut TestAppContext) {
 #[gpui::test]
 fn tree_expanded_file_expands(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new tree tr style=h=200");
+    h.ctl(R, "new tree tr : h=200");
     h.write(&format!("{R}/tr/items"), &tsv("src|-|src\nmain|src|main.rs\ndocs|-|docs\n"));
     let n = h.node(&format!("{R}/tr"));
     let count = |h: &mut Harness| {
@@ -311,7 +312,7 @@ fn tree_expanded_file_expands(cx: &mut TestAppContext) {
             .host
             .states
             .borrow()
-            .get(n.path())
+            .get(&n.node())
             .and_then(|s| s.entity.clone())
             .unwrap()
             .downcast::<super::tree::TreeHolder>()
@@ -331,7 +332,7 @@ fn tag_and_alert_close(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.ctl(
         R,
-        "new tag g label=Closable closable=on style=danger\n\
+        "new tag g label=Closable closable=on danger\n\
          new alert a title=Oops text=Bad variant=error closable=on",
     );
     let mut ev = h.subscribe("events");
@@ -365,7 +366,7 @@ fn tag_and_alert_close(cx: &mut TestAppContext) {
 #[gpui::test]
 fn chart_click_selects_band(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    h.ctl(R, "new chart c kind=bar x=m y=v style='h=100 w=200'");
+    h.ctl(R, "new chart c kind=bar x=m y=v : h=100 w=200");
     h.write(&format!("{R}/c/data"), &tsv("m|v\nJan|3\nFeb|5\n"));
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
@@ -384,9 +385,9 @@ fn tree_document_with_data_types(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full'\n\
+        "div root : v-flex size-full\n\
          \x20 badge b  count=120  max=99\n\
-         \x20   icon i  name=inbox  style=size=20\n\
+         \x20   icon i  name=inbox : size=20\n\
          \x20 avatar-group g  max=3\n\
          \x20   avatar a  name='Ken Thompson'\n\
          \x20 progress p  value=72  variant=circle\n",
@@ -402,7 +403,7 @@ fn tree_document_with_data_types(cx: &mut TestAppContext) {
 fn gallery_data_stories_render(cx: &mut TestAppContext) {
     macro_rules! g {
         ($p:literal) => {
-            include_str!(concat!("../../../../../examples/rc/gallery/", $p))
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gallery/", $p))
         };
     }
     type Files = &'static [(&'static str, &'static str)];
@@ -439,7 +440,7 @@ fn gallery_data_stories_render(cx: &mut TestAppContext) {
         ),
     ];
     let mut h = window(cx);
-    h.ctl(R, "new scroll story : flex_1 overflow_y_scroll p=24");
+    h.ctl(R, "new scroll story : flex-1 overflow-y-scroll p=24");
     let s = format!("{R}/story");
     for (name, doc, files) in stories {
         if let Err(e) = h.try_write(&format!("{s}/tree"), doc) {

@@ -179,7 +179,7 @@ impl MessageListNode {
         let msgs = parse(node);
         let n = msgs.len();
         let scroller = cx.new(|cx| MessageScrollerState::new(n, cx));
-        if !node.flag("stick_to_bottom") {
+        if !node.flag("stick-to-bottom") {
             scroller.update(cx, |s, cx| {
                 s.scroll_to_item(0, cx);
             });
@@ -196,7 +196,7 @@ impl MessageListNode {
     fn update(&mut self, node: &NodeView, cx: &mut Context<Self>) {
         let new = parse(node);
         let old = self.msgs.borrow().clone();
-        let stick = node.flag("stick_to_bottom");
+        let stick = node.flag("stick-to-bottom");
         let same_ids = old.len() <= new.len()
             && old
                 .iter()
@@ -298,7 +298,7 @@ impl Component for MessageList {
         if let Some(e) = entity::<MessageListNode>(state) {
             match prop {
                 "items" => e.update(cx, |me, cx| me.update(node, cx)),
-                "stick_to_bottom" if node.flag("stick_to_bottom") => {
+                "stick-to-bottom" if node.flag("stick-to-bottom") => {
                     let s = e.read(cx).scroller.clone();
                     s.update(cx, |s, cx| s.scroll_to_end(cx));
                 }
@@ -322,7 +322,7 @@ impl Component for MessageList {
             s.item_count() > 0 && t.item_ix == 0 && t.offset_in_item <= px(0.)
         };
         if top && !at_top.get() {
-            node.emitter().event("scrolled_to_top", &[]);
+            node.emitter().event("scrolled-to-top", &[]);
         }
         at_top.set(top);
 

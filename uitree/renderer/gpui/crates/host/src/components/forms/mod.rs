@@ -24,9 +24,7 @@ mod inputs;
 mod pickers;
 mod toggles;
 
-// uitreefs-spelled render tests: not built until they are ported to 0.2
-// as the core serves what they need (README § Tests).
-#[cfg(any())]
+#[cfg(test)]
 mod tests;
 
 pub fn register(reg: &mut ComponentRegistry) {

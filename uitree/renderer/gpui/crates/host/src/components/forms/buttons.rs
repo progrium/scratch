@@ -137,7 +137,7 @@ fn build_menu(mut menu: PopupMenu, lines: &[MenuLine], node: &NodeView) -> Popup
                 let mut item = PopupMenuItem::new(label)
                     .disabled(prop("enabled").as_deref() == Some("off"))
                     .checked(prop("check").as_deref() == Some("on"))
-                    .on_click(move |_, _, _| em.event("action", &[("id", &id)]));
+                    .on_click(move |_, _, _| em.menu_action(&id));
                 if let Some(i) = prop("icon") {
                     item = item.icon(gpui_component::Icon::default().path(format!("icons/{i}.svg")));
                 }

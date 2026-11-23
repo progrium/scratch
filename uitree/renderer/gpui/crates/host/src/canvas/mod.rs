@@ -248,7 +248,7 @@ impl Paint {
             border: color("border"),
             color: color("color").or_else(|| (op.kind == OpKind::Text).then(fg)),
             width: numf("width").unwrap_or(1.).max(0.),
-            border_width: numf("border_width").unwrap_or(1.).max(0.),
+            border_width: numf("border-width").unwrap_or(1.).max(0.),
             radius: numf("radius").unwrap_or(0.).max(0.),
             size: numf("size").unwrap_or(14.).max(1.),
             round: get("cap").as_deref() == Some("round"),
@@ -967,7 +967,5 @@ mod tests {
     }
 }
 
-// uitreefs-spelled render tests: not built until they are ported to 0.2
-// as the core serves what they need (README § Tests).
-#[cfg(any())]
+#[cfg(test)]
 mod render_tests;

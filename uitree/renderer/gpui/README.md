@@ -66,38 +66,40 @@ cargo test -p host       # GPUI test platform, no display needed
 
 `testing::Harness` runs the real core: it listens on a private socket, a
 9P client on another thread writes `$ui` as an app would, and the test
-thread pumps until the write is acked, then draws. Events come back by
+thread pumps until the write is acked, then draws. A write the core
+refuses comes back as a `WriteError` with its 0.2 error word. Events come back by
 reading `events` over 9P. Paths are 0.2 (`win/main/f/ok`).
 
-`tests.rs` covers what the core serves today (the spike's tree: `ctl`
-`new`/`set`/`delete`/`quit`/`show`, prop files, `keys`, `menu/NAME`, the
-app `events`). The per-group render tests from uitreefs
-(`components/*/tests.rs`, `canvas/render_tests.rs`) are still in the
-uitreefs spelling and need core features the spike does not have (other
-windows, node `events`, `bounds`/`focus` files, `tree` documents,
-requests, drags); they are kept out of the build with `#[cfg(any())]`
-and get ported group by group as W3 lands those parts.
+`tests.rs` covers the host and the element tier; `components/*/tests.rs`
+and `canvas/render_tests.rs` cover each component group: 99 tests, all
+passing on W3's core. They are the uitreefs render tests in the 0.2
+spelling. Where 0.2 decides differently, the test follows the spec and
+says so in a comment:
+
+- Variants and sizes are bare words on `new`/`set` (`button b primary`),
+  not style words.
+- There is no `append` file; a client rewrites `rows`.
+- A child the parent can't hold is `unknown type`, not `bad value`.
+- `progress` has no range on `value`.
+- A context menu or menu button item sends `action ID - via=menu` to the
+  app's `events`, as the menu bar does.
+- `trace` is a stream, read like `events`.
+- Hidden `main` needs content or `show` to open, even after `window main`.
+
+The gallery stories the tests load are copied, converted to 0.2, into
+`crates/host/fixtures/gallery/`.
+
+## Examples
+
+The examples W5 ported to 0.2 (`tests/conformance/examples/`) run in h9
+under Xvfb: hello, counter, confirm, signin and csvview (awk). Typing and
+Enter in hello, clicks and keys in counter, and the filter in csvview were
+driven with xdotool. Screenshots: [examples/screenshots/](examples/screenshots/).
 
 ## What the core does not offer yet
 
-Each of these has a stopgap in the renderer, marked in the code, that
-goes when the core has it:
-
-- `uit_lines` returns `UIT_ENOTSUP`: `uitcore::Core::lines` splits the
-  prop text itself (`fallback_lines`).
-- `uit_bounds` returns `UIT_ENOTSUP`: bounds are kept host-side
-  (`Inner::bounds`) and not visible to clients.
-- Window files (`state`, `bounds`, `focus`) have no ABI call; the host
-  mirrors them on the window's root node with `uit_mirror`.
-- App-level files (`assets/`, the clipboard read back, `theme/name`) have
-  no ABI; `NodeView::asset` returns nothing and the clipboard is
-  write-only.
-- `uit_request` returns 0 (default applied) with no `UIT_CMD_ANSWER`; the
-  host applies the default answer itself, so a tab or dock panel close
-  that the core should do (remove the node) does nothing yet.
-- `uit_drag` and `uit_menu` return `UIT_ENOTSUP`: drag sources and drop
-  targets are wired to `uit_drag` but nothing reaches the client.
-- Key contexts are not in the spike's matcher.
+- The clipboard has no ABI call to read the platform's text back, so the
+  host only writes it.
 - The `message-list`, diagnostics and completion line formats are not in
-  components.md 0.2; the host still parses them from the prop text as
-  uitreefs did.
+  components.md 0.2; the host parses them from the prop text as uitreefs
+  did.

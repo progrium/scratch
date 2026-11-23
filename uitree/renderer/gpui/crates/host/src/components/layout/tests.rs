@@ -5,12 +5,13 @@ use gpui::{Modifiers, TestAppContext, point, px};
 use super::dock::DockNode;
 use crate::testing::Harness;
 
-const R: &str = "windows/main/root";
+const R: &str = "win/main";
 
 fn window(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Test size=800,600");
-    h.write(&format!("{R}/style"), "v_flex size_full p=8 gap=4");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full p=8 gap=4");
     h
 }
 
@@ -33,8 +34,8 @@ fn accordion_click_opens_an_item(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full p=8'\n\
-         \x20 accordion a  style=w=400\n\
+        "div root : v-flex size-full p=8\n\
+         \x20 accordion a : w=400\n\
          \x20   accordion-item one  title=One\n\
          \x20     text t  text=First\n\
          \x20   accordion-item two  title=Two\n\
@@ -74,11 +75,11 @@ fn collapsible_trigger_toggles_open(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full p=8'\n\
+        "div root : v-flex size-full p=8\n\
          \x20 collapsible more\n\
-         \x20   div trigger  style='h=24 w=120'\n\
+         \x20   div trigger : h=24 w=120\n\
          \x20     text t  text=Details\n\
-         \x20   div content  style=h=100\n\
+         \x20   div content : h=100\n\
          \x20     text t  text=Hidden\n",
     );
     let c = format!("{R}/more");
@@ -102,19 +103,19 @@ fn group_box_separator_and_grid_lay_out(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full p=8 gap=8'\n\
-         \x20 group-box g  title=Startup  style=outline\n\
+        "div root : v-flex size-full p=8 gap=8\n\
+         \x20 group-box g  title=Startup outline\n\
          \x20   text t  text=Inside\n\
          \x20 separator s  label=or\n\
-         \x20 div row  style='h_flex h=40'\n\
+         \x20 div row : h-flex h=40\n\
          \x20   text a  text=A\n\
-         \x20   separator v  dir=v\n\
+         \x20   separator v  dir=col\n\
          \x20   text b  text=B\n\
-         \x20 grid keys  cols=3  gap=4  style=w=300\n\
-         \x20   div k1  style=h=20\n\
-         \x20   div k2  style=h=20\n\
-         \x20   div k3  style=h=20\n\
-         \x20   div k4  style='h=20 col_span=2'\n",
+         \x20 grid keys  cols=3  gap=4 : w=300\n\
+         \x20   div k1 : h=20\n\
+         \x20   div k2 : h=20\n\
+         \x20   div k3 : h=20\n\
+         \x20   div k4 : h=20 col-span=2\n",
     );
     let g = |n: &str| format!("{R}/{n}");
     assert!(h.bounds(&g("g"))[3] > 0.);
@@ -130,8 +131,9 @@ fn group_box_separator_and_grid_lay_out(cx: &mut TestAppContext) {
     );
     assert!(k4[1] > k1[1], "fourth key wraps: {k4:?}");
     assert!(k4[2] > k1[2] * 1.5, "col_span=2: {k4:?}");
-    assert!(h.try_write(&g("g/style"), "fill").is_ok());
-    assert!(h.try_write(&g("g/style"), "primary").is_err());
+    // Variants are bare words on `set`, not style words (0.2).
+    assert!(h.try_write(&g("ctl"), "set g fill").is_ok());
+    assert!(h.try_write(&g("ctl"), "set g primary").is_err());
 }
 
 #[gpui::test]
@@ -139,10 +141,10 @@ fn resizable_panels_take_sizes(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full p=8'\n\
-         \x20 resizable r  dir=h  style='h=200 w=600'\n\
+        "div root : v-flex size-full p=8\n\
+         \x20 resizable r  dir=row : h=200 w=600\n\
          \x20   panel a  size=150  min=100\n\
-         \x20     div x  style='size_full bg=muted'\n\
+         \x20     div x : size-full bg=muted\n\
          \x20   panel b\n\
          \x20     text t  text=Right\n",
     );
@@ -161,12 +163,12 @@ fn resizable_panels_take_sizes(cx: &mut TestAppContext) {
     assert!(h.try_write(&format!("{r}/ctl"), "new div stray").is_err());
 }
 
-const DOCK: &str = "div root  style='v_flex size_full'\n\
-    \x20 dock ws  style=flex_1\n\
+const DOCK: &str = "div root : v-flex size-full\n\
+    \x20 dock ws : flex-1\n\
     \x20   dock-panel files  title=Files  icon=folder  zone=left\n\
     \x20     text t  text=tree\n\
     \x20   dock-panel src  title=main.rs  zone=center\n\
-    \x20     editor e  style=size_full\n\
+    \x20     editor e : size-full\n\
     \x20   dock-panel out  title=Output  zone=bottom  closable=on\n\
     \x20     text t  text=log\n";
 
@@ -177,7 +179,7 @@ fn dock(h: &Harness) -> gpui::Entity<DockNode> {
         .host
         .states
         .borrow()
-        .get(&p)
+        .get(&n.node())
         .and_then(|s| s.entity.clone());
     super::entity::<DockNode>(st.as_ref()).expect("dock state")
 }
@@ -332,8 +334,8 @@ fn resizable_drag_sends_one_resize(cx: &mut TestAppContext) {
     let mut h = window(cx);
     h.write(
         &format!("{R}/tree"),
-        "div root  style='v_flex size_full p=8'\n\
-         \x20 resizable r  dir=h  style='h=200 w=600'\n\
+        "div root : v-flex size-full p=8\n\
+         \x20 resizable r  dir=row : h=200 w=600\n\
          \x20   panel a  size=150\n\
          \x20   panel b\n",
     );
@@ -378,7 +380,7 @@ fn resizable_drag_sends_one_resize(cx: &mut TestAppContext) {
 #[gpui::test]
 fn gallery_stories_load(cx: &mut TestAppContext) {
     let mut h = window(cx);
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/rc/gallery");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/gallery");
     h.ctl(R, "new scroll story");
     for story in ["accordion", "resizable", "editor", "markdown"] {
         let doc = std::fs::read_to_string(format!("{dir}/{story}/tree")).unwrap();

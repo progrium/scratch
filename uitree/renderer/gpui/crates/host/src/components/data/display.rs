@@ -131,7 +131,7 @@ fn description_list(rcx: &mut RenderCx, node: &NodeView) -> AnyElement {
         } else {
             Axis::Horizontal
         });
-    if let Some(w) = node.text("label_width").and_then(|s| s.trim().parse::<f32>().ok()) {
+    if let Some(w) = node.text("label-width").and_then(|s| s.trim().parse::<f32>().ok()) {
         dl = dl.label_width(px(w));
     }
     if let Some(s) = kit_size(&rcx.style_of(node)) {

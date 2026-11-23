@@ -33,7 +33,5 @@ pub(crate) fn spec(name: &str) -> &'static crate::Spec {
 
 pub(crate) use super::edit::{entity, no_verb, number};
 
-// uitreefs-spelled render tests: not built until they are ported to 0.2
-// as the core serves what they need (README § Tests).
-#[cfg(any())]
+#[cfg(test)]
 mod tests;

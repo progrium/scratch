@@ -4,14 +4,14 @@ use gpui::{Modifiers, MouseButton, TestAppContext, point, px};
 
 use crate::testing::Harness;
 
-const R: &str = "windows/main/root";
-const C: &str = "windows/main/root/c";
+const R: &str = "win/main";
+const C: &str = "win/main/c";
 
 const OPS: &str = "rect   bg      0 0 400 300   fill=background
 rect   card    20 20 160 90  fill=muted radius=8 border=border
 path   spark   M20,200 L60,180 L100,190 L140,150  stroke=primary width=2 cap=round
 circle dot     140 150 4     fill=primary hover:fill=accent
-text   lbl     28 44         'Revenue'  size=13 color=muted_foreground weight=bold
+text   lbl     28 44         'Revenue'  size=13 color=muted-foreground weight=bold
 image  logo    360 12 24 24  src=@logo
 line   axis    0 290 400 290 stroke=#ff000080
 path   blob    M300,200 C310,180,330,180,340,200 S370,220,380,200 Q390,190,395,200 T399,200 A5,5,0,0,1,390,210 Z fill=accent
@@ -20,8 +20,9 @@ path   blob    M300,200 C310,180,330,180,340,200 S370,220,380,200 Q390,190,395,2
 fn canvas(cx: &mut TestAppContext) -> Harness {
     let mut h = Harness::new(cx);
     h.ctl("", "window main title=Test size=500,400");
-    h.write(&format!("{R}/style"), "v_flex size_full");
-    h.ctl(R, "new canvas c style='w=400 h=300'");
+    h.ctl("win/main", "show");
+    h.write(&format!("{R}/style"), "v-flex size-full");
+    h.ctl(R, "new canvas c : w=400 h=300");
     h
 }
 
@@ -35,12 +36,12 @@ fn at(h: &Harness, x: f32, y: f32) -> gpui::Point<gpui::Pixels> {
 fn ops_render_and_ctl_edits_them(cx: &mut TestAppContext) {
     let mut h = canvas(cx);
     h.write(
-        "assets/logo",
+        "asset/logo",
         "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24'/>",
     );
     h.write(&format!("{C}/ops"), OPS);
     assert_eq!(h.bounds(C)[2..], [400., 300.]);
-    h.ctl(C, "set dot 150 140");
+    h.ctl(C, "update dot 150 140");
     h.ctl(C, "add circle dot2 10 10 3 fill=accent");
     h.ctl(C, "del card");
     h.ctl(C, "raise bg");
@@ -56,13 +57,13 @@ fn ops_render_and_ctl_edits_them(cx: &mut TestAppContext) {
     );
     assert!(ops.contains("circle dot 150 140 4"), "{ops}");
     let e = h
-        .try_write(&format!("{C}/ctl"), "set nope 1 1")
+        .try_write(&format!("{C}/ctl"), "update nope 1 1")
         .unwrap_err();
-    assert_eq!(e.kind, proto::ErrorKind::NotFound);
+    assert_eq!(e.kind, crate::testing::ErrorKind::NotFound);
     let e = h
         .try_write(&format!("{C}/ctl"), "add rect dot 0 0 1 1")
         .unwrap_err();
-    assert_eq!(e.kind, proto::ErrorKind::InUse);
+    assert_eq!(e.kind, crate::testing::ErrorKind::InUse);
     // Rendering after the edits still works.
     h.settle();
     assert_eq!(h.bounds(C)[2..], [400., 300.]);
@@ -72,7 +73,7 @@ fn ops_render_and_ctl_edits_them(cx: &mut TestAppContext) {
 fn pointer_events_name_the_item(cx: &mut TestAppContext) {
     let mut h = canvas(cx);
     h.write(&format!("{C}/ops"), OPS);
-    h.write(&format!("{C}/on"), "mouse_down mouse_up click move drag");
+    h.write(&format!("{C}/on"), "mouse-down mouse-up click move drag");
     let mut ev = h.subscribe("events");
     h.events(&mut ev);
     let mut v = h.visual("main");
@@ -87,7 +88,7 @@ fn pointer_events_name_the_item(cx: &mut TestAppContext) {
     let lines = h.events(&mut ev);
     let has = |pre: &str| lines.iter().any(|l| l.starts_with(pre));
     assert!(
-        has("mouse_down - c win=main item=dot x=141 y=150 button=left"),
+        has("mouse-down - c win=main item=dot x=141 y=150 button=left"),
         "{lines:?}"
     );
     assert!(
@@ -99,7 +100,7 @@ fn pointer_events_name_the_item(cx: &mut TestAppContext) {
         "{lines:?}"
     );
     assert!(
-        has("mouse_up - c win=main item=bg x=200 y=250 button=left"),
+        has("mouse-up - c win=main item=bg x=200 y=250 button=left"),
         "{lines:?}"
     );
     assert!(
@@ -110,7 +111,7 @@ fn pointer_events_name_the_item(cx: &mut TestAppContext) {
     assert!(
         !lines
             .iter()
-            .any(|l| l.starts_with("mouse_down") && !l.contains("item=")),
+            .any(|l| l.starts_with("mouse-down") && !l.contains("item=")),
         "{lines:?}"
     );
 }
@@ -122,11 +123,12 @@ fn hover_tracks_the_item_under_the_pointer(cx: &mut TestAppContext) {
     let mut v = h.visual("main");
     v.simulate_mouse_move(at(&h, 140., 150.), None, Modifiers::none());
     h.settle();
+    let cn = h.node(C).node();
     let st = h
         .inner()
         .states
         .borrow()
-        .get(C)
+        .get(&cn)
         .and_then(|s| s.entity.clone())
         .unwrap();
     let st = st.downcast::<super::CanvasState>().ok().unwrap();
@@ -142,11 +144,7 @@ fn hover_tracks_the_item_under_the_pointer(cx: &mut TestAppContext) {
 fn pixels_draw_at_the_canvas_width(cx: &mut TestAppContext) {
     let mut h = canvas(cx);
     let px_data = vec![128u8; 400 * 300 * 4];
-    h.op(tree::Op::Write {
-        path: tree::FsPath::new(format!("{C}/pixels")),
-        data: px_data.into(),
-    })
-    .unwrap();
+    h.try_write_bytes(&format!("{C}/pixels"), &px_data).unwrap();
     h.settle();
     assert_eq!(h.bounds(C)[2..], [400., 300.]);
 }

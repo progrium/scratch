@@ -1,0 +1,11 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : h-flex items-center gap=16
+    avatar a  name='Ada Lovelace' sm
+    avatar b  name='Alan Turing'
+    avatar c  name='Grace Hopper' lg
+    avatar-group g  max=3
+      avatar a  name='Ken Thompson'
+      avatar b  name='Dennis Ritchie'
+      avatar c  name='Rob Pike'
+      avatar d  name='Russ Cox'
+      avatar e  name='Dave Presotto'

@@ -160,18 +160,11 @@ pub fn is_kit_word(name: &str) -> bool {
 /// A node's style words, as the core gave them, into refinements.
 /// `variant_props` are the bare variant and size words set as props
 /// (`new button ok primary` arrives as `primary=on`).
-pub fn parse<'a>(words: impl Iterator<Item = uitcore::StyleWord<'a>>, variant_props: &[&str]) -> ParsedStyle {
+pub fn parse<'a>(words: impl Iterator<Item = uitcore::StyleWord<'a>>) -> ParsedStyle {
     let mut out = ParsedStyle::default();
     for w in words {
         let args: Vec<Arg> = w.args().collect();
         apply_word(&mut out, w.name, w.state, w.group, &args);
-    }
-    for v in variant_props {
-        if is_size_word(v) {
-            out.size = Some(v.to_string());
-        } else {
-            out.variants.push(v.to_string());
-        }
     }
     out
 }

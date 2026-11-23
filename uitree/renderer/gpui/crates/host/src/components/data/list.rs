@@ -263,7 +263,7 @@ impl ListDelegate for ListData {
     fn load_more(&mut self, _: &mut Window, _: &mut Context<ListState<Self>>) {
         if self.has_more_now() {
             self.asked_at = Some(self.items.len());
-            self.node.emitter().event("scrolled_to_end", &[]);
+            self.node.emitter().event("scrolled-to-end", &[]);
         }
     }
 }
@@ -346,7 +346,7 @@ fn sync(state: &Entity<ListState<ListData>>, node: &NodeView, virt: bool, rcx: &
         let d = s.delegate_mut();
         d.multiple = node.flag("multiple");
         d.loading = node.flag("loading");
-        d.item_size = virt.then(|| super::number(node, "item_size", 32.));
+        d.item_size = virt.then(|| super::number(node, "item-size", 32.));
         let mut dirty = false;
         if d.w_items.changed(node, "items") {
             d.items = lines::<Item>(node, "items");

@@ -252,7 +252,7 @@ impl TableDelegate for TableData {
     fn load_more(&mut self, _: &mut Window, _: &mut Context<TableState<Self>>) {
         if !self.loading && !self.rows.is_empty() && self.asked_at != Some(self.rows.len()) {
             self.asked_at = Some(self.rows.len());
-            self.node.emitter().event("scrolled_to_end", &[]);
+            self.node.emitter().event("scrolled-to-end", &[]);
         }
     }
 }

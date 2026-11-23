@@ -81,12 +81,12 @@ fn highlight(words: &[&str], rcx: &RenderCx) -> HighlightStyle {
             crate::styling::parse_color(arg, rcx.cx_ref())
         };
         match name {
-            "text_color" | "color" => h.color = color(),
-            "bg" | "text_bg" => h.background_color = color(),
-            "font_bold" => h.font_weight = Some(FontWeight::BOLD),
-            "font_semibold" => h.font_weight = Some(FontWeight::SEMIBOLD),
-            "font_medium" => h.font_weight = Some(FontWeight::MEDIUM),
-            "font_weight" => h.font_weight = arg.parse().ok().map(FontWeight),
+            "text-color" | "color" => h.color = color(),
+            "bg" | "text-bg" => h.background_color = color(),
+            "font-bold" => h.font_weight = Some(FontWeight::BOLD),
+            "font-semibold" => h.font_weight = Some(FontWeight::SEMIBOLD),
+            "font-medium" => h.font_weight = Some(FontWeight::MEDIUM),
+            "font-weight" => h.font_weight = arg.parse().ok().map(FontWeight),
             "italic" => h.font_style = Some(FontStyle::Italic),
             "underline" => {
                 h.underline = Some(UnderlineStyle {
@@ -94,13 +94,13 @@ fn highlight(words: &[&str], rcx: &RenderCx) -> HighlightStyle {
                     ..Default::default()
                 })
             }
-            "line_through" => {
+            "line-through" => {
                 h.strikethrough = Some(StrikethroughStyle {
                     thickness: px(1.),
                     ..Default::default()
                 })
             }
-            "opacity" | "fade_out" => h.fade_out = arg.parse::<f32>().ok().map(|o| 1. - o),
+            "opacity" | "fade-out" => h.fade_out = arg.parse::<f32>().ok().map(|o| 1. - o),
             _ => {}
         }
     }

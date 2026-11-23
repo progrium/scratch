@@ -52,7 +52,7 @@ fn label_axis(form: Option<&NodeView>) -> Axis {
 fn field_box(rcx: &mut RenderCx, form: Option<&NodeView>, node: &NodeView) -> AnyElement {
     let f = field(rcx, node);
     let mut kit = Form::new().layout(label_axis(form)).child(f);
-    if let Some(w) = form.and_then(|n| num(n, "label_width")) {
+    if let Some(w) = form.and_then(|n| num(n, "label-width")) {
         kit = kit.label_width(px(w as f32));
     }
     if let Some(fm) = form {

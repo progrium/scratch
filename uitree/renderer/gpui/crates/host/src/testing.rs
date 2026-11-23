@@ -30,6 +30,51 @@ use crate::{NodeView, Options};
 /// How long a 9P call may wait for the owner thread before a test fails.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
+/// A write the core refused, by its 0.2 error word (core.md § Errors).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorKind {
+    UnknownCommand,
+    BadSyntax,
+    BadValue,
+    UnknownType,
+    UnknownStyleWord,
+    TypeIsFixed,
+    NotFound,
+    InUse,
+    Disabled,
+    Other,
+}
+
+#[derive(Debug, Clone)]
+pub struct WriteError {
+    pub kind: ErrorKind,
+    pub msg: String,
+}
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl WriteError {
+    fn new(msg: String) -> Self {
+        let words = [
+            ("unknown command", ErrorKind::UnknownCommand),
+            ("bad syntax", ErrorKind::BadSyntax),
+            ("bad value", ErrorKind::BadValue),
+            ("unknown type", ErrorKind::UnknownType),
+            ("unknown style word", ErrorKind::UnknownStyleWord),
+            ("type is fixed", ErrorKind::TypeIsFixed),
+            ("not found", ErrorKind::NotFound),
+            ("in use", ErrorKind::InUse),
+            ("disabled", ErrorKind::Disabled),
+        ];
+        let kind = words.iter().find(|(w, _)| msg.contains(w)).map(|(_, k)| *k).unwrap_or(ErrorKind::Other);
+        WriteError { kind, msg }
+    }
+}
+
 pub struct Harness {
     pub cx: TestAppContext,
     inner: Rc<Inner>,
@@ -76,9 +121,35 @@ impl Harness {
     }
 
     /// Writes a whole file (open, write, clunk); the core's error, if any.
-    pub fn try_write(&mut self, path: &str, data: &str) -> Result<(), String> {
-        let (p, d) = (path.to_string(), data.to_string());
-        self.call(move |c| c.put(&p, &d)).map_err(|e| e.to_string())
+    pub fn try_write(&mut self, path: &str, data: &str) -> Result<(), WriteError> {
+        self.try_write_bytes(path, data.as_bytes())
+    }
+
+    /// As `try_write`, with raw bytes (`pixels`).
+    pub fn try_write_bytes(&mut self, path: &str, data: &[u8]) -> Result<(), WriteError> {
+        let (p, d) = (path.to_string(), data.to_vec());
+        self.call(move |c| {
+            // A file that doesn't exist yet (`assets/NAME`) is created.
+            let mut f = match c.open(&p, 1) {
+                Ok(f) => f,
+                Err(e) if e.to_string().contains("not found") => match p.rsplit_once('/') {
+                    Some((dir, name)) => c.create(dir, name)?,
+                    None => return Err(e),
+                },
+                Err(e) => return Err(e),
+            };
+            for chunk in d.chunks(60 << 10) {
+                c.write(&mut f, chunk)?;
+            }
+            c.close(f)
+        })
+        .map_err(|e| WriteError::new(e.to_string()))
+    }
+
+    /// Deletes a node (`delete NAME` on its parent's `ctl`).
+    pub fn remove(&mut self, path: &str) -> Result<(), WriteError> {
+        let (dir, name) = path.rsplit_once('/').expect("a node path");
+        self.try_write(&format!("{dir}/ctl"), &format!("delete {name}"))
     }
 
     /// As `try_write`, panicking on an error.
@@ -96,10 +167,15 @@ impl Harness {
         self.write(&p, line);
     }
 
-    /// Reads a file, without its trailing newline.
+    /// Reads a file. A one-line value comes back without the newline the
+    /// core adds after it.
     pub fn read(&mut self, path: &str) -> Option<String> {
         let p = path.to_string();
-        self.call(move |c| c.get(&p)).ok().map(|s| s.strip_suffix('\n').map(str::to_string).unwrap_or(s))
+        let s = self.call(move |c| c.get(&p)).ok()?;
+        match s.strip_suffix('\n') {
+            Some(one) if !one.contains('\n') => Some(one.to_string()),
+            _ => Some(s),
+        }
     }
 
     /// Opens an `events` file. Lines arrive as the core sends them.
