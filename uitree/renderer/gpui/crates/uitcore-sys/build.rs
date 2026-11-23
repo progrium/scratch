@@ -59,6 +59,29 @@ fn main() {
         assert!(st.success(), "uitcore-sys: zig build failed in {}", core.display());
         prefix.join("lib")
     };
+    // Apple's ld refuses Zig's archives ("64-bit mach-o member ... not
+    // 8-byte aligned"), so on macOS re-archive them with libtool, which
+    // aligns members, and link the copies.
+    let lib = if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
+        let dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("lib-macos");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["libuitcore.a", "libkern.a"] {
+            let src = lib.join(name);
+            if !src.exists() {
+                continue;
+            }
+            let st = Command::new("libtool")
+                .args(["-static", "-o"])
+                .arg(dir.join(name))
+                .arg(&src)
+                .status()
+                .unwrap_or_else(|e| panic!("uitcore-sys: running libtool: {e}"));
+            assert!(st.success(), "uitcore-sys: libtool -static failed on {}", src.display());
+        }
+        dir
+    } else {
+        lib
+    };
     println!("cargo:rustc-link-search=native={}", lib.display());
     println!("cargo:rustc-link-lib=static=uitcore");
     if h9 {
