@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 5;
+pub const UIT_ABI_VERSION: u32 = 6;
 
 #[repr(C)]
 pub struct UitCore {
@@ -86,6 +86,16 @@ pub struct UitMachineArgs {
     pub n_h9_flags: usize,
     pub out_fd: c_int,
     pub err_fd: c_int,
+}
+
+/// A connection the renderer carries itself (since 6). See uitcore.h.
+#[repr(C)]
+pub struct UitConn {
+    pub read: Option<unsafe extern "C" fn(ctx: *mut c_void, buf: *mut u8, n: usize) -> isize>,
+    pub write: Option<unsafe extern "C" fn(ctx: *mut c_void, buf: *const u8, n: usize) -> c_int>,
+    pub hangup: Option<unsafe extern "C" fn(ctx: *mut c_void)>,
+    pub release: Option<unsafe extern "C" fn(ctx: *mut c_void)>,
+    pub ctx: *mut c_void,
 }
 
 #[repr(C)]
@@ -254,15 +264,14 @@ pub struct UitDragMsg {
     pub n_attrs: usize,
 }
 
-// In the browser (uitree/web/README.md) the core is its own wasm module
-// sharing this one's memory, and these are imports from it ("uitcore",
-// which uitree/web/gpui.js provides).
-#[cfg_attr(target_family = "wasm", link(wasm_import_module = "uitcore"))]
+// Linked from libuitcore.a on every target, the browser's included
+// (build.rs; uitree/web/README.md).
 unsafe extern "C" {
     pub fn uit_abi_version() -> u32;
 
     pub fn uit_create(cfg: *const UitConfig, out: *mut *mut UitCore) -> c_int;
     pub fn uit_serve_fd(c: *mut UitCore, fd: c_int) -> c_int;
+    pub fn uit_serve_conn(c: *mut UitCore, conn: *const UitConn) -> c_int;
     pub fn uit_listen(c: *mut UitCore, addr: UitStr, dial: *mut UitStr) -> c_int;
     pub fn uit_run_machine(c: *mut UitCore, args: *const UitMachineArgs) -> c_int;
     pub fn uit_shutdown(c: *mut UitCore);
@@ -303,6 +312,65 @@ unsafe extern "C" {
     pub fn uit_drag(c: *mut UitCore, msg: *const UitDragMsg, drag: *mut u64) -> c_int;
 }
 
+/// In the browser the core is linked in with wasi-libc, whose malloc
+/// takes the memory above the heap base as its own on first use, so it
+/// must be the only allocator: Rust's goes through it too.
+#[cfg(target_family = "wasm")]
+mod web_alloc {
+    use std::alloc::{GlobalAlloc, Layout};
+    use std::os::raw::c_void;
+
+    unsafe extern "C" {
+        fn malloc(n: usize) -> *mut c_void;
+        fn aligned_alloc(align: usize, n: usize) -> *mut c_void;
+        fn calloc(k: usize, n: usize) -> *mut c_void;
+        fn realloc(p: *mut c_void, n: usize) -> *mut c_void;
+        fn free(p: *mut c_void);
+    }
+
+    /// malloc's own alignment on wasm32 (wasi-libc's dlmalloc).
+    const MIN_ALIGN: usize = 16;
+
+    struct Libc;
+
+    unsafe impl GlobalAlloc for Libc {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            unsafe {
+                if l.align() <= MIN_ALIGN { malloc(l.size()) as *mut u8 } else { aligned_alloc(l.align(), l.size().next_multiple_of(l.align())) as *mut u8 }
+            }
+        }
+        unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+            if l.align() <= MIN_ALIGN {
+                return unsafe { calloc(1, l.size()) as *mut u8 };
+            }
+            let p = unsafe { self.alloc(l) };
+            if !p.is_null() {
+                unsafe { p.write_bytes(0, l.size()) };
+            }
+            p
+        }
+        unsafe fn dealloc(&self, p: *mut u8, _: Layout) {
+            unsafe { free(p as *mut c_void) }
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+            if l.align() <= MIN_ALIGN {
+                return unsafe { realloc(p as *mut c_void, n) as *mut u8 };
+            }
+            let q = unsafe { self.alloc(Layout::from_size_align_unchecked(n, l.align())) };
+            if !q.is_null() {
+                unsafe {
+                    std::ptr::copy_nonoverlapping(p, q, l.size().min(n));
+                    self.dealloc(p, l);
+                }
+            }
+            q
+        }
+    }
+
+    #[global_allocator]
+    static A: Libc = Libc;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +403,6 @@ mod tests {
         assert_eq!(size_of::<UitKeyBinding>(), 56);
         assert_eq!(size_of::<UitMenuItem>(), 112);
         assert_eq!(size_of::<UitDragMsg>(), 48);
+        assert_eq!(size_of::<UitConn>(), 40);
     }
 }

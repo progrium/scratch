@@ -17,19 +17,20 @@ cp "$h9"/zig-out/web/h9.wasm "$h9"/zig-out/web/h9-web.js "$h9"/zig-out/web/worke
 cat "$h9/src/web/root.list" "$here/root.list" >"$out/root.list"
 (cd "$h9" && zig run -OReleaseSafe tools/webroot.zig -- .local/9front/root386 "$out/root.list" "$out/h9/root.h9a")
 rm "$out/root.list"
-# The core as a wasm reactor.
+# The core alone as a wasm reactor (core-test.html).
 (cd "$uit/core" && zig build -Dtarget=wasm32-wasi -Doptimize="$opt" --prefix "$out/zig")
-cp "$out/zig/web/uitcore.wasm" "$out/zig/web/uitcore-shared.wasm" "$out/"
+cp "$out/zig/web/uitcore.wasm" "$out/"
 # The terminal renderer, with the core linked in.
 (cd "$uit/renderer/tui" && zig build -Dtarget=wasm32-wasi -Dh9=false -Doptimize="$opt" --prefix "$out/zig")
 cp "$out/zig/web/uitree-tui.wasm" "$out/"
-# The GPUI renderer (renderer/gpui's crates/web) through wasm-bindgen.
+# The GPUI renderer (renderer/gpui's crates/web) through wasm-bindgen,
+# with the core linked in (uitcore-sys builds it for wasm32-wasi).
 # gpui-kit turns on gpui_web's multithreaded feature, whose wasm_thread
 # needs nightly: RUSTC_BOOTSTRAP stands in for it (gpui_web runs
 # single-threaded here; GPUI Kit's own story-web pins a nightly).
 if [ "${GPUI:-1}" = 1 ]; then
 	tgt=${CARGO_TARGET_DIR:-$uit/renderer/gpui/target}
-	(cd "$uit/renderer/gpui" && RUSTC_BOOTSTRAP=1 RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
+	(cd "$uit/renderer/gpui" && UITCORE_OPTIMIZE="$opt" RUSTC_BOOTSTRAP=1 RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
 		cargo build -p uitree-web --target wasm32-unknown-unknown --release --target-dir "$tgt")
 	wasm-bindgen "$tgt/wasm32-unknown-unknown/release/uitree_web.wasm" --out-dir "$out/gpui" --target web --no-typescript --remove-name-section
 	# GPUI Kit's icons: on wasm its assets are fetched one by one when

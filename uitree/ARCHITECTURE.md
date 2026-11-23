@@ -38,6 +38,14 @@ and tell the workstreams it affects.
 5. **Errors** are negative `UitErr` codes plus `uit_last_error` (the
    protocol's text, `bad value: read-only`). Panics abort on both sides.
 
+A renderer reaches the core only through `uitcore.h`, on every platform.
+In the browser (wasm32-wasi, [web/README.md](web/README.md)) the core is
+linked into the renderer's module as on the desktop, and the page is the
+core's platform: it supplies the core's imports (coroutines for threads,
+a WASI, and `uit`: the app's machine in a Worker and its `$ui`
+connections, which the core serves as `UitConn`s, ABI 6) and calls
+nothing in the core but `uitcore.h` and the coroutine entry.
+
 ## Layout and who owns it
 
 Each directory has one owning workstream. Touch another's directory only

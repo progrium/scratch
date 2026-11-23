@@ -19,6 +19,7 @@ const treem = @import("tree/root.zig");
 const types = @import("types/root.zig");
 const proto = @import("proto/root.zig");
 const machine = @import("machine/root.zig");
+const machine_web = @import("machine/web.zig");
 const ninep = @import("ninep/root.zig");
 const web = @import("web.zig");
 
@@ -26,7 +27,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 5;
+pub const abi_version: u32 = 6;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -50,6 +51,8 @@ pub const UitStr = extern struct {
 };
 
 pub const UitAttr = extern struct { name: UitStr = .{}, value: UitStr = .{} };
+
+pub const UitConn = ninep.transport.UitConn;
 
 pub const UIT_OK: c_int = 0;
 pub const UIT_EINVAL: c_int = -1;
@@ -222,7 +225,8 @@ pub const Core = struct {
     err_len: usize = 0,
     /// The 9P server, listeners and mounts (W4), made on first use.
     host: ?*ninep.host.Host = null,
-    runner: ?*machine.Runner = null,
+    /// The app's machine: h9 on a thread, or the page's in the browser.
+    runner: ?*Runner = null,
     /// The machine's exit, from its thread, under `exit_mu`.
     exit_mu: Io.Mutex = .init,
     exited: bool = false,
@@ -343,7 +347,9 @@ export fn uit_create(cfg: ?*const UitConfig, out: ?*?*Core) c_int {
         .cat = undefined,
         .tree = undefined,
         .queue = undefined,
-        .wake_fn = c_cfg.wake,
+        // In the browser a NULL wake is the platform's (`uit.wake`), for
+        // a renderer in JS, which has no function pointer to give.
+        .wake_fn = c_cfg.wake orelse if (web.enabled) web.platformWake else null,
         .wake_ctx = c_cfg.wake_ctx,
         .reads = .init(gpa),
     };
@@ -388,20 +394,28 @@ fn create(c: *Core, cfg: *const UitConfig) c_int {
     return UIT_OK;
 }
 
+const Runner = if (web.enabled) machine_web.Runner else machine.Runner;
+
 export fn uit_serve_fd(c: *Core, fd: c_int) c_int {
-    if (comptime builtin.os.tag == .windows) return UIT_ENOTSUP;
+    if (comptime builtin.os.tag == .windows or web.enabled) return UIT_ENOTSUP;
     const h = c.getHost() catch return UIT_ENOMEM;
     h.serveFd(fd) catch return UIT_EIO;
     return UIT_OK;
 }
 
-/// The browser build's transport (web.zig): serves `$ui` on the page's
-/// channel `id`, a WebSocket from the app's machine. Not in uitcore.h:
-/// only web/uit-web.js calls it.
-export fn uit_web_serve(c: *Core, id: i32) c_int {
-    if (comptime !web.enabled) return UIT_ENOTSUP;
-    const h = c.getHost() catch return UIT_ENOMEM;
-    h.srv.serve(.{ .fd = id }) catch return UIT_EIO;
+/// A connection the renderer (or, in the browser, the platform) carries
+/// itself. Since 6.
+export fn uit_serve_conn(c: *Core, conn: ?*const UitConn) c_int {
+    const cb = (conn orelse return UIT_EINVAL).*;
+    const h = c.getHost() catch {
+        if (cb.release) |f| f(cb.ctx);
+        return UIT_ENOMEM;
+    };
+    const k = ninep.transport.fromUitConn(c.gpa, cb) catch |e| return switch (e) {
+        error.Invalid => UIT_EINVAL,
+        error.OutOfMemory => UIT_ENOMEM,
+    };
+    h.srv.serve(k) catch return UIT_EIO;
     return UIT_OK;
 }
 
@@ -420,12 +434,19 @@ export fn uit_listen(c: *Core, addr: UitStr, dial: ?*UitStr) c_int {
 export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
     if (!c.checkOwner()) return UIT_ETHREAD;
     const a = args orelse return UIT_EINVAL;
-    if (!machine.available) {
+    if (!machine.available and !web.enabled) {
         c.setText("built without h9 (-Dh9=true)");
         return UIT_ENOTSUP;
     }
     if (c.runner != null) return UIT_EINUSE;
     const h = c.getHost() catch return UIT_ENOMEM;
+    if (web.enabled) {
+        c.runner = machine_web.Runner.start(a, @ptrCast(c), onExit, onMachineConn) catch |e| {
+            c.err_len = if (std.fmt.bufPrint(&c.err_buf, "machine: {t}", .{e})) |m| m.len else |_| 0;
+            return UIT_EIO;
+        };
+        return UIT_OK;
+    }
     const sock = h.privatePath() catch return UIT_EIO;
     c.runner = machine.Runner.start(c.gpa, a, sock, @ptrCast(c), onExit) catch |e| {
         c.err_len = if (std.fmt.bufPrint(&c.err_buf, "machine: {t}", .{e})) |s| s.len else |_| 0;
@@ -453,6 +474,13 @@ export fn uit_themes(c: *Core, text: UitStr) c_int {
     };
     c.tree.publish() catch return UIT_ENOMEM;
     return UIT_OK;
+}
+
+/// The browser's machine dialed `$ui`.
+fn onMachineConn(ctx: *anyopaque, k: ninep.transport.Conn) void {
+    const c: *Core = @ptrCast(@alignCast(ctx));
+    const h = c.getHost() catch return k.close();
+    h.srv.serve(k) catch {};
 }
 
 /// From the machine's thread when the client ends.
@@ -1256,7 +1284,7 @@ test "extern layouts match the header's (64-bit)" {
         .{ UitStr, 16 },        .{ UitAttr, 32 },      .{ UitConfig, 80 },      .{ UitMachineArgs, 120 },
         .{ UitPropChange, 24 }, .{ UitCtl, 48 },       .{ UitHostCmd, 128 },    .{ UitChanges, 104 },
         .{ UitStyleArg, 32 },   .{ UitStyleWord, 56 }, .{ UitLine, 24 },        .{ UitKeyBinding, 56 },
-        .{ UitMenuItem, 112 },  .{ UitDragMsg, 48 },
+        .{ UitMenuItem, 112 },  .{ UitDragMsg, 48 },    .{ UitConn, 40 },
     };
     inline for (want) |w| try std.testing.expectEqual(@as(usize, w[1]), @sizeOf(w[0]));
     try std.testing.expectEqual(@as(usize, 64), @offsetOf(UitConfig, "wake"));
@@ -1303,4 +1331,99 @@ test "a 9P client writes and reads through the ABI's pump" {
     th.join();
     try std.testing.expect(!cl.failed);
     try std.testing.expectEqualStrings("hi\n", cl.got[0..cl.n]);
+}
+
+test "a 9P client through uit_serve_conn, a connection the renderer carries" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const core = try testCore();
+    defer uit_destroy(core);
+    // The renderer's side: a socket pair end behind UitConn's callbacks.
+    const Carried = struct {
+        fd: c_int,
+        hung: u32 = 0,
+        released: std.atomic.Value(u32) = .init(0),
+        fn read(ctx: ?*anyopaque, buf: [*]u8, n: usize) callconv(.c) isize {
+            const s: *@This() = @ptrCast(@alignCast(ctx));
+            return std.c.read(s.fd, buf, n);
+        }
+        fn write(ctx: ?*anyopaque, buf: [*]const u8, n: usize) callconv(.c) c_int {
+            const s: *@This() = @ptrCast(@alignCast(ctx));
+            var off: usize = 0;
+            while (off < n) {
+                const w = std.c.write(s.fd, buf + off, n - off);
+                if (w <= 0) return -1;
+                off += @intCast(w);
+            }
+            return 0;
+        }
+        fn hangup(ctx: ?*anyopaque) callconv(.c) void {
+            const s: *@This() = @ptrCast(@alignCast(ctx));
+            s.hung += 1;
+            _ = std.c.shutdown(s.fd, 2);
+        }
+        fn release(ctx: ?*anyopaque) callconv(.c) void {
+            const s: *@This() = @ptrCast(@alignCast(ctx));
+            _ = std.c.close(s.fd);
+            _ = s.released.fetchAdd(1, .acq_rel);
+        }
+    };
+    const pr = try ninep.transport.pair();
+    var carried: Carried = .{ .fd = pr[0].fd };
+    const conn: UitConn = .{ .read = Carried.read, .write = Carried.write, .hangup = Carried.hangup, .release = Carried.release, .ctx = &carried };
+    try std.testing.expectEqual(UIT_OK, uit_serve_conn(core, &conn));
+    // Once serving, themes are fixed, as after uit_listen.
+    try std.testing.expectEqual(UIT_EINUSE, uit_themes(core, UitStr.lit("")));
+    const Cl = struct {
+        done: std.atomic.Value(bool) = .init(false),
+        got: [64]u8 = undefined,
+        n: usize = 0,
+        failed: bool = false,
+        fn run(s: *@This(), k: ninep.transport.Conn) void {
+            defer s.done.store(true, .release);
+            s.go(k) catch {
+                s.failed = true;
+            };
+        }
+        fn go(s: *@This(), k: ninep.transport.Conn) !void {
+            const a = std.heap.page_allocator;
+            var cl = try ninep.Client.init(a, k);
+            defer cl.deinit();
+            try cl.version();
+            const root = try cl.attach();
+            try cl.put(root, "win/main/ctl", "new text a text=carried\n");
+            const v = try cl.get(a, root, "win/main/a/text");
+            defer a.free(v);
+            @memcpy(s.got[0..v.len], v);
+            s.n = v.len;
+        }
+    };
+    var cl: Cl = .{};
+    const th = try std.Thread.spawn(.{}, Cl.run, .{ &cl, pr[1] });
+    var ch: UitChanges = .{};
+    while (!cl.done.load(.acquire)) {
+        _ = uit_pump(core, &ch);
+        core.io().sleep(.fromMilliseconds(1), .awake) catch {};
+    }
+    th.join();
+    try std.testing.expect(!cl.failed);
+    try std.testing.expectEqualStrings("carried\n", cl.got[0..cl.n]);
+    // The client hung up: the core releases the connection once.
+    var tries: usize = 0;
+    while (carried.released.load(.acquire) == 0 and tries < 2000) : (tries += 1) core.io().sleep(.fromMilliseconds(1), .awake) catch {};
+    try std.testing.expectEqual(@as(u32, 1), carried.released.load(.acquire));
+}
+
+test "uit_serve_conn: a connection without read or write is refused and released" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    const R = struct {
+        var n: u32 = 0;
+        fn release(_: ?*anyopaque) callconv(.c) void {
+            n += 1;
+        }
+    };
+    const conn: UitConn = .{ .release = R.release };
+    try std.testing.expectEqual(UIT_EINVAL, uit_serve_conn(core, &conn));
+    try std.testing.expectEqual(@as(u32, 1), R.n);
+    try std.testing.expectEqual(UIT_EINVAL, uit_serve_conn(core, null));
 }

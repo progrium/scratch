@@ -72,6 +72,8 @@ pub fn build(b: *std.Build) void {
         wasm.rdynamic = true;
         wasm.export_table = true;
         wasm.stack_size = 1 << 20;
+        // libc's, for the page's UitMachineArgs (web/uit-web.js's Core).
+        wasm.root_module.export_symbol_names = &.{ "malloc", "free" };
         b.getInstallStep().dependOn(&b.addInstallFileWithDir(wasm.getEmittedBin(), .{ .custom = "web" }, "uitree-tui.wasm").step);
         return;
     }

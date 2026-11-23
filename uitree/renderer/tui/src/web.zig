@@ -5,8 +5,8 @@
 //! the core's wake, and gets each frame as ANSI text through `term.write`.
 //! There's no libvaxis Tty or Loop here (no tty, no threads): frames are
 //! written as whole-screen SGR text, which xterm.js parses. The app runs
-//! in h9's own Worker, so there's no uit_run_machine: the page serves the
-//! core's `$ui` to it (uit_web_serve, an export of the core).
+//! in h9's own Worker, which the core's platform starts when the page
+//! calls uit_run_machine (web/uit-web.js's runApp).
 
 const std = @import("std");
 const types = @import("types");
@@ -43,7 +43,7 @@ fn onWake(_: ?*anyopaque) callconv(.c) void {
 }
 
 /// Creates the core and the Ui. Returns the UitCore for the page's
-/// uit_web_serve, or 0.
+/// runApp (uit_run_machine), or 0.
 export fn tui_init(cols: u16, rows: u16, dark: bool) usize {
     k = core.Core.create(.{
         .types = types.descriptors,

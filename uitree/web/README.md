@@ -8,8 +8,8 @@ renderer.
 
 ```
 page (main thread)                                   Worker, one per app
-  GPUI renderer     uitree_web.wasm (wasm-bindgen)     h9's browser host, unchanged
-    └ core          uitcore-shared.wasm, same memory     h9.wasm, its 386 CPU (h86)
+  GPUI renderer     uitree_web.wasm (core linked in)   h9's browser host, unchanged
+    └ gpui_web canvas                                     h9.wasm, its 386 CPU (h86)
   terminal renderer uitree-tui.wasm (core linked in)     rc counter.rc
     └ xterm.js                                            $ui = ws://uitree.invalid/ui
                           9P over postMessage  <──────────  (h9-worker.js's WebSocket)
@@ -42,9 +42,9 @@ the Rust build.
   its threads as hyper9's web-host coroutines (h9's `src/web.zig`, coroutines
   on JSPI) and its `std.Io` is h9's web Io. Threads were already few
   (`server.zig`'s per-connection reader and blocking requests, the timer),
-  so the change is a `Thread` alias and a channel transport. The page hands
-  each connection to `uit_web_serve`. There is no `uit_run_machine` in the
-  core here: the page starts the Worker instead (`uit-web.js`'s `runApp`).
+  so the change is a `Thread` alias. The page is the core's platform (next
+  section): `uit_run_machine` asks it for the Worker, and the Worker's
+  `$ui` connections come back to the core as `UitConn`s.
 - **The terminal renderer** (`renderer/tui/src/web.zig`) is main.zig's
   loop turned inside out: the page calls `tui_key`, `tui_mouse` and
   `tui_pump`, and gets each frame as ANSI through an import. libvaxis's
@@ -52,13 +52,57 @@ the Rust build.
   SGR text. Yoga (C++) builds for wasm32-wasi as is.
 - **The GPUI renderer** is the host crate unchanged but for `run`
   (`gpui_web`'s single-threaded platform, `run_embedded`, bundled fonts)
-  plus `crates/web`, a wasm-bindgen cdylib. The core is a second module,
-  `uitcore-shared.wasm`, that imports the renderer's memory and lives above
-  256 MiB in it (`-Dweb-base`), so every `uitcore.h` pointer means the same
-  thing on both sides and `uitcore-sys`'s functions are imports forwarded
-  as is (`uitcore-imports.js`). Only the wake function pointer and
-  `uit_run_machine` are adjusted. This is the same shared-memory trick h9's
-  browser host used with v86.
+  plus `crates/web`, a wasm-bindgen cdylib. The core is linked into it as
+  it is on the desktop: `uitcore-sys`'s build.rs builds `libuitcore.a` and
+  `libh9coro.a` for wasm32-wasi and links them with the C library Zig
+  gives a wasm32-wasi program (wasi-libc's `libc.a` and Zig's own
+  `lib/c.zig`). That libc's `malloc` is the module's one allocator: Rust's
+  global allocator goes through it (`uitcore-sys`'s `web_alloc`).
+  `crates/web/build.rs` exports the coroutine entry points the page needs.
+
+## The core's platform
+
+Every module with the core in it (`uitcore.wasm` alone, `uitree-tui.wasm`,
+`uitree_web_bg.wasm`) imports these from the page (`uit-web.js`'s
+`platform`), and the page calls nothing in it but `uitcore.h`, libc's
+`malloc` and `free` (a JS renderer's inputs) and the coroutine exports.
+
+| Import | What |
+| --- | --- |
+| `h9.park`, `unpark`, `start`, `yield`, `sleep`, `panic` | hyper9's web-host coroutines (h9's `src/web/coro.c`), the core's threads. `park`, `yield` and `sleep` are Suspending. |
+| `uit.machine_start(args)` | `uit_run_machine`: start the app, given `uitcore.h`'s `UitMachineArgs` as is (the page uses `argv` and `env`). A machine id. |
+| `uit.machine_accept(id)` | Suspending: the machine's next `$ui` connection (a conn id), 0 once it is gone. |
+| `uit.machine_wait(id, buf, n)` | Suspending: the exit status, Plan 9's (empty for success). |
+| `uit.machine_hangup(id)` | `uit_shutdown`: stop the machine. |
+| `uit.conn_read`, `conn_write`, `conn_hangup`, `conn_release` | One connection, as `UitConn`'s callbacks. `conn_read` is Suspending. |
+| `uit.wake(ctx)` | `UitConfig.wake` when the renderer passes NULL: a renderer in JS, which has no function pointer to give. |
+| `wasi_snapshot_preview1.*` | A WASI with no files, for wasi-libc. |
+
+Exports the page uses besides `uitcore.h`: `h9_coro_entry` (a coroutine,
+through `WebAssembly.promising`) and `h9_get_sp`/`h9_set_sp`. A coroutine
+that parks leaves the shadow stack pointer, a global every caller shares,
+inside its own 320 KiB stack; the page puts it back on the main stack
+whenever a coroutine stops running, so a renderer's frame or a pump never
+runs on a coroutine's stack.
+
+`uitcore.h` itself has no browser in it. Version 6 adds `uit_serve_conn`:
+a connection the renderer carries itself, for any platform with no fd to
+give the core. The browser's machine uses the same path inside the core.
+
+### Why the core is linked in
+
+The spike's GPUI page ran the core as a second module in the renderer's
+memory, at a fixed 256 MiB, with a fixed start order (wasi-libc's malloc
+took all the memory above its heap base on first use) and a JS shim
+forwarding every `uitcore.h` call and patching the wake pointer. The two
+ways out were a base computed at runtime or one module. A runtime base
+means a relocatable core (wasm's dynamic-linking convention, with
+`__memory_base` and GOT imports and a loader for them) and still two
+allocators sharing one memory. Linking the core in removes all four
+problems at once: one memory layout the linker computes, one allocator,
+one function table (Rust's wake pointer is the core's), and no shim. It is
+also how every other renderer gets the core: GPUI on the desktop and the
+terminal renderer in the browser link `libuitcore.a`.
 
 ## What broke, and the workarounds
 
@@ -72,9 +116,8 @@ the Rust build.
 - **`AllAssets` is a different type on wasm** (it fetches icons on demand):
   the one compile error in the host crate.
 - **getrandom** needs `--cfg getrandom_backend="wasm_js"`.
-- **wasi-libc's malloc** claims all memory above its heap base on its first
-  call, so with a shared memory the order is fixed (gpui.js): renderer,
-  grow, core, the core's first malloc, then the renderer's start.
+- **Two allocators in one memory**: the spike's shared memory needed a
+  fixed start order. Fixed by linking the core in, with one malloc (above).
 - **The terminal renderer spun while idle**: every input call wakes the
   core, `uit_frame_drawn` included, and main.zig redraws on every wake, so
   it pumps and draws in a loop. The web build only draws when a pump
@@ -154,8 +197,8 @@ fell back to WebGL2):
 
 | File | Raw | gzip |
 | --- | --- | --- |
-| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host) | 28.6 MB | 9.1 MB |
-| `uitcore-shared.wasm` / `uitcore.wasm` (the core) | 0.56 MB | 0.21 MB |
+| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host + the core) | 29.2 MB | 9.4 MB |
+| `uitcore.wasm` (the core alone, for core-test.html) | 0.56 MB | 0.21 MB |
 | `uitree-tui.wasm` (terminal renderer + core + Yoga + libc++) | 1.1 MB | 0.33 MB |
 | `h9/h9.wasm` (h9, unchanged) | 17.5 MB | 5.1 MB |
 | `h9/root.h9a` (386 root: rc, awk, sed, ...) | 4.3 MB | 1.9 MB |
@@ -171,5 +214,3 @@ syntaxes); wasm-opt and dropping syntect are the obvious cuts.
   the whole round trip: the event read in h9's emulated rc, `awk` forked
   for the addition, the `ctl` write back over the bridge, a pump and a
   frame. A pump is about 0.5 ms.
-- The core's memory sits at 256 MiB in the GPUI module's memory, which is
-  address space, not resident memory.

@@ -1,10 +1,16 @@
-//! The browser build (wasm32-wasi, `zig build web`). The core's threads
-//! are hyper9's web-host coroutines (h9's src/web.zig: coroutines on
-//! JSPI) and its Io is h9's web Io, whose blocking parks the calling
-//! coroutine. h9 itself isn't linked: the app's machine runs in a Worker
-//! of its own (h9's stock browser host), and its `$ui` mount is a
-//! WebSocket that the page hands to the core as a channel
-//! (`uit_web_serve`). See web/README.md.
+//! The browser as the core's platform (wasm32-wasi; web/README.md, "The
+//! core's platform"). The core's threads are hyper9's web-host coroutines
+//! (h9's src/web.zig: coroutines on JSPI) and its Io is h9's web Io,
+//! whose blocking parks the calling coroutine. h9 itself isn't linked:
+//! the app's machine is h9's stock browser host in a Worker, which the
+//! page starts when the core asks (the `uit` imports below,
+//! machine/web.zig), and whose `$ui` connections come back as UitConns.
+//!
+//! The page supplies these imports and nothing else; it reaches the core
+//! only through uitcore.h. There are no exports here but the coroutines'
+//! own (h9_coro_entry, h9_get_sp, h9_set_sp: the page needs them to run a
+//! coroutine and keep the shadow stack pointer of whoever runs between
+//! parks off the coroutines' stacks).
 //!
 //! Everywhere else `enabled` is false and this is std.Thread.
 
@@ -24,57 +30,44 @@ pub fn io() std.Io {
     return h9web.io();
 }
 
-// The page's channels (web/uit-web.js): one per 9P connection. recv is a
-// Suspending import: it parks the calling coroutine until bytes come.
-extern "uit" fn chan_recv(id: i32, p: [*]u8, n: usize) i32;
-extern "uit" fn chan_send(id: i32, p: [*]const u8, n: usize) i32;
-extern "uit" fn chan_close(id: i32) void;
-
-/// Reads what the channel has, parking until it has something. 0 at end.
-pub fn recv(id: i32, buf: []u8) !usize {
+/// Calls `f` as a park, for anything that may be a Suspending import
+/// (JSPI): the calling coroutine's per-thread state is saved around it.
+/// Harmless when `f` doesn't suspend.
+pub inline fn blocking(comptime f: anytype, args: anytype) @typeInfo(@TypeOf(f)).@"fn".return_type.? {
     if (!enabled) unreachable;
-    const n = h9web.coro.blocking(chan_recv, .{ id, buf.ptr, buf.len });
-    if (n < 0) return error.ReadFailed;
-    return @intCast(n);
+    return h9web.coro.blocking(f, args);
 }
 
-pub fn send(id: i32, b: []const u8) !void {
-    if (!enabled) unreachable;
-    if (chan_send(id, b.ptr, b.len) < 0) return error.WriteFailed;
-}
-
-pub fn close(id: i32) void {
-    if (!enabled) unreachable;
-    chan_close(id);
-}
+/// The platform's imports (web/uit-web.js's `uit` module). Suspending ones
+/// may only be called through `blocking`.
+pub const platform = struct {
+    /// Starts the app's machine with uitcore.h's UitMachineArgs (the page
+    /// reads what it can use). A machine id, or negative.
+    pub extern "uit" fn machine_start(args: *const anyopaque) i32;
+    /// Suspending: the machine's next `$ui` connection, as a conn id; 0
+    /// once the machine is gone; negative on error.
+    pub extern "uit" fn machine_accept(id: i32) i32;
+    /// Suspending: waits for the machine to end, puts its exit status
+    /// (Plan 9's, empty for success) in buf and returns its length.
+    pub extern "uit" fn machine_wait(id: i32, buf: [*]u8, n: usize) i32;
+    /// A hangup: the page stops the machine. Any time, more than once.
+    pub extern "uit" fn machine_hangup(id: i32) void;
+    /// Suspending: as UitConn.read.
+    pub extern "uit" fn conn_read(id: i32, buf: [*]u8, n: usize) i32;
+    pub extern "uit" fn conn_write(id: i32, buf: [*]const u8, n: usize) i32;
+    pub extern "uit" fn conn_hangup(id: i32) void;
+    pub extern "uit" fn conn_release(id: i32) void;
+};
 
 extern "uit" fn wake(ctx: ?*anyopaque) void;
 
-/// UitConfig.wake for the page: tells uit-web.js to schedule a pump.
-fn webWake(ctx: ?*anyopaque) callconv(.c) void {
+/// UitConfig.wake when the renderer gives none (a renderer in JS).
+pub fn platformWake(ctx: ?*anyopaque) callconv(.c) void {
     wake(ctx);
 }
 
-/// The page's side of the ABI: what uit-web.js needs that uitcore.h
-/// doesn't give a JS host (memory to pass inputs in, a wake function).
-fn uit_web_alloc(n: usize) callconv(.c) ?[*]u8 {
-    const s = std.heap.c_allocator.alloc(u8, @max(n, 1)) catch return null;
-    return s.ptr;
-}
-fn uit_web_free(p: [*]u8, n: usize) callconv(.c) void {
-    std.heap.c_allocator.free(p[0..@max(n, 1)]);
-}
-fn uit_web_wake_fn() callconv(.c) usize {
-    return @intFromPtr(&webWake);
-}
-
 comptime {
-    if (enabled) {
-        @export(&h9_web_locals, .{ .name = "h9_web_locals" });
-        @export(&uit_web_alloc, .{ .name = "uit_web_alloc" });
-        @export(&uit_web_free, .{ .name = "uit_web_free" });
-        @export(&uit_web_wake_fn, .{ .name = "uit_web_wake_fn" });
-    }
+    if (enabled) @export(&h9_web_locals, .{ .name = "h9_web_locals" });
 }
 
 /// coro.c saves and restores h9's per-thread Zig state around a park.
