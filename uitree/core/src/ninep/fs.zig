@@ -37,6 +37,16 @@ pub const WriteMode = enum {
     /// Each complete line is handed to `line` as it arrives; a write may
     /// end mid-line (`/debug/inject`).
     lines,
+    /// A `ctl`: each write is handed to `commit` as it arrives, so `echo`
+    /// sees its error. A write that fills a whole piece (as `cat` and the
+    /// kernel's iounit split make) and doesn't end in a newline keeps its
+    /// partial last line for the next write or the clunk.
+    ctl,
+    /// A text file: each write is the whole value, handed to `commit` as
+    /// it arrives, so `echo` sees its error. A write that fills a whole
+    /// piece is held with the next ones until a shorter write or the clunk
+    /// (`cat` of a long value).
+    per_write,
 };
 
 pub const Entry = struct {

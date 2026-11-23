@@ -29,6 +29,9 @@ const Err = fsmod.Err;
 /// The largest message we accept: one 64 KiB `ctl` write (core.md §
 /// Limits) plus the header, with room to spare.
 pub const max_msize: u32 = (128 << 10) + wire.io_header;
+
+/// A ctl write this long or longer is a piece of a bigger one (`cat`).
+pub const ctl_piece = 8192;
 /// The most a buffered write may grow to before it fails `too large`: a
 /// data file is at least 16 MiB (core.md § Limits).
 pub const max_write: usize = 32 << 20;
@@ -402,7 +405,7 @@ const Conn = struct {
             .Tclunk => |m| {
                 const f = cn.takeFid(m.fid) orelse return cn.fail(tag, "unknown fid");
                 if (f.stream) |s| s.interrupt();
-                if (f.open and f.mode.write and f.write_mode == .at_close and (f.wrote or f.mode.trunc)) {
+                if (pendingAtClose(f)) {
                     cn.spawn(tag, null, workCommit, .{ cn, tag, f, false });
                     return;
                 }
@@ -616,10 +619,23 @@ const Conn = struct {
             cn.putFid(f);
             return cn.fail(tag, "fid not open for writing");
         }
-        if (f.write_mode == .lines) {
-            const copy = try cn.gpa().dupe(u8, data);
-            cn.spawn(tag, null, workLines, .{ cn, tag, f, copy });
-            return;
+        switch (f.write_mode) {
+            .lines => {
+                const copy = try cn.gpa().dupe(u8, data);
+                cn.spawn(tag, null, workLines, .{ cn, tag, f, copy });
+                return;
+            },
+            .ctl, .per_write => {
+                if (data.len + f.wbuf.items.len > max_write) {
+                    cn.putFid(f);
+                    return cn.fail(tag, "too large");
+                }
+                const copy = try cn.gpa().dupe(u8, data);
+                const piece = data.len >= ctl_piece or data.len == cn.msize - wire.io_header;
+                cn.spawn(tag, null, workNow, .{ cn, tag, f, copy, piece });
+                return;
+            },
+            .at_close => {},
         }
         defer cn.putFid(f);
         f.mu.lockUncancelable(cn.io());
@@ -670,7 +686,7 @@ const Conn = struct {
         f.mu.lockUncancelable(cn.io());
         var err: Err = .{};
         var failed = false;
-        if (f.open and f.mode.write and f.write_mode == .at_close and (f.wrote or f.mode.trunc)) {
+        if (pendingAtClose(f)) {
             fs.commit(cn.id, f.path, f.wbuf.items, &err) catch |e| {
                 failed = true;
                 if (e == error.OutOfMemory) err.note("out of memory");
@@ -688,6 +704,92 @@ const Conn = struct {
         _ = cn.endPending(p);
         if (failed) return cn.fail(tag, err.text());
         if (remove) cn.reply(tag, p9.Rremove{}) else cn.reply(tag, p9.Rclunk{});
+    }
+
+    /// Whether a clunk of `f` has something to commit: a buffered value
+    /// (or a truncate with no write), or a ctl's held partial line.
+    fn pendingAtClose(f: *const Fid) bool {
+        if (!f.open or !f.mode.write) return false;
+        return switch (f.write_mode) {
+            .at_close => f.wrote or f.mode.trunc,
+            .ctl => f.wbuf.items.len > 0,
+            .per_write => f.wbuf.items.len > 0 or (!f.wrote and f.mode.trunc),
+            .lines => false,
+        };
+    }
+
+    /// A `ctl` or `per_write` write, committed now.
+    fn workNow(cn: *Conn, tag: u16, f: *Fid, data: []u8, piece: bool, p: *Pending) void {
+        const fs = cn.srv.fs;
+        defer cn.gpa().free(data);
+        defer cn.putFid(f);
+        f.mu.lockUncancelable(cn.io());
+        var err: Err = .{};
+        var failed = false;
+        f.wrote = true;
+        var buf: []const u8 = data;
+        if (f.write_mode == .ctl) blk: {
+            const held = f.wbuf.items.len > 0;
+            if (held) {
+                f.wbuf.appendSlice(cn.gpa(), data) catch {
+                    failed = true;
+                    err.note("out of memory");
+                    break :blk;
+                };
+                buf = f.wbuf.items;
+            }
+            if (!std.mem.endsWith(u8, buf, "\n") and (held or piece)) {
+                // Keep the partial last line for the next write or the clunk.
+                const cut = if (std.mem.lastIndexOfScalar(u8, buf, '\n')) |i| i + 1 else 0;
+                if (buf.len - cut > max_write) {
+                    failed = true;
+                    err.note("too large");
+                    break :blk;
+                }
+                const tail = cn.gpa().dupe(u8, buf[cut..]) catch {
+                    failed = true;
+                    err.note("out of memory");
+                    break :blk;
+                };
+                defer cn.gpa().free(tail);
+                const head = cn.gpa().dupe(u8, buf[0..cut]) catch {
+                    failed = true;
+                    err.note("out of memory");
+                    break :blk;
+                };
+                defer cn.gpa().free(head);
+                f.wbuf.clearRetainingCapacity();
+                f.wbuf.appendSlice(cn.gpa(), tail) catch unreachable; // capacity held
+                if (head.len > 0) fs.commit(cn.id, f.path, head, &err) catch |e| {
+                    failed = true;
+                    if (e == error.OutOfMemory) err.note("out of memory");
+                };
+                break :blk;
+            }
+            fs.commit(cn.id, f.path, buf, &err) catch |e| {
+                failed = true;
+                if (e == error.OutOfMemory) err.note("out of memory");
+            };
+            f.wbuf.clearRetainingCapacity();
+        } else blk: {
+            // The whole value, unless it is one piece of a bigger one.
+            f.wbuf.appendSlice(cn.gpa(), data) catch {
+                failed = true;
+                err.note("out of memory");
+                break :blk;
+            };
+            if (piece) break :blk;
+            fs.commit(cn.id, f.path, f.wbuf.items, &err) catch |e| {
+                failed = true;
+                if (e == error.OutOfMemory) err.note("out of memory");
+            };
+            f.wbuf.clearRetainingCapacity();
+        }
+        if (failed) cn.srv.loud("write", f.path, err.text());
+        f.mu.unlock(cn.io());
+        _ = cn.endPending(p);
+        if (failed) return cn.fail(tag, err.text());
+        cn.reply(tag, p9.Rwrite{ .count = @intCast(data.len) });
     }
 
     fn workLines(cn: *Conn, tag: u16, f: *Fid, data: []u8, p: *Pending) void {

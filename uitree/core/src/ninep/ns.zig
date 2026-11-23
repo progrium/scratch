@@ -132,8 +132,36 @@ pub const TreeFs = struct {
         if (mode.write) {
             const st = snap.stat(arena.allocator(), path) catch |e| return errText(err, e);
             if (st.kind == .readonly) return err.set("permission denied: read-only");
+            return .{ .write_mode = writeMode(n, snap, arena.allocator(), path, st.kind) };
         }
         return .{};
+    }
+
+    /// Text files and these apply each write, so `echo` sees their errors;
+    /// data and bytes files are written whole at clunk.
+    const per_write_names = [_][]const u8{
+        "style",     "order", "tag",      "on",       "type",       "flags",  "drop", "drag-type", "drag-types", "context", "keys", "focus",
+        "page",      "expanded", "origin", "selection", "controlled", "sorted", "state", "mode",
+    };
+
+    fn writeMode(n: *TreeFs, snap: *tree.Snapshot, arena: Allocator, path_in: []const u8, kind: tree.Kind) fsmod.WriteMode {
+        switch (kind) {
+            .ctl => return .ctl,
+            .text => return .per_write,
+            else => {},
+        }
+        const path = std.mem.trim(u8, path_in, "/");
+        const name = fsmod.baseName(path);
+        for (per_write_names) |w| if (std.mem.eql(u8, w, name)) return .per_write;
+        if (std.mem.startsWith(u8, path, "theme/") or std.mem.startsWith(u8, path, "menu/")) return .per_write;
+        const loc = tree.path.resolve(snap.st, n.t.cat, arena, path, null) catch return .at_close;
+        if (loc != .file) return .at_close;
+        const nd = snap.st.node(loc.file.node) orelse return .at_close;
+        const p = nd.ty.prop(loc.file.name) orelse return .at_close;
+        return switch (p.form) {
+            .word, .bool, .number, .choice, .path, .child => .per_write,
+            else => .at_close,
+        };
     }
 
     fn read(p: *anyopaque, _: fsmod.ConnId, path: []const u8, arena: Allocator, err: *Err) fsmod.Error![]const u8 {
