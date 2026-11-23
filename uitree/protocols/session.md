@@ -1,6 +1,6 @@
 # session: many apps, one desktop
 
-**Layer:** `session 1.0` (draft) · **Mount:** `$desk` at session level ·
+**Layer:** `session 1.0` (draft) · **Mount:** `$wm` ·
 **Required:** no · **Conventions:** [README.md](README.md#shared-conventions)
 
 The shell layer is one app's view of its own windows. The session layer
@@ -16,13 +16,14 @@ manager does this job, and a uitree host does not serve it.
 
 ## Where it is
 
-The session tree is served by the window system and mounted at
-`$desk` in every app's namespace, beside (or in place of) the app's own
-shell tree. App-level files from [shell.md](shell.md) appear under
-`apps/APPID/`; the session-level files are at the root.
+The session tree is served by the window system and mounted at `$wm`
+(`/mnt/wm`) in every app's namespace, separate from the app's own `$ui`,
+so an app's author tree never shows other apps' windows. Each registered
+app's menus appear under `apps/APPID/`; the session-level files are at
+the root.
 
 ```text
-$desk/
+$wm/
     version        session 1.0, shell 1.0, features
     ctl            mode, cmdkey, clock, chrome, launch
     events         every window-system change
@@ -35,7 +36,7 @@ $desk/
         ctl        claim, release
         state      the claimed window's id and the desktop rectangle
     apps/
-        APPID/     each registered app's shell tree (shell.md)
+        APPID/     each registered app's menus and title
             menu/  its menus, item lines; bar order in menu/bar
     register       app registration (below)
 ```
@@ -104,6 +105,10 @@ screen - . rect=0,0,1024,768
 mode - . ux=on
 ```
 
+Rectangles are `x,y,w,h` in desktop space, in whole logical points
+([core.md § Coordinates](core.md#coordinates)). With no `win=`, paths
+are relative to `$wm`.
+
 The key is the window id (or app id), so an rc loop switches on
 `$ev(2)` as it does for `$ui`. `focus`, `rect` and `screen` are state
 events; the rest are actions. `close` from chrome is a request to the
@@ -126,9 +131,8 @@ and behave as they always have.
 
 ## Open questions
 
-1. **`$desk` or `$wm`.** Session files in `$desk` mean an app's shell tree
-   and the session share a root. A separate `$wm` keeps a per-app
-   `$desk` from ever seeing other apps' windows.
+1. ~~`$desk` or `$wm`.~~ Settled: the session is `$wm`, and an app's
+   shell files are in its own `$ui`.
 2. **Launch.** Is `launch` part of the session, or a separate service
    (the plumber, uxmeta) that this layer only names?
 3. **Rights.** devux gives every client of rio full power, as `wctl`

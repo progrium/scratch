@@ -11,6 +11,11 @@ public views of every app in a session. It is 9/UX's
 [ux.md](https://github.com/progrium/9ux/blob/main/docs/protocols/ux.md)
 model applied to uitree trees, as the uxkit draft proposed.
 
+The public view is the **external protocol**: the one way any program
+other than the author reads or drives an app. It is the author's `$ui`,
+the same paths and the same events, including the shell and transfer
+files when the host serves those layers.
+
 ## Two views of one tree
 
 | | Author view (`$ui`) | Public view |
@@ -39,6 +44,7 @@ is exactly that.
 | `activate` | verbs of class `activate`: press, choose, focus, scroll, invoke, open, close, quit |
 | `edit` | verbs of class `edit`, `set` of text-valued props, writing value files |
 | `keys` | verbs of class `keys`: synthetic key input |
+| (author) | class `author`: verbs and files only the author may use, which no grant can give, such as `eval` on a `web` node |
 | `admin` | the broker's `grants/` |
 
 Which right a verb needs comes from its type's descriptor (`verb click
@@ -50,6 +56,17 @@ checked line by line and nothing is applied if any line is refused.
 
 Display focus is never authority. Rights come from how a client
 attached.
+
+### Shell and transfer files
+
+| What | In the public view |
+| --- | --- |
+| `notify`, `popup`, `open URL`, a window's `show`, `hide`, `activate`, `close` | `activate` |
+| window `bounds`, `state` writes | `edit` |
+| `app/` props, `tray`, `dialog`, `reveal`, `delete` of a tray or dialog | author-only: readable, never writable |
+| `keyring/` | author-only, and reads empty |
+| `file/ID/` handles | author-only: the names are visible, `data` and `dir/` are not |
+| `drag/N/`, `clipdata/`, `open/N/` | readable with `sensitive`, never writable |
 
 ## The broker
 

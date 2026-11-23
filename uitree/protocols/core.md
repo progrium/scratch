@@ -18,19 +18,26 @@ $ui/
     events         every event in the app
     trace          every applied write and every error, streamed
     keys           key bindings (§ Keys, actions and menus)
-    menu/          the app's menus, one file per menu, and bar
-    theme/         tokens, mode, name
+    menu/          bar, the host's default menus (app edit window), and the app's own
+    theme/         mode  pref  tokens  name
     asset/         named files a node can refer to as @name
     types/         the component types this host builds (components.md)
     style/words    the style words this host accepts
     win/
         main/      the window named main, which is also its root node
             ctl  events  tree  type  style  order  tag ...   root node files
-            title  bounds  state  focus                       window files
-            over/  overlays: dialogs, sheets, popovers
+            title  bounds  inner  state  focus               window files
+            over/  in-window overlays: dialogs, sheets, popovers
             body/  a child node
                 type  text  ...
+
+    clip  clipdata/  drag/N/  file/ID/                     transfer layer
+    app/  sys/  tray/NAME/  over/NAME/  open/N/              shell layer
 ```
+
+The last two lines are served only by hosts that implement those optional
+layers ([transfer.md](transfer.md), [shell.md](shell.md)); `version` says
+which. Everything an app's author touches is in this one tree.
 
 A window **is** its root node: `$ui/win/main/` holds the root node's files
 and children as well as the window's own files. A node's children are its
@@ -38,7 +45,19 @@ subdirectories; its `order` file gives their order.
 
 ### Paths
 
-A path is written relative to its window everywhere a client sees one.
+**One rule decides what a path is relative to: with `win=`, a path is
+relative to that window; without it, a path is relative to `$ui`.** This
+holds in events, in `trace` and in errors.
+
+```text
+click save f/ok/save win=main seq=118          a node in window main
+move - . win=main x=200 y=80 display=1 seq=119 the window itself
+action quit tray/main via=tray seq=120         a tray item (shell)
+answer pick over/pick n=2 seq=122              a native dialog (shell)
+open - open/3 n=1 via=file seq=123             a document handed to the app (shell)
+```
+
+Inside a window, then, a path is written relative to that window.
 `f/emp/in` is the node at `$ui/win/main/f/emp/in`; it is the path in that
 node's events, the path `focus` reads and takes, and the path in a `set`
 line on the window's `ctl`. `.` is the window's root. An overlay's path
@@ -70,13 +89,45 @@ Every node has these files. Its type adds more ([components.md](components.md)).
 | `ctl` | help: one `verb [class]` line per verb it takes | command lines (§ Commands) |
 | `events` | this node's events | — |
 | `tree` | the subtree as a document (§ Documents) | replaces the subtree |
-| `bounds` | `x y w h` from the last layout, window-relative | — |
+| `bounds` | `x y w h` from the last layout, in window space (§ Coordinates) | — |
 | `on` | the element events this node sends | sets them |
 
 Text-valued properties (`text`, `value`, `label`, `placeholder`, `title`)
 are files of their own. A write is the whole value, raw bytes, with no
 quoting. A one-line value is read back followed by one newline, which is
 not part of the value.
+
+## Coordinates
+
+Every position and size is in **logical points** (AppKit points, CSS
+pixels, GPUI `Pixels`), as a **whole number**, in one of three named
+spaces. Device pixels appear only as a `scale` factor. Each file and
+attribute is in one fixed space, so a client converts only if it wants
+to.
+
+| Space | Origin | Used by |
+| --- | --- | --- |
+| Desktop | top-left of the primary display; negative values are left of and above it | `sys/displays`, a window's `bounds`, `move` events, `popup at=` (shell) |
+| Window | top-left of the window's content area, below a system title bar; with `titlebar=custom` or `none`, the top of the window | node `bounds`, `pt=` on pointer and drop events |
+| Node | top-left of the node | canvas ops and canvas hits only |
+
+In every space x grows right and y grows down.
+
+**Whole numbers.** Hosts round to whole points everywhere except canvas
+ops, which take decimals. A host must not send `12.5` in `bounds` or
+`pt=`. This keeps arithmetic in rc and awk exact.
+
+**Scale.** A display has a `scale` (device pixels per point), listed in
+`sys/displays` by hosts with the shell layer. `move` and `resize` events
+on a window carry `display=` and `scale=`, so a client that draws bitmaps
+knows when to redraw. An image's logical size is its pixel size divided
+by its `scale` (default 1): `img src=@logo scale=2`.
+
+**Positions the platform hides.** Some platforms (Wayland) neither report
+nor accept a window's position. There, `bounds` reads `- - w h`, `move`
+events are not sent, writes to x and y are accepted and ignored, and
+`pos=` hints are passed to the compositor. A host that knows positions
+lists `feature position` in `version`.
 
 ## Commands
 
@@ -123,7 +174,7 @@ file can still do everything. It also takes:
 | --- | --- |
 | `window NAME [prop=value ...]` | Make a window whose root is an empty `div`. Props are those of § Windows. `in use` if the name is taken, except the hidden default `main` |
 | `set ID enabled=on\|off` / `set ID check=on\|off\|mixed` | Change every menu item, button and binding for action `ID`. A first word that isn't a path (doesn't start with `win/`) names an action |
-| `ask close quit` / `ask none` | Opt into answering requests (§ Requests) |
+| `ask close quit open` / `ask none` | Opt into answering requests (§ Requests); `open` is defined by the shell layer |
 | `begin` / `commit` / `abort` | A batch on this connection (§ Batches) |
 | `theme load PATH` | Load a theme file in the host's format |
 | `quit` | Quit now |
@@ -202,8 +253,22 @@ uitreefs), always in the dashed spelling: uitreefs maps `flex-col` to GPUI's
 exists.
 
 **Theme.** `theme/tokens` holds `name value` lines; writing a line
-changes one token everywhere at once. `theme/mode` is `light` or `dark`.
-`theme/name` selects a named theme the host has. The portable token names
+changes one token everywhere at once. `theme/name` selects a named theme
+the host has. Light and dark are split into what the app asked for and
+what is drawn:
+
+| File | Read | Write |
+| --- | --- | --- |
+| `theme/pref` | `system`, `light` or `dark` | the same |
+| `theme/mode` | the mode in effect: `light` or `dark` (may grow; fallback `light`) | `light`, `dark` or `system`, which sets `pref` |
+
+**The default preference is `system`**, so an app follows the OS
+appearance unless it writes `light` or `dark`. A `theme - - mode=dark
+via=system seq=N` event follows every change to the effective mode,
+whether the user changed the OS setting (`via=system`) or the client
+wrote `pref` (`via=ctl`); it is a state event. Other OS appearance
+settings may appear later as read-only tokens (`system-accent`,
+`reduced-motion`, `high-contrast`). The portable token names
 are `background foreground muted muted-foreground primary
 primary-foreground accent accent-foreground border ring danger success
 warning radius`.
@@ -216,8 +281,10 @@ files needs no setup. **Closing the last window quits** the app, unless
 the client asked to answer `close` (§ Requests).
 
 Window props, on `window NAME ...` or `set . ...` on the window's `ctl`:
-`title=text`, `size=w,h`, `min=w,h`, `max=w,h`, `pos=x,y|center`,
-`kind=normal|dialog`, `resizable=on|off`, `focus=PATH`.
+`title=text`, `size=w,h`, `min=w,h`, `max=w,h` (points), `pos=x,y` (desktop
+space) or a placement hint (`center`, `top-right`, `tray`, `display:2`)
+the host resolves, `kind=normal|dialog` (fallback `normal`),
+`titlebar=system|custom|none`, `resizable=on|off`, `focus=PATH`.
 
 Window `ctl` verbs, beyond the node commands:
 
@@ -227,15 +294,17 @@ Window `ctl` verbs, beyond the node commands:
 | `activate` | Bring to front and take key focus |
 | `close` | Close as the close button would; a `close` request if asked |
 | `destroy` | Close now, without asking |
-| `state normal\|min\|max\|full` | Change the state |
+| `state normal\|min\|max\|full\|hidden` | Change the state. `state` may grow; a reader treats an unknown value as `normal` |
 | `notify text [type=info\|success\|warning\|error]` | A transient notification inside the window |
 | `ask close` / `ask none` | Opt this window in or out of `close` requests |
 
-Window files: `title` (read and write), `bounds` (`x y w h`, read), `state`
-(read), `focus` (the focused node's path; write a path to move focus).
+Window files: `title` (read and write); `bounds`, the outer frame `x y w
+h` in desktop space (writable with the shell layer: two words move, `- -
+w h` resizes); `inner`, the content size `w h`; `state` (read); `focus`
+(the focused node's path; write a path to move focus).
 
 The [shell layer](shell.md) adds platform window features (frameless,
-always on top, tray, native dialogs) under `$desk`.
+always on top, tray, native dialogs) in this same tree.
 
 ## Overlays
 
@@ -271,9 +340,14 @@ close - . win=main via=titlebar seq=121
 read from its file. So splitting on blanks is always correct: `$ev(2)` in
 rc, `$2` in awk, `strings.Fields(line)[1]` in Go.
 
-Attributes every host sends where they apply: `win=` (the window), `via=`
-(where it came from: `user`, `key`, `menu`, `ctl`, `titlebar`), `seq=`
-(last). Events caused by the client's own writes carry `via=ctl`, so a
+Attributes every host sends where they apply: `win=` (the window, which
+also makes `path` window-relative), `via=` (where it came from: `user`,
+`key`, `menu`, `ctl`, `titlebar`, ...; an unknown value means an unknown
+origin), `seq=` (last).
+
+The head is three words and stays three words. A routing word that needs
+an argument puts it in an attribute (`click del list/t3 win=main arg=t3`) or in the
+tag itself (`del:t3`), never in a fourth positional word. Events caused by the client's own writes carry `via=ctl`, so a
 client can skip its echoes.
 
 ### Subscriptions
@@ -283,6 +357,11 @@ client can skip its echoes.
 - **Each open is its own subscription**, with its own queue. Two readers
   see the same lines.
 - The first line of every subscription is `resync - - seq=N`.
+- **Held events.** An `open` event ([shell.md](shell.md#opening-documents-and-urls))
+  that arrives while no subscription is open is held, and delivered right
+  after `resync` to the first subscription. This is the one exception to
+  "a subscription sees only what happens after it opens"; without it, the
+  documents of a first launch would be lost.
 - When the window or node goes away: `gone - - seq=N`, then end of file.
   When the app quits, every subscription ends with end of file.
 - **Any read size works.** A read returns as many whole lines as fit; a
@@ -329,6 +408,7 @@ node's or app's `ctl`: `close`, `keep`, `accept` or `refuse`, with
 | `quit - -` | the app quits |
 | `close - over/x` (dialog `ask`) | the overlay closes |
 | `drop KEY PATH drag=N` | refused unless the node has a `drop` file ([transfer.md](transfer.md)) |
+| `open - open/N via=instance\|reopen` | the host shows and activates `main` ([shell.md](shell.md#opening-documents-and-urls)) |
 
 ## Keys, actions and menus
 
@@ -339,9 +419,10 @@ branch handles all of them.
 **`keys`** holds one binding per line:
 
 ```text
-cmd-s        save
-cmd-shift-p  palette
-escape       dismiss   context=editor
+cmd-s            save
+cmd-shift-p      palette
+escape           dismiss   context=editor
+cmd-shift-space  summon    global
 ```
 
 Keystrokes are modifiers joined by `-` and a key: `cmd ctrl alt shift`
@@ -353,7 +434,9 @@ elsewhere). A node's `context` file sets a key context, so `context=`
 bindings apply only while focus is inside it.
 
 A binding no built-in behavior handles comes to the client as
-`action ID PATH via=key`, where `PATH` is the focused node.
+`action ID PATH via=key win=NAME`, where `PATH` is the focused node. A
+binding with the word `global` fires even when the app is not focused,
+on hosts with the shell layer, and arrives as `action ID - via=hotkey`.
 
 **`menu/`** sets the app's menus. `menu/bar` lists menu names in order;
 each `menu/NAME` file holds item lines:
@@ -370,9 +453,62 @@ item quit   label=Quit     key=cmd-q   enabled=off
 
 `sep` is a separator. `sub` opens a submenu, either the indented items
 under it or another menu file named by `menu=`. Item attributes:
-`label`, `key`, `enabled`, `check` (`on`, `off`, `mixed`), `icon`.
-Choosing an item sends `action ID - via=menu`. Context menus and menu
-buttons take the same grammar in their `menu` file.
+`label`, `key`, `enabled`, `check` (`on`, `off`, `mixed`), `icon`,
+`role`. Choosing an item sends `action ID - via=menu`. Context menus and
+menu buttons take the same grammar in their `menu` file. An item whose ID
+is `-` has no action of its own.
+
+### Default menus
+
+**The host writes its default menus into `menu/` at start**, so they show
+in the tree like everything else, and the client keeps, edits or replaces
+them. On a host with an app menu bar (macOS, and 9/UX through the
+session):
+
+```text
+menu/bar      app edit window
+
+menu/app      item - role=about
+              sep
+              item - role=services
+              sep
+              item - role=hide
+              item - role=hide-others
+              item - role=show-all
+              sep
+              item quit role=quit
+
+menu/edit     item - role=undo
+              item - role=redo
+              sep
+              item - role=cut
+              item - role=copy
+              item - role=paste
+              item - role=select-all
+
+menu/window   item - role=minimize
+              item - role=zoom
+              sep
+              item - role=front
+```
+
+On hosts where menus belong to windows and most apps have none (Windows,
+Linux), `menu/bar` starts empty. Edit roles still work from the keyboard,
+because roles are bound to keys whether or not a menu shows them.
+
+- Writing `menu/bar` replaces the bar. On macOS the app menu always comes
+  first whatever `bar` says, because the OS requires it; the client edits
+  `menu/app` to add items, such as Preferences after About.
+- **Roles are performed by the host and send no event.** The set for 1.0
+  is `about services hide hide-others show-all quit undo redo cut copy
+  paste paste-plain delete select-all minimize zoom fullscreen close
+  front window-list help-search`. An unknown role is `bad value`; a role
+  the platform lacks is ignored, so one menu file works everywhere.
+- `role=quit` goes through the `quit` request and `role=close` through
+  `close`, so `ask quit` and `ask close` still get to confirm.
+- An item with both an ID and a role (`item quit role=quit`) can be
+  enabled, disabled and checked by ID like any other item.
+- Edit roles act on the focused input, editor or `web` node.
 
 ## Documents
 
@@ -426,7 +562,8 @@ Programs match on the phrase.
 | `not found` | a path, node, action or item that doesn't exist |
 | `in use` | a name that exists; an ambiguous `@name` |
 | `disabled` | the target is disabled |
-| `permission denied` | the connection's rights don't allow it ([policy.md](policy.md)) |
+| `permission denied` | the connection's rights don't allow it ([policy.md](policy.md)), or the host's own policy or the user's choice does not: notifications turned off, autostart blocked, a sandbox without host access. A client must expect it from any shell verb |
+| `unsupported` | the host serves the layer but can't do this on this platform: a tray on stock GNOME, window position on Wayland, a badge on Linux. Unlike `unknown command`, the verb is real |
 | `too large` | over a limit |
 | `no batch` | `commit` or `abort` with no `begin` |
 | `gone` | the object was removed while the file was open |
@@ -437,6 +574,15 @@ will see, because awk, COBOL and shell redirections often drop write
 errors: the host's standard error (`uitree: write win/main/x/text: not
 found: x`), `trace` (`error path=... err='...'`), and an `error` event
 (`error - x/text win=main code=not-found seq=40`).
+
+**Refusals that come later.** A verb that needs the user's consent (the
+first `notify`, `autostart`, a global hotkey that clashes) returns at once
+and reports a later refusal as an `error` event with `code=permission-denied`
+or `code=unsupported`, which also goes to standard error and `trace`.
+
+The phrase set is complete as of 1.0: a minor version never adds a
+phrase, so a client's error handling can be exhaustive. Detail after the
+colon may grow.
 
 ## Limits
 
@@ -466,20 +612,22 @@ profile form
 profile data
 cmdkey cmd
 feature batch
+feature position
 ```
 
 The first line is the protocol name and spec version. Then lines of
 `kind value`: `host` (name and version, for people), `layer` (each layer
 served and its version), `profile` (each component profile claimed;
 [components.md](components.md#profiles)), `cmdkey`, and `feature` for
-optional behavior inside a layer. Readers ignore kinds they don't know.
+optional behavior inside a layer (`position`: the host knows and accepts
+window positions in desktop space). Readers ignore kinds they don't know.
 
 ## Open questions
 
 1. **Request timeout.** 5 seconds is a guess. Per request type, or set
    by the client?
-2. **Tags with an argument.** `del:t3` in one key word works; should the
-   head grow a fourth word?
+2. ~~Tags with an argument.~~ Settled: the head never grows a fourth
+   word; an argument goes in the tag (`del:t3`) or an attribute.
 3. **Shadowed window files.** A child named `title` hides the window's
    `title` file. Is a `.win/` directory cleaner?
 4. **`@name` and `@asset`.** The same sigil names a node and an asset.

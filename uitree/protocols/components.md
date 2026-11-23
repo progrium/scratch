@@ -83,7 +83,7 @@ Prop forms:
 | `path` | a node path in the same window (an overlay's `anchor`) |
 | `child` | the name of one of the node's children (a `tabs` value) |
 | `data` | a data file; see its `file` line |
-| `bytes` | binary (an image) |
+| `bytes` | binary (an image), or raw text the type doesn't parse |
 
 ### Data file formats
 
@@ -133,6 +133,13 @@ type without testing each.
 | --- | --- |
 | `core` | `div` `text` `styled-text` `img` `svg` `icon` `scroll` `spacer` |
 | `canvas` | `canvas` (retained `ops`, item hits, `pixels`) |
+
+Two scale rules from [core.md § Coordinates](core.md#coordinates) apply
+to these profiles: `img` takes `scale=` (its logical size is its pixel
+size divided by `scale`, default 1), and a `canvas` has a read-only
+`scale` prop with its current device pixels per point; its `pixels`
+buffer is `w×scale` by `h×scale` device pixels, and its ops and hits are
+in node space, the only place decimals are allowed.
 | `form` | `button` `checkbox` `radio-group` `switch` `select` `input` `textarea` `number-input` `slider` `form` `field` |
 | `data` | `list` `table` `tree` `description-list` |
 | `overlay` | `dialog` `alert-dialog` `sheet` `popover` `tooltip` `context-menu` |
@@ -207,13 +214,33 @@ prop    script  text  file
 verb    reload                          class=activate
 verb    back                            class=activate
 verb    forward                         class=activate
+verb    eval     n=N script=TEXT        class=author
+file    message  format=bytes
+file    result   format=bytes
 event   load      kind=state   attrs=ok
 event   title     kind=state
 event   navigate  kind=action  attrs=allowed
+event   message   kind=action  attrs=n
+event   result    kind=action  attrs=n,ok
 ```
 
-Talking to the page (evaluating script, receiving messages) is an open
-question below.
+**Talking to the page.** `eval` on the node's `ctl` runs script in the
+page, usually as a here-value:
+
+```rc
+echo 'eval n=7 script=<<END
+document.title
+END' >$ui/win/main/view/ctl
+# result - view win=main n=7 ok seq=90
+cat $ui/win/main/view/result/7
+```
+
+An `eval` with `n=` answers with a `result` event and the value, as text,
+in `result/N`; `ok` is absent when the script threw, and `result/N` then
+holds the error. In the page, `uitree.post(text)` sends `message KEY PATH
+win=main n=N seq=...`, with the body in `message/N`. Both directories keep
+the last 64 entries. Message bodies are bytes the page chose, and a
+client treats them as untrusted input.
 
 ## Degrading
 
@@ -246,8 +273,8 @@ indistinguishable to clients.
    both? Profiles may need their own `major.minor`.
 3. **Style per type.** Should a descriptor list the style words that mean
    something on that type (variants are there already)?
-4. **Talking to a web page.** `eval` on the `web` node's `ctl` and a
-   `message` event with the body in a file, or a separate proposal?
+4. ~~Talking to a web page.~~ Settled: `eval`, `message/N` and
+   `result/N` on the `web` node (§ New in this spec).
 5. **Slots or children.** uitreefs mixes named slots and typed children
    (`sidebar` takes `header`, `footer` and `sidebar-group` children).
    The `slot` and `child` lines cover it, but is there a simpler model?

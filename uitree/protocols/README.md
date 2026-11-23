@@ -1,6 +1,6 @@
 # uitree protocols
 
-**Status:** draft 0.1 · 22 November 2026 · nothing here is final
+**Status:** draft 0.2 · 23 November 2026 · nothing here is final
 
 This directory specifies the uitree file protocol: how a program builds,
 runs and observes a graphical user interface by reading and writing files
@@ -28,10 +28,10 @@ rest are optional, and a host says which it implements in `version`
 | --- | --- | --- | --- | --- |
 | Core | [core.md](core.md) | `$ui` | yes | The tree, node files, the `ctl` grammar, events, requests, keys and menus, tree documents, errors, `version` |
 | Components | [components.md](components.md) | `$ui/types` | yes | The type descriptor, how a host publishes its types, the standard profiles |
-| Shell | [shell.md](shell.md) | `$desk` | no | One app's windows as platform objects: bounds and state, native dialogs, notifications, tray, global hotkeys, displays, power |
-| Session | [session.md](session.md) | `$desk` (session level) | no | Every app's windows, focus across apps, the shared menu bar, the desktop layer, chrome, launching |
+| Shell | [shell.md](shell.md) | `$ui` (`app/`, `sys/`, `tray/`, `over/`, `open/`) | no | One app's place on the desktop: window platform props, native dialogs, notifications, tray, global hotkeys, displays, a keyring, opening URLs, documents and URLs handed to the app |
+| Session | [session.md](session.md) | `$wm` | no | Every app's windows, focus across apps, the shared menu bar, the desktop layer, chrome, launching |
 | Policy | [policy.md](policy.md) | `/mnt/ux` | no | A public view of an app's tree, rights per verb, grants, redaction, a broker that aggregates apps |
-| Transfer | [transfer.md](transfer.md) | `$ui/drag`, `$ui/clip*` | no | Typed drag and drop and a typed clipboard, bytes not paths |
+| Transfer | [transfer.md](transfer.md) | `$ui/drag`, `$ui/clip*`, `$ui/file` | no | Typed drag and drop, a typed clipboard, and host files as byte handles: bytes not paths |
 
 Which hosts are expected to implement what:
 
@@ -47,6 +47,16 @@ Which hosts are expected to implement what:
 Core and Components are what make a client or a `.ui` document
 portable: an rc script that uses only those layers and the `form`
 profile runs on any host that claims them.
+
+### One author tree, one external protocol
+
+The author gets **one tree**, `$ui`. Core, components, shell and transfer
+all serve their files there, and `version` says which of them a host
+implements. Other clients (scripts, tests, assistive tools, other apps)
+see **the same tree** through the policy layer's public view, with
+rights: that is the external protocol. Only the session, which belongs
+to the window system rather than to any one app, has its own mount,
+`$wm`.
 
 ## Shared conventions
 
@@ -72,9 +82,24 @@ does.
   the same in rc, awk and a URL. A host whose toolkit spells names
   otherwise (GPUI's `flex_col`) maps them; the spelling on the wire is
   always the dashed one.
-- **Ignore what you don't know.** Readers ignore unknown attributes and
-  unknown events. Writers send only attributes the spec defines, except
-  names starting `x.` (`x.myapp.foo=1`), which are free for experiments.
+- **Ignore what you don't know.** Readers ignore unknown attributes,
+  events, files and `version` lines. Writers send only attributes the
+  spec defines, except names starting `x.` (`x.myapp.foo=1`), which are
+  free for experiments.
+- **Values can grow.** Any word drawn from a closed set (`state`, `kind`,
+  `via`, `mode`, `result`, `op`, a data line's first word) may gain values
+  in a minor version. Every such field names a **fallback** in the spec,
+  and a reader that meets an unknown value treats it as the fallback. A
+  host refuses a value it doesn't know with `bad value`, never by
+  guessing, so a writer learns by refusal and can fall back.
+- **Three positional words, forever.** An event line's head is `name key
+  path`. Nothing new ever becomes positional: everything after the head is
+  an attribute, in any order, with `seq=` last.
+- **Coordinates are whole logical points in a named space.** Positions
+  and sizes are in logical points (AppKit points, CSS pixels), as whole
+  numbers, in desktop, window or node space; each file and attribute says
+  which ([core.md](core.md#coordinates)). Device pixels appear only as a
+  `scale` factor.
 - **Snapshots, then events.** State files are read whole from offset 0
   and give a consistent snapshot as of the open. `events` files are
   streams (core.md § Events). To follow something, open its `events`,
@@ -85,9 +110,9 @@ does.
   different files at the same path. Anything that crosses from one app
   to another (a drop, a paste) carries bytes or file names, never a path
   to open ([transfer.md](transfer.md)).
-- **Mounts.** `$ui` names the core tree (`/mnt/ui` on Plan 9). `$desk`
-  names the shell and session tree (`/mnt/desk`). A client always goes
-  through the variable and never spells the path.
+- **Mounts.** `$ui` names the app's tree (`/mnt/ui` on Plan 9). `$wm`
+  names the session tree (`/mnt/wm`), where one exists. A client always
+  goes through the variable and never spells the path.
 
 ## Versions
 
@@ -113,5 +138,6 @@ a fake per protocol. Neither exists yet.
   rights, the public view, the session, drag brokering.
 - The uxkit draft ([9ux PR #23](https://github.com/progrium/9ux/pull/23)):
   author and public views of one tree, request events, coalesced queues.
-- The toolkit-go desktop filesystem proposal: the `$desk` shell layer.
+- The toolkit-go desktop filesystem proposal: the shell layer.
+- [uitree protocol decisions](https://claude.ai/artifact/CXNpMbq3ffiHzF2RaQYEga) (23 November 2026): one author tree, coordinates, file handles, `open`, growth rules, theme preference, default menus.
 - Inferno Tk and acme: text commands to a toolkit, windows as directories.
