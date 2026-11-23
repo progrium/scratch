@@ -710,7 +710,10 @@ pub const Tree = struct {
         defer arena.deinit();
         const a = arena.allocator();
         const n = st.node(ev.node);
-        const kind: EventKind = ev.kind orelse kindOf(n, ev.name);
+        // A design state name (`hover`, `focus`, ...) coalesces even when
+        // the host calls it an action.
+        var kind: EventKind = ev.kind orelse kindOf(n, ev.name);
+        if (kind == .action and state.inList(&state_events, ev.name)) kind = .state;
         var attrs: std.ArrayList(Attr) = .empty;
         var win_name: ?[]const u8 = ev.win;
         var path: []const u8 = ev.path orelse "-";
