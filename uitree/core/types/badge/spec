@@ -1,0 +1,8 @@
+type    badge  tier=component  profile=feedback  since=1.0
+prop    count  number
+prop    dot    bool  default=off
+prop    max    number  default=99
+prop    icon   word
+word    dot  kind=flag
+word    xs sm md lg  kind=size
+child   any

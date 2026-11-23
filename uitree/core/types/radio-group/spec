@@ -1,0 +1,11 @@
+type    radio-group  tier=component  profile=form  since=1.0
+prop    items       data  file
+prop    value       word
+prop    dir         enum=row,col  default=col
+prop    disabled    bool
+prop    controlled  bool
+word    disabled controlled  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none
+file    items  format=items

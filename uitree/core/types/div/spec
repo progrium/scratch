@@ -1,0 +1,2 @@
+type    div  tier=element  profile=core  since=1.0
+child   any

@@ -1,0 +1,7 @@
+type    link  tier=component  profile=nav  since=1.0
+prop    label     text  file
+prop    href      text  file
+prop    disabled  bool
+word    disabled  kind=flag
+event   click  kind=action
+child   none

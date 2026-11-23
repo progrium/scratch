@@ -1,0 +1,6 @@
+type    accordion-item  tier=component  profile=layout  since=1.0
+prop    title     text  file
+prop    icon      word
+prop    disabled  bool  default=off
+word    disabled  kind=flag
+child   any

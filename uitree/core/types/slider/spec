@@ -1,0 +1,12 @@
+type    slider  tier=component  profile=form  since=1.0
+prop    min         number  default=0
+prop    max         number  default=100
+prop    step        number  default=1
+prop    value       number  default=0
+prop    dir         enum=row,col  default=row
+prop    disabled    bool
+prop    controlled  bool
+word    disabled controlled  kind=flag
+event   change  kind=state
+event   commit  kind=action
+child   none

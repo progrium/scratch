@@ -1,0 +1,5 @@
+type    empty  tier=component  profile=feedback  since=1.0
+prop    title        text  file
+prop    description  text  file
+prop    icon         word
+child   any

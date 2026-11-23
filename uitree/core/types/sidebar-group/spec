@@ -1,0 +1,3 @@
+type    sidebar-group  tier=component  profile=nav  since=1.0
+prop    label  text  file
+child   sidebar-item

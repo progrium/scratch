@@ -1,0 +1,5 @@
+type    avatar  tier=component  since=1.0
+prop    src   text  file
+prop    name  text  file
+word    xs sm md lg  kind=size
+child   none

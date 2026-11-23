@@ -1,0 +1,7 @@
+type    chart  tier=component  since=1.0
+prop    kind  enum=line,bar,area,pie  default=line
+prop    data  bytes  file
+prop    x     word
+prop    y     text  file
+event   select  kind=state
+child   none

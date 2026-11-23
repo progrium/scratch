@@ -1,0 +1,12 @@
+type    tree  tier=component  profile=data  since=1.0
+prop    items       data  file
+prop    expanded    text  file
+prop    value       text  file
+prop    selectable  bool  default=off
+prop    multiple    bool  default=off
+word    selectable multiple  kind=flag
+event   select  kind=state
+event   expand  kind=action
+event   open    kind=action
+child   none
+file    items  format=tree-items

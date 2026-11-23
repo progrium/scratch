@@ -1,0 +1,4 @@
+type    icon  tier=element  profile=core  since=1.0
+prop    name  word
+word    xs sm md lg  kind=size
+child   none

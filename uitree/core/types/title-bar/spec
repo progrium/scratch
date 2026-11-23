@@ -1,0 +1,4 @@
+type    title-bar  tier=component  since=1.0
+prop    title  text  file
+event   action  kind=action
+child   any
