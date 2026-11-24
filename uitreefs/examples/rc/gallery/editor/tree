@@ -1,2 +1,0 @@
-scroll story  : flex_1 p=24
-  editor e  line_numbers  language=rust  : h=420 border_1 border_color=border rounded_md

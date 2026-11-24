@@ -7,14 +7,12 @@
 #
 # After bumping the pins in the renderer's Cargo.toml, bump them here to the
 # same values and run this script. It refuses to run if the two disagree.
-# Until the renderer workspace exists, it checks against uitreefs's.
 # Building the generator links GPUI, so it needs GPUI's platform libraries
 # (on Linux: libxkbcommon-x11, wayland, fontconfig, freetype headers).
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 uitree="$here/../../../.."
 ws="$uitree/renderer/gpui/Cargo.toml"
-[ -f "$ws" ] && grep -q '^gpui *=' "$ws" || ws="$uitree/../uitreefs/Cargo.toml"
 
 pin() { grep -E "^$1 *=" "$2" | sed -E 's/(, *)?features *= *\[[^]]*\]//' | tr -d ' '; }
 for dep in gpui gpui-component; do

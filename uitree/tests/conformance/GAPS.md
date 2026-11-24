@@ -153,6 +153,16 @@ layer's Open questions. Carried-over items from uitreefs's GAPS.md that
     exist`, so `lib.rc` reads that as `not found` (uitreefs GAPS 21).
 30. **h9's built-in root** has 42 commands and no `dd`, `head`, `kill`
     or `printf` (uitreefs GAPS 31), so 24 builds large writes with awk.
+31. **No h9 sandbox flags yet.** uitreefs passed h9's policy flags
+    (`--profile`, `--net`, `--net-allow`, `--memory`, `--writable`,
+    `--timeout`, ...) through to the machine. uitree's ABI has
+    `UitMachineArgs.h9_flags` for them, but `core/src/machine/root.zig`
+    refuses any (`error.FlagsNotInSpike`) and no CLI takes them, so every
+    app runs under h9's default policy. uitreefs's flag list and its
+    mapping are in its last version's
+    [crates/h9sys](https://github.com/progrium/scratch/tree/562f8b757a3558900b14f21c515f878af0167ada/uitreefs/crates/h9sys)
+    and [cli.rs](https://github.com/progrium/scratch/blob/562f8b757a3558900b14f21c515f878af0167ada/uitreefs/crates/uitreefs/src/cli.rs).
+    Owner: core.
 
 ## Settled by 0.2 (uitreefs GAPS.md items now closed)
 

@@ -1,2 +1,0 @@
-scroll story  : flex_1 overflow_y_scroll p=24
-  markdown m  selectable  : max_w=640

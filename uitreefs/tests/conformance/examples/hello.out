@@ -1,8 +1,0 @@
--- window main Greeter
-div root  : v_flex size_full p=20 gap=12 bg=background
-  div row  tag=greet  : h_flex gap=8
-    input name  placeholder='Your name'  : flex_1
-    button go  label=Greet  : primary
-  text out  text='Who are you?'  : text_lg text_color=muted_foreground
--- keys
--- stderr

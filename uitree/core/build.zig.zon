@@ -5,7 +5,7 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         // hyper9, for h9.Machine (the app sandbox) and dotl/wire.zig (9P
-        // framing). A submodule of this repo, pinned with uitreefs's.
+        // framing). A submodule of this repo.
         .h9 = .{ .path = "../third_party/hyper9", .lazy = true },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "include", "types" },

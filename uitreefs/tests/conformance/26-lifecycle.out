@@ -1,7 +1,0 @@
-# a blocked events read ends at quit
-ok
-eof
-# later access fails with app gone
-app gone
-app gone
-exit=1

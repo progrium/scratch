@@ -5,7 +5,8 @@ headless run needs, and **renderers** that only draw and turn input into
 events. The protocol it serves is [protocols/](protocols/) (draft 0.2).
 Apps run sandboxed in [hyper9](https://github.com/progrium/hyper9)'s h9.
 
-This replaces [uitreefs](../uitreefs), which is one Rust program. The
+This replaces [uitreefs](https://github.com/progrium/scratch/tree/562f8b757a3558900b14f21c515f878af0167ada/uitreefs), which was one Rust program and has
+been removed from the repo (the link is its last version). The
 reasons and the estimate are in the scoping doc,
 [Zig core + Rust renderer](https://claude.ai/artifact/9VdAkMLrAEzaWoWf56za5i).
 How the work is split is in [ARCHITECTURE.md](ARCHITECTURE.md).

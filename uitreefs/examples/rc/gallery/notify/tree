@@ -1,6 +1,0 @@
-scroll story  : flex_1 overflow_y_scroll p=24
-  div v  : h_flex gap=8
-    button i  label=Info  tag=toast:info
-    button s  label=Success  tag=toast:success  : success
-    button w  label=Warning  tag=toast:warning  : warning
-    button e  label=Error  tag=toast:error  : danger

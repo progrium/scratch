@@ -3,7 +3,7 @@
 The suite every uitree host must pass: rc scripts that run as a client
 in h9 against `uitree-headless`, with golden output. Workstream W5,
 interface I5 in [ARCHITECTURE.md](../../ARCHITECTURE.md). Ported from
-[uitreefs/tests/conformance](../../../uitreefs/tests/conformance) to
+[uitreefs/tests/conformance](https://github.com/progrium/scratch/tree/562f8b757a3558900b14f21c515f878af0167ada/uitreefs/tests/conformance) to
 [draft 0.2](../../protocols/): dashed names, the 0.2 error phrases and
 `code=` words, the `name key path` event head, `$ui/types`, and the
 0.2 forms of windows, requests, batches, theme, keys, menus and transfer.
