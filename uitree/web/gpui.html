@@ -24,6 +24,7 @@ try {
   window.gpui = await startGpui({
     argv: argvFor(app),
     title: apps[app].title,
+    gfx: q.get('gfx'),
     files: await filesFor(app),
     onOutput: (fd, d) => { const s = dec.decode(d); window.appLog.push(s); console.log(`[${fd}] ${s}`); },
     onExit: (code, msg) => { window.appExit = code; if (code) err(`exit ${code} ${msg ?? ''}`); },

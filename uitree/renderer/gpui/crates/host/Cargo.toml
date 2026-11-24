@@ -28,6 +28,9 @@ similar = "2.7"
 # the browser's clock there (uitree/web).
 [target.'cfg(target_family = "wasm")'.dependencies]
 web-time = "1.1"
+# gpui_web itself, for its graphics backend choice (runtime.rs, `WEB_GFX`).
+# The version gpui-kit's gpui-pre-platform pins.
+gpui_web = { package = "gpui-pre-web", version = "=0.3.12", default-features = false }
 
 # `syntect`: syntax highlighting for the editor, markdown code blocks and
 # diffs. Not on the web, where its syntax set is 5 MB of the download

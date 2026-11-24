@@ -136,6 +136,17 @@ terminal renderer in the browser link `libuitcore.a`.
   core, `uit_frame_drawn` included, and main.zig redraws on every wake, so
   it pumps and draws in a loop. The web build only draws when a pump
   changed something. main.zig has the same loop (not fixed here).
+- **WebGPU draws nothing**: gpui_web picks WebGPU when the browser has
+  it, and the page stays blank (Chromium loses the device at once with "A
+  valid external Instance reference no longer exists"; iPad Safari, which
+  has WebGPU, was blank too). The renderer asks for WebGL2 unless the page
+  says otherwise: `gpui.html?gfx=webgpu` or `gfx=auto` to try the others.
+  The browser tests run with WebGPU disabled, so they never took that path.
+- **Two renderers at once were too much for a phone**: `index.html` ran a
+  GPUI module and a terminal module, each with its own h9 machine, about
+  550 MB in WebKit, and iOS Safari killed the tab and reloaded it until it
+  gave up. On a screen too narrow for the two side by side, the page now
+  runs one at a time, with a switch between them.
 - **Events before the app subscribes are lost** (by design): a click in
   the first few hundred ms after the tree appears, before `cat
   $ui/events` opens, does nothing.

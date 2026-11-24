@@ -12,16 +12,17 @@ import { core } from './uitcore-imports.js';
  * Starts the GPUI renderer on the page's canvas with the app `argv` (h9's)
  * and its `files` ({ path: text }, put in h9's root). `onCore(core)` gets
  * a Core-shaped handle on the renderer's core: `serve(send, onClose)`
- * opens a `$ui` connection of the page's own (probe.js).
+ * opens a `$ui` connection of the page's own (probe.js). `gfx` is the
+ * graphics backend: 'webgl' (null, the default), 'webgpu' or 'auto'.
  */
-export async function startGpui({ argv, title, files = {}, log = console.error, onOutput = () => {}, onExit = () => {}, onCore = () => {} }) {
+export async function startGpui({ argv, title, gfx = null, files = {}, log = console.error, onOutput = () => {}, onExit = () => {}, onCore = () => {} }) {
   const t = { start: performance.now() };
   core.config.log = log;
   core.config.app = { files, onOutput, onExit };
   const wasm = await init({ module_or_path: new URL('gpui/uitree_web_bg.wasm', import.meta.url) });
   t.renderer = performance.now();
   core.bind(wasm, wasm.memory);
-  start(argv, title ?? null, new URL('.', import.meta.url).href.replace(/\/$/, ''));
+  start(argv, title ?? null, new URL('.', import.meta.url).href.replace(/\/$/, ''), gfx);
   t.started = performance.now();
   onCore({ serve: (send, onClose) => core.connect(send, onClose) });
   dropFiles(core);
