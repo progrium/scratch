@@ -10,7 +10,7 @@ N=${1:-200}
 here=$(cd "$(dirname "$0")" && pwd)
 top=$(cd "$here/../.." && pwd)
 tmp=$(mktemp -d)
-trap 'pkill -f "$tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
+trap 'pkill -f "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 want() { [ -z "$ONLY" ] || echo " $ONLY " | grep -q " $1 "; }
 
 echo "== build" >&2
