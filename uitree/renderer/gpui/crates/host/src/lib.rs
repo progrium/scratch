@@ -72,7 +72,7 @@ mod tests;
 
 pub use runtime::run;
 #[cfg(target_family = "wasm")]
-pub use runtime::{web_drop, WEB_ASSETS};
+pub use runtime::{web_drop, WEB_ASSETS, WEB_GFX};
 pub use spec::Spec;
 pub use styling::ParsedStyle;
 

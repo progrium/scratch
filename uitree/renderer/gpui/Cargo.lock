@@ -3332,6 +3332,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit",
  "gpui-pre",
+ "gpui-pre-web",
  "jiff",
  "lsp-types",
  "objc2 0.6.5",

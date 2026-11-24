@@ -509,6 +509,15 @@ fn web_drops(cx: &mut App) {
 #[cfg(target_family = "wasm")]
 pub static WEB_ASSETS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
+/// In the browser: the graphics backend, `webgl` (the default), `webgpu`
+/// or `auto` (gpui_web's own choice: WebGPU when the browser has it, else
+/// WebGL2). WebGL2 by default: with WebGPU the page draws nothing (in
+/// Chromium the device is lost as soon as it is made; iPad Safari, which
+/// has WebGPU, shows the same blank page), and WebGL2 is the backend the
+/// browser tests run (uitree/web/README.md).
+#[cfg(target_family = "wasm")]
+pub static WEB_GFX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 /// Starts GPUI and the core on this (main) thread and runs the app in h9;
 /// returns the exit code when the app quits.
 pub fn run(opts: Options) -> i32 {
@@ -516,7 +525,15 @@ pub fn run(opts: Options) -> i32 {
     // icons fetched on demand. run returns at once there; the page's event
     // loop runs the app, and uit_run_machine starts it in h9's Worker.
     #[cfg(target_family = "wasm")]
-    let app = gpui_kit::platform::single_threaded_web()
+    let app = {
+        use gpui_web::WebBackendPreference as B;
+        let gfx = match WEB_GFX.get().map(String::as_str) {
+            Some("webgpu") => B::WebGpu,
+            Some("auto") => B::Auto,
+            _ => B::WebGl,
+        };
+        gpui::Application::with_platform(std::rc::Rc::new(gpui_web::WebPlatform::new_with_backend(false, gfx)))
+    }
         .with_assets(gpui_kit::assets::AllAssets::new(WEB_ASSETS.get().cloned().unwrap_or_default()));
     #[cfg(not(target_family = "wasm"))]
     let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
