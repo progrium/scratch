@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 7;
+pub const UIT_ABI_VERSION: u32 = 8;
 
 #[repr(C)]
 pub struct UitCore {
@@ -120,6 +120,7 @@ pub const UIT_CMD_ANSWER: u32 = 12;
 pub const UIT_CMD_REDRAW: u32 = 13;
 pub const UIT_CMD_THEME_LOAD: u32 = 14;
 pub const UIT_CMD_ASSETS: u32 = 15;
+pub const UIT_CMD_APP_CTL: u32 = 16;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -311,6 +312,7 @@ unsafe extern "C" {
     pub fn uit_window_closed(c: *mut UitCore, win: UitStr) -> c_int;
     pub fn uit_key(c: *mut UitCore, win: UitStr, keystroke: UitStr, focused: UitNode) -> c_int;
     pub fn uit_menu_action(c: *mut UitCore, id: UitStr) -> c_int;
+    pub fn uit_tray_action(c: *mut UitCore, tray: UitStr, id: UitStr) -> c_int;
     pub fn uit_system_dark(c: *mut UitCore, dark: u32) -> c_int;
     pub fn uit_drag(c: *mut UitCore, msg: *const UitDragMsg, drag: *mut u64) -> c_int;
 

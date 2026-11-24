@@ -2,12 +2,16 @@
 //! (libuitcore, Zig); this only parses its flags and
 //! hands control to GPUI.
 //!
-//!     uitree [-k] [-t title] [--root DIR] [-d SRC[:DST]]... [-e NAME=VALUE]... [--bench N] prog [args...]
+//!     uitree [-k] [-t title] [--root DIR] [-d SRC[:DST]]... [-e NAME=VALUE]... [-C DIR] [--net MODE] [--h9 FLAG]... [--bench N] prog [args...]
 //!
 //! The app runs in h9 with $ui mounted at /mnt/ui. `--root` is h9's
 //! (default $H9ROOT, else the built-in root). `-d` adds an h9 mount:
 //! `-d ALPINE:#L` gives the app a Linux view, where $ui is /9/mnt/ui.
-//! `-e` sets a variable in the app's environment. `--bench N` builds an
+//! `-e` sets a variable in the app's environment. `-C DIR` starts the app
+//! in DIR (default: the current directory). `--net MODE` is h9's
+//! network policy (`outbound`, the default; `enable`, which lets the app
+//! serve on the host's ports; `disable`), and `--h9 FLAG` passes another
+//! h9 sandbox flag as h9 spells it (`--h9 --net-allow=tcp!*!443`). `--bench N` builds an
 //! N-node tree instead of running an app, measures the per-frame cost of
 //! reading it through the ABI, prints it and exits. `-k` keeps the
 //! window open after the program exits.
@@ -23,9 +27,12 @@ fn main() {
             "--root" => opts.root = args.next(),
             "-d" | "--dir" => opts.dirs.extend(args.next()),
             "-e" | "--env" => opts.env.extend(args.next()),
+            "-C" => opts.cwd = args.next(),
+            "--net" => opts.h9_flags.extend(args.next().map(|m| format!("--net={m}"))),
+            "--h9" => opts.h9_flags.extend(args.next()),
             "--bench" => opts.bench = args.next().and_then(|n| n.parse().ok()),
             "-h" | "--help" => {
-                eprintln!("usage: uitree [-k] [-t title] [--root DIR] [-d SRC[:DST]] [-e NAME=VALUE] [--bench N] prog [args...]");
+                eprintln!("usage: uitree [-k] [-t title] [--root DIR] [-d SRC[:DST]] [-e NAME=VALUE] [-C DIR] [--net MODE] [--h9 FLAG] [--bench N] prog [args...]");
                 std::process::exit(2);
             }
             _ => {
@@ -35,7 +42,7 @@ fn main() {
         }
     }
     if rest.is_empty() && opts.bench.is_none() && std::env::var_os("UITREE_HOST_APP").is_none() {
-        eprintln!("usage: uitree [-k] [-t title] [--root DIR] [-d SRC[:DST]] [-e NAME=VALUE] [--bench N] prog [args...]");
+        eprintln!("usage: uitree [-k] [-t title] [--root DIR] [-d SRC[:DST]] [-e NAME=VALUE] [-C DIR] [--net MODE] [--h9 FLAG] [--bench N] prog [args...]");
         std::process::exit(2);
     }
     opts.root = opts.root.or_else(|| std::env::var("H9ROOT").ok().filter(|r| !r.is_empty()));

@@ -3,7 +3,7 @@
 //! The conformance suite runs against this binary
 //! (tests/conformance/README.md § The host).
 //!
-//!     uitree-headless [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... CMD [ARG...]
+//!     uitree-headless [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... [--net MODE] CMD [ARG...]
 //!     uitree-headless -a ADDR
 //!
 //! It holds the tree on its own owner thread and pumps when a 9P thread
@@ -19,6 +19,8 @@
 //!   `unix!PATH`) and prints `uitree: listening on DIAL` to standard error.
 //! - `-r ROOT` is h9's root: `builtin` (the default) or a 9front root
 //!   directory; `$H9ROOT` sets it too.
+//! - `--net MODE` is h9's network policy: `outbound` (the default),
+//!   `enable` (the app may serve on the host's ports) or `disable`.
 //! - Failed writes are loud: `uitree: write PATH: phrase: detail` on
 //!   standard error (the tree prints them).
 
@@ -36,7 +38,7 @@ const Handle = tree.Handle;
 const Err = ninep.fs.Err;
 
 const usage =
-    \\usage: uitree-headless [--check-render] [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... CMD [ARG...]
+    \\usage: uitree-headless [--check-render] [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... [--net MODE] CMD [ARG...]
     \\       uitree-headless -a ADDR
     \\
 ;
@@ -46,6 +48,8 @@ const Options = struct {
     root: []const u8 = "",
     dirs: std.ArrayList(UitStr) = .empty,
     env: std.ArrayList(UitStr) = .empty,
+    /// h9 sandbox flags (`--net=enable`).
+    h9_flags: std.ArrayList(UitStr) = .empty,
     argv: []const []const u8 = &.{},
     /// --check-render: replay every pump's change stream into a replica
     /// and compare at exit (render/check.zig).
@@ -79,6 +83,9 @@ fn parseArgs(a: std.mem.Allocator, args: []const []const u8) !Options {
         } else if (std.mem.eql(u8, s, "-e")) {
             if (std.mem.indexOfScalar(u8, v, '=') == null) return error.Usage;
             try o.env.append(a, UitStr.of(v));
+        } else if (std.mem.eql(u8, s, "--net")) {
+            if (!(std.mem.eql(u8, v, "outbound") or std.mem.eql(u8, v, "enable") or std.mem.eql(u8, v, "disable"))) return error.Usage;
+            try o.h9_flags.append(a, UitStr.of(try std.fmt.allocPrint(a, "--net={s}", .{v})));
         } else return error.Usage;
     }
     o.argv = args[i..];
@@ -368,8 +375,8 @@ pub fn main(init: std.process.Init) !u8 {
             .n_dirs = opts.dirs.items.len,
             .env = opts.env.items.ptr,
             .n_env = opts.env.items.len,
-            .h9_flags = null,
-            .n_h9_flags = 0,
+            .h9_flags = opts.h9_flags.items.ptr,
+            .n_h9_flags = opts.h9_flags.items.len,
             .out_fd = -1,
             .err_fd = -1,
         };

@@ -23,6 +23,9 @@ jiff = "1.0"
 anyhow = "1"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 similar = "2.7"
+# The shell layer's window props and tray icons (src/platform/): the OS
+# window behind GPUI's, and the tray-icon crate's menu bar extras.
+raw-window-handle = "0.6"
 
 # std::time panics on wasm32-unknown-unknown: Instant and SystemTime from
 # the browser's clock there (uitree/web).
@@ -34,6 +37,16 @@ web-time = "1.1"
 # (uitree/web/README.md): code shows as plain text there.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 gpui-component = { workspace = true, features = ["syntect"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+tray-icon = "0.21"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+tray-icon = "0.21"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 # Exposes `host::testing` (the TestAppContext harness) to other crates.

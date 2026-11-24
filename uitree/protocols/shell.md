@@ -73,7 +73,8 @@ The app `ctl` takes core's commands, and these:
 | `delete tray/NAME` / `delete over/NAME` | Remove one |
 
 A window's `ctl` also takes `hide`, `reload` (web content) and `set .
-prop=value` with the props below.
+prop=value` with the props below. `state hidden` orders a shown window out
+without closing it, and any other `state` brings it back.
 
 ### Window props
 
@@ -82,7 +83,10 @@ Beyond core's window props:
 | Prop | Meaning |
 | --- | --- |
 | `url=U`, `html=H`, `script=S` | Web content, run on every load. Shorthand for a window whose only child is a `web` node ([components.md](components.md#new-in-this-spec)) |
-| `top` | Always on top |
+| `top=on\|off\|overlay` | `on`: above every normal and floating window, below the menu bar. `overlay`: above the menu bar and the dock too, as a screen overlay is. Off by default |
+| `fill=none\|display\|work` | The window covers its display (`display`) or the display's work area (`work`, without the menu bar, dock or taskbar), and follows it when set again |
+| `all-spaces=on\|off` | On every Space or virtual desktop, including beside a full-screen app |
+| `shadow=on\|off` | The window's drop shadow. On by default where the platform draws one |
 | `frameless` | No title bar or border (the same as `titlebar=none`) |
 | `transparent` | Transparent background |
 | `remember=KEY` | Save and restore bounds under the app `id` and this key |
@@ -205,6 +209,27 @@ item quit label=Quit' >$ui/tray/main/menu
 
 The menu file uses core's item grammar, roles included. On a platform
 without tray icons, `tray` fails with `unsupported`.
+
+**As implemented in uitree (draft).** The tray's props are set on the app
+ctl and read back from read-only files, as the app props are:
+`tray NAME [title=T] [tooltip=T] [menu=MENU] [icon=ASSET]` makes it,
+`set tray/NAME prop=value` changes it, `delete tray/NAME` removes it.
+`menu=` names a core `menu/MENU` file (default `menu/NAME`) rather than
+holding the items in `tray/NAME/menu`, so its items take `set ID
+check=on` and `enabled=off` like any menu's; `icon=` names an
+`asset/NAME` holding PNG bytes. `title` is text beside or instead of the
+icon (macOS). A pick arrives as `action ID tray/NAME via=tray`. The GPUI
+host draws trays on macOS and Windows; on Linux it shows none yet (GTK's
+loop isn't running), and doesn't refuse.
+
+```rc
+echo 'item enabled label=Enabled check=on
+sep
+item quit label=Quit' >$ui/menu/tray
+echo 'tray main title=🔲 tooltip=Topframe menu=tray' >$ui/ctl
+# action enabled tray/main via=tray seq=9
+echo 'set enabled check=off' >$ui/ctl
+```
 
 ## Global hotkeys
 

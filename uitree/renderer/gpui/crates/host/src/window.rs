@@ -19,6 +19,8 @@ pub struct WindowView {
     host: Rc<Inner>,
     /// What the `state` file last said, so only changes are reported.
     last_state: String,
+    /// Ordered out by `state hidden` (platform.rs), not closed.
+    hidden: bool,
     last_bounds: [f32; 4],
     /// The focused node, as the `focus` file says.
     last_focus: Option<Node>,
@@ -45,7 +47,7 @@ impl WindowView {
             h.request(root, Pending::WindowClose(w.clone()), "close", &[("via", "titlebar")], "close");
             false
         });
-        let mut v = WindowView { win, host, last_state: String::new(), last_bounds: [0.; 4], last_focus: None, focus: cx.focus_handle() };
+        let mut v = WindowView { win, host, last_state: String::new(), hidden: false, last_bounds: [0.; 4], last_focus: None, focus: cx.focus_handle() };
         v.focus.focus(window, cx);
         v.window_moved(window);
         v
@@ -60,7 +62,7 @@ impl WindowView {
             self.host.window_file(&self.win, "bounds", &v);
         }
         let st = window_state(window);
-        if st != self.last_state {
+        if st != self.last_state && !self.hidden {
             self.last_state = st.to_string();
             self.host.window_file(&self.win, "state", st);
         }
@@ -205,6 +207,7 @@ pub(crate) fn open(inner: &Rc<Inner>, win: &str, cx: &mut App) {
     let (w, h) = prop("size").as_deref().and_then(parse_pair).unwrap_or((800., 600.));
     let sz = size(px(w), px(h));
     let bounds = match prop("pos") {
+        _ if crate::platform::open_bounds(prop("fill").as_deref(), cx).is_some() => crate::platform::open_bounds(prop("fill").as_deref(), cx).unwrap(),
         Some(p) if p != "center" => match parse_pair(&p) {
             Some((x, y)) => Bounds::new(point(px(x), px(y)), sz),
             None => Bounds::centered(None, sz, cx),
@@ -230,8 +233,10 @@ pub(crate) fn open(inner: &Rc<Inner>, win: &str, cx: &mut App) {
     };
     let name = win.to_string();
     let host = inner.clone();
+    let platform_props: Vec<(&str, String)> = crate::platform::WINDOW_PROPS.iter().filter_map(|k| prop(k).map(|v| (*k, v))).collect();
     let r = gpui_kit::open_window(options, cx, move |window, cx| {
         window.set_window_title(&title);
+        crate::platform::apply_window_props(window, cx, &|k| platform_props.iter().find(|(p, _)| *p == k).map(|(_, v)| v.clone()));
         cx.new(|cx| WindowView::new(name, host, window, cx))
     });
     match r {
@@ -260,10 +265,24 @@ pub(crate) fn ctl(inner: &Rc<Inner>, win: &str, cmd: &Ctl, cx: &mut App) {
                 window.resize(size(px(w), px(h)));
             }
         }
+        "set" => {
+            for (k, v) in &cmd.attrs {
+                crate::platform::set_window_prop(window, cx, k, v);
+            }
+        }
         "state" => {
             let want = cmd.arg(0).unwrap_or("normal");
             let cur = window_state(window);
-            view.update(cx, |v, _| v.last_state = want.to_string());
+            let was_hidden = view.read(cx).hidden;
+            view.update(cx, |v, _| {
+                v.last_state = want.to_string();
+                v.hidden = want == "hidden";
+            });
+            if want == "hidden" {
+                crate::platform::set_hidden(window, true);
+            } else if was_hidden {
+                crate::platform::set_hidden(window, false);
+            }
             match want {
                 "min" => window.minimize_window(),
                 "max" if cur != "max" => window.zoom_window(),

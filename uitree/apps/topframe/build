@@ -1,0 +1,17 @@
+#!/bin/sh
+# build: the Topframe client for h9, with Topframe's demo media.
+#
+#	./build            fetch the media if missing, then build topframe-client
+#
+# The demo page's three large files (Tailwind, the music and the video)
+# come from progrium/topframe at a pinned commit instead of living here.
+set -eu
+cd "$(dirname "$0")"
+rev=80f7fe2c9a4b3054176b4e70961cae96875ac89c
+for f in tailwind-2.0.4.min.css LostBookOfTruth.mp3 topframe.mp4; do
+	[ -s "data/$f" ] && continue
+	echo "fetching $f" >&2
+	curl -fsSL -o "data/$f.part" "https://raw.githubusercontent.com/progrium/topframe/$rev/data/$f"
+	mv "data/$f.part" "data/$f"
+done
+GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o topframe-client .

@@ -136,8 +136,8 @@ pub const Snapshot = struct {
 
     pub fn kindOf(s: *const Snapshot, loc: Loc) Kind {
         return switch (loc) {
-            .dir, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .node => .dir,
-            .drag_types, .drag_item_file => .readonly,
+            .dir, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .node, .tray_dir => .dir,
+            .drag_types, .drag_item_file, .app_prop, .tray_file => .readonly,
             .clipdata => .bytes,
             .app => |f| switch (f) {
                 .ctl => .ctl,
@@ -197,6 +197,9 @@ pub const Snapshot = struct {
             .drag_data => |x| if (st.drag(x.n)) |dg| (if (dg.offer.rep(x.ty)) |r| r.ver else dg.ver) else 0,
             .drag_item, .drag_item_file => |x| if (st.drag(x.n)) |dg| dg.ver else 0,
             .clipdata => st.clip_ver,
+            .app_prop => st.app_ver,
+            .tray_dir => |n| if (st.tray(n)) |x| x.ver else 0,
+            .tray_file => |f| if (st.tray(f.name)) |x| x.ver else 0,
             else => 0,
         };
     }
@@ -210,7 +213,8 @@ pub const Snapshot = struct {
         switch (loc) {
             .dir => |d| switch (d) {
                 .root => {
-                    try names.appendSlice(arena, &.{ "version", "ctl", "events", "trace", "keys", "clip", "clipdata", "file", "menu", "theme", "asset", "types", "style", "win" });
+                    try names.appendSlice(arena, &.{ "version", "ctl", "events", "trace", "keys", "clip", "clipdata", "file", "menu", "theme", "asset", "types", "style", "win", "app" });
+                    if (st.trays.items.len > 0) try names.append(arena, "tray");
                     if (st.drags.items.len > 0) try names.append(arena, "drag");
                 },
                 .menu => {
@@ -231,7 +235,10 @@ pub const Snapshot = struct {
                 },
                 // Served by the 9P side from the tree's file handles.
                 .file => {},
+                .app => try names.appendSlice(arena, &state.app_props),
+                .tray => for (st.trays.items) |m| try names.append(arena, m.name.bytes),
             },
+            .tray_dir => try names.appendSlice(arena, &state.tray_props),
             .drag => |n| {
                 try names.appendSlice(arena, &.{ "types", "data" });
                 if (st.drag(n).?.offer.items.items.len > 0) try names.append(arena, "item");
@@ -288,7 +295,12 @@ pub const Snapshot = struct {
             }
         }.f;
         switch (loc) {
-            .dir, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .node => return error.BadValue,
+            .dir, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .node, .tray_dir => return error.BadValue,
+            .app_prop => |k| return line(arena, state.lineProp(arena, Blob.str(st.app), k) orelse ""),
+            .tray_file => |f| {
+                const x = st.tray(f.name) orelse return error.NotFound;
+                return line(arena, state.lineProp(arena, x.val.bytes, f.prop) orelse "");
+            },
             .drag_types => |n| {
                 (st.drag(n) orelse return error.NotFound).offer.writeTypes(w) catch |e| return out(e);
             },

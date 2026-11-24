@@ -108,7 +108,20 @@ pub const Runner = struct {
         }
         if (!ui_given) try env.append(ar, .{ .name = "ui", .value = if (linux) linux_mount_point else mount_point });
         opts.env = env.items;
-        if (args.n_h9_flags > 0) return error.FlagsNotInSpike;
+        // h9's sandbox flags, as h9 spells them. The network ones for now:
+        // `--net=enable` lets a client serve (a local web server for a web
+        // view, as Topframe's client does), `--net-allow=PATTERN` limits
+        // dials. Anything else is refused rather than ignored.
+        var allow: std.ArrayList([]const u8) = .empty;
+        const NetMode = @typeInfo(@TypeOf(opts.policy.net)).optional.child;
+        for (try list(ar, args.h9_flags, args.n_h9_flags)) |f| {
+            if (std.mem.startsWith(u8, f, "--net=")) {
+                opts.policy.net = std.meta.stringToEnum(NetMode, f["--net=".len..]) orelse return error.BadFlag;
+            } else if (std.mem.startsWith(u8, f, "--net-allow=")) {
+                try allow.append(ar, f["--net-allow=".len..]);
+            } else return error.BadFlag;
+        }
+        if (allow.items.len > 0) opts.policy.net_allow = allow.items;
         // Host fds for the guest's output; on Windows the core's own.
         const posix = @import("builtin").os.tag != .windows;
         const outf: std.Io.File = if (posix and args.out_fd >= 0) .{ .handle = args.out_fd, .flags = .{ .nonblocking = false } } else std.Io.File.stdout();

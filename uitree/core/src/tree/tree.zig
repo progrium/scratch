@@ -120,6 +120,10 @@ pub const CmdTag = enum(u32) {
     theme_load = 14,
     /// An `asset/NAME` was written or removed: re-read it with uit_asset.
     assets = 15,
+    /// A shell command for the renderer (shell.md): `tray NAME prop=value
+    /// ...` (made or changed; every prop it has now), `delete tray/NAME`,
+    /// `open URL`, `set app prop=value ...` (every app prop).
+    app_ctl = 16,
 };
 
 /// A command for the renderer (uitcore.h's UitHostCmd). Which fields are
@@ -1086,6 +1090,14 @@ pub const Tree = struct {
         _ = try t.emit(.{ .name = "action", .key = id, .via = "menu", .kind = .action });
     }
 
+    /// A tray menu item was chosen: `action ID tray/NAME via=tray`.
+    pub fn trayAction(t: *Tree, tray: []const u8, id: []const u8) Error!void {
+        if (t.disabled.contains(id)) return;
+        var buf: [256]u8 = undefined;
+        const p = std.fmt.bufPrint(&buf, "tray/{s}", .{tray}) catch return error.BadValue;
+        _ = try t.emit(.{ .name = "action", .key = id, .path = p, .via = "tray", .kind = .action });
+    }
+
     // ------------------------------------------------------------ drags
 
     /// A drag number for a new drag: `n`, or the next free one if 0.
@@ -1402,8 +1414,9 @@ const Tx = struct {
             data = try std.mem.concat(tx.a, u8, &.{ cur, data_in });
         }
         switch (loc) {
-            .dir, .node, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir => return tx.fail(.bad_value, "{s}: a directory", .{p}),
-            .drag_types, .drag_item_file => return tx.fail(.bad_value, "read-only: {s}", .{p}),
+            .dir, .node, .drag, .drag_data_dir, .drag_items, .drag_item, .type_dir, .tray_dir => return tx.fail(.bad_value, "{s}: a directory", .{p}),
+            // Shell props change through the app ctl (`set app`, `set tray/NAME`).
+            .drag_types, .drag_item_file, .app_prop, .tray_file => return tx.fail(.bad_value, "read-only: {s}", .{p}),
             .type_file => return tx.fail(.bad_value, "read-only: {s}", .{p}),
             .app => |f| switch (f) {
                 .ctl => return tx.ctlApp(data),
@@ -1807,6 +1820,7 @@ const Tx = struct {
                 try tx.answer(0, c);
                 continue;
             }
+            if (try tx.shellVerb(c)) continue;
             if (std.mem.eql(u8, c.verb, "copy")) {
                 if (c.words.len > 0 or c.attrs.len == 0) return tx.fail(.bad_syntax, "copy TYPE=VALUE ...", .{});
                 for (c.attrs) |x| {
@@ -1885,6 +1899,111 @@ const Tx = struct {
     }
 
     /// `set ID enabled=on|off check=on|off|mixed`.
+    // ------------------------------------------------------------ shell
+
+    /// The shell layer's app ctl lines (shell.md § Commands): `tray`,
+    /// `open`, `set app`, `set tray/NAME` and `delete tray/NAME`. False if
+    /// `c` is none of them.
+    fn shellVerb(tx: *Tx, c: Ctl) Error!bool {
+        const eq = std.mem.eql;
+        if (eq(u8, c.verb, "tray")) {
+            if (c.words.len != 1) return tx.fail(.bad_syntax, "tray NAME [title=T] [tooltip=T] [menu=MENU] [icon=ASSET]", .{});
+            const name = c.words[0];
+            if (!state.validName(name)) return tx.fail(.bad_value, "tray name: {s}", .{name});
+            if (tx.st.tray(name) != null) return tx.fail(.in_use, "tray/{s}", .{name});
+            try tx.setTray(name, c.attrs, true);
+            return true;
+        }
+        if (eq(u8, c.verb, "open")) {
+            if (c.words.len != 1 or c.attrs.len > 0) return tx.fail(.bad_syntax, "open URL", .{});
+            const url = c.words[0];
+            const colon = std.mem.indexOfScalar(u8, url, ':') orelse return tx.fail(.bad_value, "open: {s}", .{url});
+            if (colon == 0) return tx.fail(.bad_value, "open: {s}", .{url});
+            try tx.cmd(.{ .tag = .app_ctl, .ctl = c });
+            return true;
+        }
+        if (c.words.len == 0) return false;
+        const target = std.mem.trim(u8, c.words[0], "/");
+        if (eq(u8, c.verb, "set") and eq(u8, target, "app")) {
+            try tx.setApp(c.words[1..], c.attrs);
+            return true;
+        }
+        if (!std.mem.startsWith(u8, target, "tray/")) return false;
+        const name = target["tray/".len..];
+        if (tx.st.tray(name) == null) return tx.fail(.not_found, "tray/{s}", .{name});
+        if (eq(u8, c.verb, "set")) {
+            if (c.words.len != 1) return tx.fail(.bad_syntax, "set tray/NAME prop=value ...", .{});
+            try tx.setTray(name, c.attrs, false);
+            return true;
+        }
+        if (eq(u8, c.verb, "delete")) {
+            if (c.words.len != 1) return tx.fail(.bad_syntax, "delete tray/NAME", .{});
+            for (tx.st.trays.items, 0..) |m, i| if (eq(u8, m.name.bytes, name)) {
+                _ = tx.st.trays.orderedRemove(i);
+                m.name.unref(tx.gpa());
+                m.val.unref(tx.gpa());
+                break;
+            };
+            try tx.log("remove path=tray/{s}", .{name});
+            var words = try tx.a.alloc([]const u8, 1);
+            words[0] = try std.fmt.allocPrint(tx.a, "tray/{s}", .{name});
+            try tx.cmd(.{ .tag = .app_ctl, .ctl = .{ .verb = "delete", .words = words } });
+            return true;
+        }
+        return false;
+    }
+
+    /// Makes or changes `tray/NAME`, then hands the renderer every prop it
+    /// has now.
+    fn setTray(tx: *Tx, name: []const u8, attrs: []const Attr, new: bool) Error!void {
+        for (attrs) |at| {
+            if (!state.inList(&state.tray_props, at.key)) return tx.fail(.not_found, "tray/{s}/{s}", .{ name, at.key });
+            if ((std.mem.eql(u8, at.key, "menu") or std.mem.eql(u8, at.key, "icon")) and at.value.len > 0 and !state.validName(at.value))
+                return tx.fail(.bad_value, "{s}={s}", .{ at.key, at.value });
+        }
+        const old: []const u8 = if (tx.st.tray(name)) |m| m.val.bytes else "";
+        const merged = try state.mergeProps(tx.a, old, attrs);
+        const val = try tx.blob(merged.line);
+        if (!new) {
+            for (tx.st.trays.items) |*m| if (std.mem.eql(u8, m.name.bytes, name)) {
+                m.val.unref(tx.gpa());
+                m.val = val;
+                m.ver = tx.gen;
+                break;
+            };
+        } else {
+            errdefer val.unref(tx.gpa());
+            const nb = try tx.blob(name);
+            errdefer nb.unref(tx.gpa());
+            try tx.st.trays.append(tx.gpa(), .{ .name = nb, .val = val, .ver = tx.gen });
+        }
+        try tx.log("tray name={s} {s}", .{ name, merged.line });
+        var words = try tx.a.alloc([]const u8, 1);
+        words[0] = try tx.a.dupe(u8, name);
+        try tx.cmd(.{ .tag = .app_ctl, .ctl = .{ .verb = "tray", .words = words, .attrs = merged.attrs } });
+    }
+
+    /// `set app agent accessory=off name=Notes`: bare words are `=on`.
+    fn setApp(tx: *Tx, bare: []const []const u8, attrs_in: []const Attr) Error!void {
+        var attrs: std.ArrayList(Attr) = .empty;
+        for (bare) |w| try attrs.append(tx.a, .{ .key = w, .value = "on" });
+        try attrs.appendSlice(tx.a, attrs_in);
+        for (attrs.items) |at| {
+            if (!state.inList(&state.app_props, at.key)) return tx.fail(.not_found, "app/{s}", .{at.key});
+            const flag = std.mem.eql(u8, at.key, "agent") or std.mem.eql(u8, at.key, "accessory");
+            if (flag and isOnOff(at.value) == null) return tx.fail(.bad_value, "{s}={s}", .{ at.key, at.value });
+        }
+        const merged = try state.mergeProps(tx.a, Blob.str(tx.st.app), attrs.items);
+        const val = try tx.blob(merged.line);
+        state.unrefOpt(tx.st.app, tx.gpa());
+        tx.st.app = val;
+        tx.st.app_ver = tx.gen;
+        try tx.log("app {s}", .{merged.line});
+        var words = try tx.a.alloc([]const u8, 1);
+        words[0] = "app";
+        try tx.cmd(.{ .tag = .app_ctl, .ctl = .{ .verb = "set", .words = words, .attrs = merged.attrs } });
+    }
+
     fn setAction(tx: *Tx, c: Ctl) Error!void {
         if (c.words.len != 1) return tx.fail(.bad_syntax, "set ID [enabled=on|off] [check=on|off|mixed]", .{});
         const id = c.words[0];
@@ -2085,8 +2204,12 @@ const Tx = struct {
             state.inList(&.{ "normal", "dialog" }, v)
         else if (eq(u8, k, "titlebar"))
             state.inList(&.{ "system", "custom", "none" }, v)
-        else if (eq(u8, k, "resizable"))
+        else if (eq(u8, k, "resizable") or eq(u8, k, "all-spaces") or eq(u8, k, "shadow"))
             isOnOff(v) != null
+        else if (eq(u8, k, "top"))
+            state.inList(&.{ "on", "off", "overlay" }, v)
+        else if (eq(u8, k, "fill"))
+            state.inList(&.{ "none", "display", "work" }, v)
         else
             return tx.fail(.not_found, "window prop: {s}", .{k});
         if (!ok) return tx.fail(.bad_value, "{s}={s}", .{ k, v });
