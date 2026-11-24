@@ -140,7 +140,7 @@ terminal renderer draws a box naming the page.
   the value in `result`; `uitree.post(text)` in the page sends `message -
   PATH n=N` with the body in `message`. `load`, `title value=T`, `navigate
   url=U allowed=on`. The page gets autoplay and the inspector, and a
-  `bg=transparent` node a transparent page background.
+  node with a transparent background (`bg=#00000000`) a transparent page.
 - Where this differs from components.md, because of the core: flags in
   event lines are `ok=on`, `allowed=on`, and `message` and `result` hold
   the latest body rather than being `message/N` and `result/N`
@@ -150,6 +150,12 @@ terminal renderer draws a box naming the page.
 9P, so it needs no h9 root): `go build -o web-host . &&
 UITREE_HOST_APP=$PWD/web-host ../../target/release/uitree -k`.
 ![web-host](examples/screenshots/web.png)
+
+`WEB_TRANSPARENT=1` puts the page alone in a `transparent=on` window, on a
+node with `bg=#00000000`: the desktop shows around the page's card. On
+Linux this needs a compositor, and the host gives WebKitGTK's GTK window
+the screen's RGBA visual (wry leaves it 24-bit, which draws black there).
+![web-host transparent](examples/screenshots/web-transparent.png)
 
 ## What the core does not offer yet
 

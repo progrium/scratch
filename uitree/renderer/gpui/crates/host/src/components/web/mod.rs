@@ -94,7 +94,7 @@ pub(crate) fn user_script(node: &NodeView) -> Option<String> {
     node.prop("script").filter(|b| !b.is_empty()).map(|b| String::from_utf8_lossy(&b).into_owned())
 }
 
-/// Whether the node's own background is transparent (`bg=transparent`):
+/// Whether the node's own background is transparent (`bg=#00000000`):
 /// then the page draws no background of its own and what is under the node
 /// shows through where the page leaves it bare.
 pub(crate) fn transparent(node: &NodeView) -> bool {

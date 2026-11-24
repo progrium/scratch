@@ -44,6 +44,12 @@ gpui-component = { workspace = true, features = ["syntect"] }
 gpui-webview = { workspace = true, optional = true }
 wry = { workspace = true, optional = true }
 
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "shape"] }
+# A transparent `web` node's GTK visual (components/web/native.rs); the
+# version gpui-webview and wry use.
+gtk = { version = "0.18", optional = true }
+
 # Each platform's calls for those, and the tray-icon crate's menu bar
 # extras and notification area icons (src/platform/tray.rs).
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -51,9 +57,6 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsA
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 tray-icon = "0.21"
 image = { version = "0.25", default-features = false, features = ["png"] }
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "shape"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -66,7 +69,7 @@ default = ["webview"]
 # WebView2 on Windows, WebKitGTK on Linux (libwebkit2gtk-4.1-dev and
 # libgtk-3-dev to build; the window then runs on X11 or XWayland). Off,
 # a `web` node draws as a placeholder with its URL.
-webview = ["dep:gpui-webview", "dep:wry"]
+webview = ["dep:gpui-webview", "dep:wry", "dep:gtk"]
 # Exposes `host::testing` (the TestAppContext harness) to other crates.
 test-support = ["gpui/test-support", "gpui-kit/test-support", "uitcore/test-client"]
 

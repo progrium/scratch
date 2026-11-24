@@ -22,10 +22,8 @@ apps/topframe/
 
 ![Topframe's demo page on uitree, Linux under Xvfb](screenshot-linux.png)
 
-Topframe's demo page, fullscreen in uitree's GPUI renderer on Linux
-(Xvfb). The page itself is transparent; on Linux the WebKitGTK view
-still paints black under it, which is a web node issue. On macOS,
-WKWebView over a transparent window is what Topframe itself does.
+Topframe's demo page over the desktop, in uitree's GPUI renderer on Linux
+(Xvfb with xcompmgr): fullscreen, borderless, transparent.
 
 ## Running it
 
@@ -80,4 +78,4 @@ default; it listens on 127.0.0.1 only.
 - **Other platforms.** The window props and the tray are native on macOS.
   On Windows, `top` and `fill` work, and the tray shows. On Linux the web
   view, `fill`, transparency and click-through work; `top`, `all-spaces`
-  and the tray don't yet, and the web view isn't see-through yet.
+  and the tray don't yet.
