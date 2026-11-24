@@ -23,8 +23,8 @@ jiff = "1.0"
 anyhow = "1"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 similar = "2.7"
-# The shell layer's window props and tray icons (src/platform/): the OS
-# window behind GPUI's, and the tray-icon crate's menu bar extras.
+# The native window behind GPUI's: `click-through` (passthrough.rs) and
+# the shell layer's window props (src/platform/).
 raw-window-handle = "0.6"
 
 # std::time panics on wasm32-unknown-unknown: Instant and SystemTime from
@@ -38,13 +38,19 @@ web-time = "1.1"
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 gpui-component = { workspace = true, features = ["syntect"] }
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
+# Each platform's calls for those, and the tray-icon crate's menu bar
+# extras and notification area icons (src/platform/tray.rs).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 tray-icon = "0.21"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "shape"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
 tray-icon = "0.21"
 image = { version = "0.25", default-features = false, features = ["png"] }
 

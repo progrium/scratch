@@ -230,7 +230,7 @@ pub const WinAsk = enum { inherit, close, none };
 /// outlives every State.
 pub const WinProp = struct { key: []const u8, val: *Blob };
 
-pub const win_props = [_][]const u8{ "title", "size", "min", "max", "pos", "kind", "titlebar", "resizable", "top", "fill", "all-spaces", "shadow" };
+pub const win_props = [_][]const u8{ "title", "size", "min", "max", "pos", "kind", "titlebar", "resizable", "transparent", "click-through", "top", "fill", "all-spaces", "shadow" };
 
 /// The shell's app props (shell.md § The app), each a file in `app/`.
 pub const app_props = [_][]const u8{ "id", "name", "version", "agent", "accessory" };

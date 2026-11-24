@@ -615,6 +615,14 @@ test "windows and root verbs" {
     try tt.expectEqual(Code.bad_value, try f.code(W ++ "/ctl", "state maximized"));
     try f.ok(W ++ "/ctl", "notify 'Saved draft' type=success");
     try tt.expectEqual(Code.bad_value, try f.code(W ++ "/ctl", "notify hi type=loud"));
+    // shell.md: transparent and click-through are window props, settable
+    // while the window is shown; each set reaches the host.
+    f.t.clearChanges();
+    try f.ok(W ++ "/ctl", "set . transparent=on click-through=on");
+    try tt.expectEqual(@as(usize, 2), try cmdsOf(&f, .window_ctl));
+    try f.ok(W ++ "/ctl", "set . transparent=blur click-through=off");
+    try tt.expectEqual(Code.bad_value, try f.code(W ++ "/ctl", "set . transparent=glass"));
+    try tt.expectEqual(Code.bad_value, try f.code(W ++ "/ctl", "set . click-through=yes"));
     // focus
     try f.ok(W ++ "/ctl", "new input name");
     try f.ok(W ++ "/focus", "name\n");

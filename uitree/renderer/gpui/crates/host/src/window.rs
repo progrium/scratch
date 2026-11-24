@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, AppContext, Bounds, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled,
-    TitlebarOptions, Window, WindowBounds, WindowDecorations, WindowKind, WindowOptions, div, point, px, size,
+    TitlebarOptions, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions, div, point, px, size,
 };
 use gpui_component::{ActiveTheme as _, WindowExt as _, notification::Notification};
 use uitcore::{Ctl, Node};
@@ -26,10 +26,13 @@ pub struct WindowView {
     last_focus: Option<Node>,
     /// The window's own focus, so keys reach it when no node has focus.
     focus: gpui::FocusHandle,
+    /// `transparent` is on or `blur`: the window paints no background of
+    /// its own, so whatever the tree leaves unpainted shows the desktop.
+    clear: bool,
 }
 
 impl WindowView {
-    fn new(win: String, host: Rc<Inner>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(win: String, host: Rc<Inner>, clear: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe_window_bounds(window, |this: &mut Self, window, _cx| this.window_moved(window)).detach();
         // The OS appearance, for `theme/mode` when `pref` is `system`.
         cx.observe_window_appearance(window, |this: &mut Self, window, _cx| {
@@ -47,7 +50,7 @@ impl WindowView {
             h.request(root, Pending::WindowClose(w.clone()), "close", &[("via", "titlebar")], "close");
             false
         });
-        let mut v = WindowView { win, host, last_state: String::new(), hidden: false, last_bounds: [0.; 4], last_focus: None, focus: cx.focus_handle() };
+        let mut v = WindowView { win, host, last_state: String::new(), hidden: false, last_bounds: [0.; 4], last_focus: None, focus: cx.focus_handle(), clear };
         v.focus.focus(window, cx);
         v.window_moved(window);
         v
@@ -168,10 +171,12 @@ impl Render for WindowView {
                     cx.stop_propagation();
                 }
             })
-            .bg(bg)
             .text_color(fg)
             .font_family(font)
             .text_size(font_size);
+        // A transparent window leaves its background to the tree: a root
+        // styled `bg=...` still paints, and a node with no `bg` is a hole.
+        let el = if self.clear { el } else { el.bg(bg) };
         // The menu bar, in the browser (actions.rs): above the root, which
         // takes the rest of the window.
         #[cfg(target_family = "wasm")]
@@ -188,6 +193,30 @@ impl Render for WindowView {
         let el = if over.is_empty() { el } else { el.child(div().absolute().top_0().left_0().size_full().children(over)) };
         self.host.frames.borrow_mut().push((std::time::Duration::ZERO, t0.elapsed()));
         el
+    }
+}
+
+/// A transparent window's surface: GPUI Kit's `Root` paints the theme
+/// background under everything (its window plugin's default style), so a
+/// transparent window overrides that with a clear one, and an opaque one
+/// drops the override.
+fn clear_root(root: &gpui::AnyView, clear: bool, cx: &mut App) {
+    if let Ok(root) = root.clone().downcast::<gpui_component::Root>() {
+        root.update(cx, |r, cx| {
+            Styled::style(r).background = clear.then(|| gpui::transparent_black().into());
+            cx.notify();
+        });
+    }
+}
+
+/// `transparent=on|off|blur` (shell.md § Window props) as GPUI's window
+/// background. `blur` falls back to plain transparency where the platform
+/// can't blur (GPUI's call).
+fn background(v: Option<&str>) -> WindowBackgroundAppearance {
+    match v {
+        Some("on") => WindowBackgroundAppearance::Transparent,
+        Some("blur") => WindowBackgroundAppearance::Blurred,
+        _ => WindowBackgroundAppearance::Opaque,
     }
 }
 
@@ -216,6 +245,9 @@ pub(crate) fn open(inner: &Rc<Inner>, win: &str, cx: &mut App) {
     };
     let titlebar = prop("titlebar").unwrap_or_else(|| "system".into());
     let dialog = prop("kind").as_deref() == Some("dialog");
+    let window_background = background(prop("transparent").as_deref());
+    let clear = window_background != WindowBackgroundAppearance::Opaque;
+    let click_through = prop("click-through").as_deref() == Some("on");
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: if titlebar == "none" {
@@ -228,6 +260,7 @@ pub(crate) fn open(inner: &Rc<Inner>, win: &str, cx: &mut App) {
         is_resizable: prop("resizable").as_deref() != Some("off"),
         is_minimizable: !dialog,
         window_min_size: prop("min").as_deref().and_then(parse_pair).map(|(w, h)| size(px(w), px(h))),
+        window_background,
         app_id: Some(inner.opts.title.clone().unwrap_or_else(|| "uitree".into())),
         ..Default::default()
     };
@@ -236,11 +269,20 @@ pub(crate) fn open(inner: &Rc<Inner>, win: &str, cx: &mut App) {
     let platform_props: Vec<(&str, String)> = crate::platform::WINDOW_PROPS.iter().filter_map(|k| prop(k).map(|v| (*k, v))).collect();
     let r = gpui_kit::open_window(options, cx, move |window, cx| {
         window.set_window_title(&title);
+        // Again after opening: GPUI's X11 window starts opaque whatever
+        // `window_background` said.
+        window.set_background_appearance(window_background);
+        if click_through {
+            crate::passthrough::set(window, true);
+        }
         crate::platform::apply_window_props(window, cx, &|k| platform_props.iter().find(|(p, _)| *p == k).map(|(_, v)| v.clone()));
-        cx.new(|cx| WindowView::new(name, host, window, cx))
+        cx.new(|cx| WindowView::new(name, host, clear, window, cx))
     });
     match r {
         Ok((handle, view)) => {
+            if clear {
+                let _ = handle.update(cx, |root, _, cx| clear_root(&root, true, cx));
+            }
             inner.windows.borrow_mut().insert(win.to_string(), WindowEntry { handle, view });
         }
         Err(e) => eprintln!("uitree: window {win}: {e}"),
@@ -258,16 +300,34 @@ pub(crate) fn ctl(inner: &Rc<Inner>, win: &str, cmd: &Ctl, cx: &mut App) {
     let cmd = cmd.clone();
     let w2 = win.to_string();
     let host = inner.clone();
-    let _ = handle.update(cx, |_, window, cx| match cmd.verb.as_str() {
+    let _ = handle.update(cx, |root, window, cx| match cmd.verb.as_str() {
         "title" => window.set_window_title(&cmd.args.join(" ")),
+        // `set . prop=value` on a shown window: the props that change in
+        // place. The rest are read when the window opens.
+        "set" => {
+            for (k, v) in &cmd.attrs {
+                match k.as_str() {
+                    "transparent" => {
+                        let b = background(Some(v));
+                        let clear = b != WindowBackgroundAppearance::Opaque;
+                        window.set_background_appearance(b);
+                        clear_root(&root, clear, cx);
+                        view.update(cx, |v, cx| {
+                            v.clear = clear;
+                            cx.notify();
+                        });
+                    }
+                    "click-through" => crate::passthrough::set(window, v == "on"),
+                    // top, fill, all-spaces, shadow (platform/).
+                    _ => {
+                        crate::platform::set_window_prop(window, cx, k, v);
+                    }
+                }
+            }
+        }
         "size" => {
             if let Some((w, h)) = cmd.arg(0).and_then(parse_pair) {
                 window.resize(size(px(w), px(h)));
-            }
-        }
-        "set" => {
-            for (k, v) in &cmd.attrs {
-                crate::platform::set_window_prop(window, cx, k, v);
             }
         }
         "state" => {

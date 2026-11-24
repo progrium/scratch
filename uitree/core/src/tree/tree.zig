@@ -2204,12 +2204,14 @@ const Tx = struct {
             state.inList(&.{ "normal", "dialog" }, v)
         else if (eq(u8, k, "titlebar"))
             state.inList(&.{ "system", "custom", "none" }, v)
-        else if (eq(u8, k, "resizable") or eq(u8, k, "all-spaces") or eq(u8, k, "shadow"))
+        else if (eq(u8, k, "resizable") or eq(u8, k, "click-through") or eq(u8, k, "all-spaces") or eq(u8, k, "shadow"))
             isOnOff(v) != null
         else if (eq(u8, k, "top"))
             state.inList(&.{ "on", "off", "overlay" }, v)
         else if (eq(u8, k, "fill"))
             state.inList(&.{ "none", "display", "work" }, v)
+        else if (eq(u8, k, "transparent"))
+            isOnOff(v) != null or eq(u8, v, "blur")
         else
             return tx.fail(.not_found, "window prop: {s}", .{k});
         if (!ok) return tx.fail(.bad_value, "{s}={s}", .{ k, v });
