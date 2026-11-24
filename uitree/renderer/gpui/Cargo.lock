@@ -3779,6 +3779,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit",
  "gpui-pre",
+ "gpui-pre-web",
  "gpui-webview",
  "gtk",
  "image",

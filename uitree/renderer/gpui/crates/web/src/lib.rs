@@ -12,11 +12,15 @@ use wasm_bindgen::prelude::*;
 
 /// Starts the renderer: `argv` is the app, run in h9's Worker when the
 /// host calls uit_run_machine. `assets` is the absolute URL icons are
-/// fetched under (`{assets}/assets/icons/NAME.svg`).
+/// fetched under (`{assets}/assets/icons/NAME.svg`). `gfx` is the
+/// graphics backend: `webgl` (the default), `webgpu` or `auto`.
 #[wasm_bindgen]
-pub fn start(argv: Vec<String>, title: Option<String>, assets: String) {
+pub fn start(argv: Vec<String>, title: Option<String>, assets: String, gfx: Option<String>) {
     console_error_panic_hook::set_once();
     let _ = host::WEB_ASSETS.set(assets);
+    if let Some(g) = gfx {
+        let _ = host::WEB_GFX.set(g);
+    }
     let opts = host::Options { argv, title, ..Default::default() };
     host::run(opts);
 }
