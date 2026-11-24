@@ -483,7 +483,8 @@ fn many(comptime T: type, p: ?[*]const T, n: usize) []const T {
 }
 
 fn now() u64 {
-    if (comptime builtin.os.tag == .wasi) return 0;
+    // CLOCK_MONOTONIC, as the spike's renderers stamp with; none on wasi or Windows.
+    if (comptime builtin.os.tag == .wasi or builtin.os.tag == .windows) return 0;
     var ts: std.c.timespec = undefined;
     _ = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
     return @as(u64, @intCast(ts.sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.nsec));
