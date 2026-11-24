@@ -39,7 +39,9 @@ clicks: <span id="n">0</span></p>
 </body></html>`
 
 func screen() string {
-
+	if os.Getenv("WEB_TRANSPARENT") != "" {
+		return transparent()
+	}
 	return `set . title='Web node' size=900,600 pos=center : v-flex size-full bg=background
 new div bar : h-flex items-center gap=8 p=8 border-b-1 border-color=border
 new button bar/back label=Back tag=back
@@ -48,6 +50,18 @@ new button bar/reload label=Reload tag=reload
 new button bar/title label=Title tag=title
 new text bar/status text='—' : text-sm text-color=muted-foreground
 ` + source() + "\n"
+}
+
+// With $WEB_TRANSPARENT set: a transparent window holding only a
+// transparent web node, whose page paints one card and leaves the rest
+// bare, so the desktop shows around it (Topframe's case).
+func transparent() string {
+	return `set . title='Web node' size=900,600 pos=center transparent=on : v-flex size-full
+new web view : bg=#00000000
+set view html=<<END
+` + strings.Replace(page, "background: #f6f7fb", "background: transparent", 1) + `
+END
+`
 }
 
 // The page: $WEB_URL if set (url=), else the demo document (html=).

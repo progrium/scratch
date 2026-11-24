@@ -3777,6 +3777,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "gpui-webview",
+ "gtk",
  "jiff",
  "js-sys",
  "lb-wry",
