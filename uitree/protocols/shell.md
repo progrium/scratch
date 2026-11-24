@@ -84,7 +84,8 @@ Beyond core's window props:
 | `url=U`, `html=H`, `script=S` | Web content, run on every load. Shorthand for a window whose only child is a `web` node ([components.md](components.md#new-in-this-spec)) |
 | `top` | Always on top |
 | `frameless` | No title bar or border (the same as `titlebar=none`) |
-| `transparent` | Transparent background |
+| `transparent=on\|off\|blur` | The window paints no background of its own, so whatever the tree leaves unpainted shows the desktop behind it; `blur` blurs what shows through where the platform can (fallback: `on`). A root or node with its own `bg` still paints. Settable on a shown window. With `titlebar=none`, a chromeless overlay |
+| `click-through=on\|off` | The whole window ignores the pointer: clicks, scrolls and hover go to whatever is behind it. Keys are unchanged. Settable on a shown window, so an overlay can turn input back on |
 | `remember=KEY` | Save and restore bounds under the app `id` and this key |
 
 Writing a window's `bounds` takes desktop space; two words move only and

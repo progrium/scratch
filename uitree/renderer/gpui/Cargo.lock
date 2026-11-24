@@ -3334,10 +3334,14 @@ dependencies = [
  "gpui-pre",
  "jiff",
  "lsp-types",
+ "objc2 0.6.5",
+ "raw-window-handle",
  "serde_json",
  "similar",
  "uitcore",
  "web-time",
+ "windows 0.62.2",
+ "x11rb",
 ]
 
 [[package]]

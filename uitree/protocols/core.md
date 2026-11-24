@@ -347,7 +347,9 @@ Window props, on `window NAME ...` or `set . ...` on the window's `ctl`:
 `title=text`, `size=w,h`, `min=w,h`, `max=w,h` (points), `pos=x,y` (desktop
 space) or a placement hint (`center`, `top-right`, `tray`, `display:2`)
 the host resolves, `kind=normal|dialog` (fallback `normal`),
-`titlebar=system|custom|none`, `resizable=on|off`, `focus=PATH`.
+`titlebar=system|custom|none`, `resizable=on|off`, `focus=PATH`, and the
+shell layer's `transparent=on|off|blur` and `click-through=on|off`
+([shell.md](shell.md#window-props)).
 
 Window `ctl` verbs, beyond the node commands:
 
