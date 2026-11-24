@@ -2085,8 +2085,10 @@ const Tx = struct {
             state.inList(&.{ "normal", "dialog" }, v)
         else if (eq(u8, k, "titlebar"))
             state.inList(&.{ "system", "custom", "none" }, v)
-        else if (eq(u8, k, "resizable"))
+        else if (eq(u8, k, "resizable") or eq(u8, k, "click-through"))
             isOnOff(v) != null
+        else if (eq(u8, k, "transparent"))
+            isOnOff(v) != null or eq(u8, v, "blur")
         else
             return tx.fail(.not_found, "window prop: {s}", .{k});
         if (!ok) return tx.fail(.bad_value, "{s}={s}", .{ k, v });
