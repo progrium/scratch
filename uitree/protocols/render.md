@@ -322,13 +322,12 @@ click handler: **state** is the new text in the renderer's hands,
 
 With a compiled app, uitree, 9P and h9 together cost under a frame over
 native GPUI, and a 9P renderer adds about 0.3 ms to the state point on
-top of the C ABI. The rc rows are an open question: the same
-`counter.rc` takes 6.2 ms behind the 9P renderer but 31.7 ms behind the
-built-in one on the Mac, while the Go app costs the same behind either.
-On Linux, run back to back on one machine, the two agree (29 ms each,
-21 ms of it the `awk` that `add` starts per click; 8 ms without it), so
-the gap is macOS-specific. Rows 4a and 7a in the bench (rc without awk)
-tell whether it is in h9's process starts there.
+top of the C ABI. The rc rows differed (31.7 ms behind the built-in
+renderer, 7.8 ms behind the 9P one) because of the build, not the
+renderer: GPUI's uitcore-sys builds the core ReleaseSafe and the bench
+built `uitree-remote` ReleaseFast, and h9 in ReleaseSafe starts guest
+processes several times slower (the `awk` that `counter.rc` runs per
+click: 24 ms vs 4 ms). The bench now links GPUI to the same core.
 
 What would hurt is a big rewrite on a slow renderer: a 15,000-node
 snapshot is 744 KB, and parsing is the renderer's cost, not the wire's.

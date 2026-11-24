@@ -17,7 +17,10 @@ echo "== build" >&2
 (cd "$top/core" && zig build -Dh9=true -Doptimize=ReleaseFast && zig build remote -Dh9=true -Doptimize=ReleaseFast) >&2
 (cd "$here/counter-go" && go build -o "$tmp/counter-host" . && GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o "$tmp/counter-go" .) >&2
 if want 1 || want 2 || want 3 || want 4; then
-	(cd "$top/renderer/gpui" && cargo build --release -p uitree && cargo build --release -p host --example native_counter) >&2
+	# The core built above (ReleaseFast), not uitcore-sys's own ReleaseSafe
+	# build: h9 in ReleaseSafe starts guest processes several times slower,
+	# which made rc look slower behind GPUI than behind uitree-remote.
+	(cd "$top/renderer/gpui" && export UITCORE_LIB_DIR="$top/core/zig-out/lib" && cargo build --release -p uitree && cargo build --release -p host --example native_counter) >&2
 fi
 gpui=$top/renderer/gpui/target/release/uitree
 native=$top/renderer/gpui/target/release/examples/native_counter
