@@ -1,0 +1,15 @@
+type    web  tier=component  profile=web  since=1.0
+prop    url     text  file
+prop    html    text  file
+prop    script  text  file
+verb    reload                          class=activate
+verb    back                            class=activate
+verb    forward                         class=activate
+verb    eval     n=N script=TEXT        class=author
+file    message  format=bytes
+file    result   format=bytes
+event   load      kind=state   attrs=ok
+event   title     kind=state
+event   navigate  kind=action  attrs=allowed
+event   message   kind=action  attrs=n
+event   result    kind=action  attrs=n,ok

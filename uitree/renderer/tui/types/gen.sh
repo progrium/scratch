@@ -10,7 +10,7 @@ link tabs tab empty separator badge kbd progress spinner alert dialog
 grid toolbar button-group toggle status-bar title-bar table list tree canvas chart
 description-list sidebar sidebar-group sidebar-item group-box avatar editor markdown
 sheet alert-dialog resizable panel dock dock-panel message-list collapsible accordion
-accordion-item breadcrumb dropdown-button tag"
+accordion-item breadcrumb dropdown-button tag web"
 src=../../../core/types
 for t in $TYPES; do mkdir -p "$t"; cp "$src/$t/spec" "$t/spec"; done
 cp "$src/style-words" "$src/theme-tokens" "$src/themes" .

@@ -145,6 +145,9 @@ impl Render for WindowView {
         // `tooltip` files of the nodes just drawn, above every overlay.
         over.extend(crate::components::overlays::tooltip::node_tips(&mut rcx, &self.win, &overlays));
         drop(rcx);
+        // Web surfaces this frame didn't draw (a closed tab) are native
+        // views or iframes over the window: hide them.
+        crate::components::web::end_frame(&self.win, cx);
 
         if let Ok(core) = host.core.try_borrow() {
             core.frame_drawn(&self.win);
