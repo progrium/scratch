@@ -23,7 +23,8 @@ tools/style-gen/       from uitreefs/crates/style/gen; emits the dispatch table
                        here and core/types/style-words, theme-tokens, themes (W1)
 ```
 
-Build and run (Linux needs `libxkbcommon-dev libxkbcommon-x11-dev`):
+Build and run (Linux needs `libxkbcommon-dev libxkbcommon-x11-dev`, and
+`libwebkit2gtk-4.1-dev libgtk-3-dev` for the `web` node; see below):
 
 ```
 cargo test                                   # uitcore-sys, uitcore: no display needed
@@ -118,6 +119,37 @@ once its tree is built; the Linux clients need `$LINUXROOT`
 (`../../tools/linuxroot`) and run with `-d $LINUXROOT:#L`, which
 `uitree -d SRC[:DST]` and `-e NAME=VALUE` pass to h9 for any app.
 Screenshots: [examples/screenshots/](examples/screenshots/).
+
+## The `web` node
+
+`web` (components.md § New in this spec) is a page in a node, in
+`crates/host/src/components/web/`. On the desktop it is GPUI Kit's
+`gpui-webview`, a wry child view (WKWebView, WebView2, WebKitGTK) kept on
+the node's layout box each frame, behind the host's `webview` feature (on
+by default; `--no-default-features` builds a placeholder that shows the
+URL). In the browser build it is an `<iframe>` over the canvas. The
+terminal renderer draws a box naming the page.
+
+- A native view sits above GPUI's drawing: a menu, popover or tooltip
+  that overlaps the node is drawn under the page.
+- On Linux, WebKitGTK embeds only in an X11 window, so with the feature on
+  the host runs on X11 (or XWayland), never native Wayland.
+- `url`, `html` (wins when both are set) and `script` (before the page's
+  scripts on every load; changing it rebuilds the view). `reload`, `back`,
+  `forward`; `eval n=N script=TEXT` answers `result - PATH n=N ok=on` with
+  the value in `result`; `uitree.post(text)` in the page sends `message -
+  PATH n=N` with the body in `message`. `load`, `title value=T`, `navigate
+  url=U allowed=on`. The page gets autoplay and the inspector, and a
+  `bg=transparent` node a transparent page background.
+- Where this differs from components.md, because of the core: flags in
+  event lines are `ok=on`, `allowed=on`, and `message` and `result` hold
+  the latest body rather than being `message/N` and `result/N`
+  directories. Every navigation is allowed.
+
+`examples/web-host` is a demo client on the host (it dials the core over
+9P, so it needs no h9 root): `go build -o web-host . &&
+UITREE_HOST_APP=$PWD/web-host ../../target/release/uitree -k`.
+![web-host](examples/screenshots/web.png)
 
 ## What the core does not offer yet
 

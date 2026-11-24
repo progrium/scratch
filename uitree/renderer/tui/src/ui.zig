@@ -86,6 +86,7 @@ pub const Kind = enum {
     breadcrumb,
     dropdown_button,
     tag,
+    web,
     other,
 
     pub fn of(t: []const u8) Kind {
@@ -111,6 +112,7 @@ pub const Kind = enum {
             .{ "dock-panel", .dock_panel },     .{ "message-list", .message_list }, .{ "collapsible", .collapsible },
             .{ "accordion", .accordion },       .{ "accordion-item", .accordion_item }, .{ "breadcrumb", .breadcrumb },
             .{ "dropdown-button", .dropdown_button }, .{ "tag", .tag },
+            .{ "web", .web },
         });
         return m.get(t) orelse .other;
     }
@@ -625,6 +627,15 @@ pub const Ui = struct {
                 if (L.justify == null) L.justify = .center;
                 if (L.pad[0] == null) L.pad = .{ .{ .pt = 1 }, .{ .pt = 2 }, .{ .pt = 1 }, .{ .pt = 2 } };
             },
+            .web => {
+                // No page engine in a terminal: a bordered box naming the page.
+                L.border = .{ true, true, true, true };
+                if (L.grow == null) L.grow = 1;
+                if (L.dir == null) L.dir = .col;
+                if (L.items == null) L.items = .center;
+                if (L.justify == null) L.justify = .center;
+                st.look.rounded = true;
+            },
             .alert => {
                 L.border = .{ true, true, true, true };
                 if (L.pad[1] == null) L.pad[1] = .{ .pt = 1 };
@@ -915,6 +926,13 @@ pub const Ui = struct {
                     _ = try ui.leaf(n, .text, .desc, b, di, desc);
                 }
                 for (src.children(n)) |k| _ = try ui.build(k, b, ink);
+            },
+            .web => {
+                var wi = ink;
+                wi.dim = true;
+                const url = std.mem.trim(u8, src.text(n, "url"), " \t\n");
+                const t = if (src.text(n, "html").len > 0) "[web: inline html]" else if (url.len > 0) try std.fmt.allocPrint(a, "[web {s}]", .{url}) else "[web]";
+                _ = try ui.leaf(n, .text, .none, b, wi, t);
             },
             .alert => {
                 var ti = ink;

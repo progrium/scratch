@@ -518,7 +518,12 @@ pub fn run(opts: Options) -> i32 {
     #[cfg(target_family = "wasm")]
     let app = gpui_kit::platform::single_threaded_web()
         .with_assets(gpui_kit::assets::AllAssets::new(WEB_ASSETS.get().cloned().unwrap_or_default()));
-    #[cfg(not(target_family = "wasm"))]
+    // WebKitGTK embeds only in an X11 window (natively or XWayland), so
+    // with the webview feature GPUI doesn't pick Wayland on Linux.
+    #[cfg(all(feature = "webview", target_os = "linux"))]
+    let app = gpui_kit::platform::linux(gpui::WindowingModes::X11 | gpui::WindowingModes::HEADLESS)
+        .with_assets(gpui_kit::assets::AllAssets);
+    #[cfg(all(not(target_family = "wasm"), not(all(feature = "webview", target_os = "linux"))))]
     let app = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     let launch = move |cx: &mut App| {
         gpui_component::init(cx);
