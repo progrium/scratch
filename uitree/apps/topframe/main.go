@@ -84,7 +84,7 @@ func setup(addr string) {
 	// without them refuses the line; the overlay still works, opaque.
 	try(win+"/ctl", "set . transparent=on click-through=on")
 	put(win+"/tree", "div root  : size-full\n"+
-		"  web page  url='http://"+addr+"/'  : size-full\n")
+		"  web page  url='http://"+addr+"/'  : size-full bg=#00000000\n")
 	put("menu/tray", `item enabled label=Enabled check=on
 item interactive label=Interactive check=off
 sep
