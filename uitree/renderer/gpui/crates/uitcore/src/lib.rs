@@ -288,6 +288,8 @@ pub struct MachineArgs<'a> {
     pub argv: &'a [&'a str],
     pub root: &'a str,
     pub cwd: &'a str,
+    /// h9 mounts, `SRC[:DST]` (`ALPINE:#L` gives the app a Linux view).
+    pub dirs: &'a [&'a str],
     pub env: &'a [&'a str],
 }
 
@@ -346,14 +348,15 @@ impl Core {
     pub fn run_machine(&mut self, a: &MachineArgs) -> Result<(), Error> {
         let argv: Vec<UitStr> = a.argv.iter().map(|x| s(x)).collect();
         let env: Vec<UitStr> = a.env.iter().map(|x| s(x)).collect();
+        let dirs: Vec<UitStr> = a.dirs.iter().map(|x| s(x)).collect();
         let m = sys::UitMachineArgs {
             prog: s(a.prog),
             argv: argv.as_ptr(),
             argc: argv.len(),
             root: s(a.root),
             cwd: s(a.cwd),
-            dirs: std::ptr::null(),
-            n_dirs: 0,
+            dirs: dirs.as_ptr(),
+            n_dirs: dirs.len(),
             env: env.as_ptr(),
             n_env: env.len(),
             h9_flags: std::ptr::null(),

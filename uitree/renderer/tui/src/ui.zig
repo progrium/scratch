@@ -15,6 +15,7 @@ const core = @import("core.zig");
 const style = @import("style.zig");
 const gridmod = @import("grid.zig");
 const source = @import("source.zig");
+const raster = @import("raster.zig");
 
 const Grid = gridmod.Grid;
 const Rect = gridmod.Rect;
@@ -53,6 +54,38 @@ pub const Kind = enum {
     spinner,
     alert,
     dialog,
+    grid,
+    toolbar,
+    button_group,
+    toggle,
+    status_bar,
+    title_bar,
+    table,
+    list,
+    tree,
+    canvas,
+    chart,
+    description_list,
+    sidebar,
+    sidebar_group,
+    sidebar_item,
+    group_box,
+    avatar,
+    editor,
+    markdown,
+    sheet,
+    alert_dialog,
+    resizable,
+    panel,
+    dock,
+    dock_panel,
+    message_list,
+    collapsible,
+    accordion,
+    accordion_item,
+    breadcrumb,
+    dropdown_button,
+    tag,
     other,
 
     pub fn of(t: []const u8) Kind {
@@ -67,6 +100,17 @@ pub const Kind = enum {
             .{ "tab", .tab },                   .{ "empty", .empty },             .{ "separator", .separator },
             .{ "badge", .badge },               .{ "kbd", .kbd },                 .{ "progress", .progress },
             .{ "spinner", .spinner },           .{ "alert", .alert },             .{ "dialog", .dialog },
+            .{ "grid", .grid },                 .{ "toolbar", .toolbar },         .{ "button-group", .button_group },
+            .{ "toggle", .toggle },             .{ "status-bar", .status_bar },   .{ "title-bar", .title_bar },
+            .{ "table", .table },               .{ "list", .list },               .{ "tree", .tree },
+            .{ "canvas", .canvas },             .{ "chart", .chart },             .{ "description-list", .description_list },
+            .{ "sidebar", .sidebar },           .{ "sidebar-group", .sidebar_group }, .{ "sidebar-item", .sidebar_item },
+            .{ "group-box", .group_box },       .{ "avatar", .avatar },           .{ "editor", .editor },
+            .{ "markdown", .markdown },         .{ "sheet", .sheet },             .{ "alert-dialog", .alert_dialog },
+            .{ "resizable", .resizable },       .{ "panel", .panel },             .{ "dock", .dock },
+            .{ "dock-panel", .dock_panel },     .{ "message-list", .message_list }, .{ "collapsible", .collapsible },
+            .{ "accordion", .accordion },       .{ "accordion-item", .accordion_item }, .{ "breadcrumb", .breadcrumb },
+            .{ "dropdown-button", .dropdown_button }, .{ "tag", .tag },
         });
         return m.get(t) orelse .other;
     }
@@ -74,19 +118,54 @@ pub const Kind = enum {
     /// Takes keyboard focus (Tab moves between these).
     pub fn focusable(k: Kind) bool {
         return switch (k) {
-            .button, .checkbox, .radio_group, .@"switch", .select, .input, .textarea, .number_input, .slider, .link, .tabs => true,
+            .button, .checkbox, .radio_group, .@"switch", .select, .input, .textarea, .number_input, .slider, .link, .tabs, .toggle, .editor, .table, .list, .tree, .dropdown_button => true,
             else => false,
         };
     }
 
     /// Takes typed text, so printable keys don't reach uit_key.
     pub fn editable(k: Kind) bool {
-        return k == .input or k == .textarea or k == .number_input;
+        return k == .input or k == .textarea or k == .number_input or k == .editor;
+    }
+
+    /// Takes text a line at a time, as a textarea does.
+    pub fn multiline(k: Kind) bool {
+        return k == .textarea or k == .editor;
     }
 };
 
 /// A synthetic piece of a component: a field's label, a radio item.
-pub const Part = enum { none, label, item, field_label, field_desc, field_error, tab_header, tab_label, title, desc, dec, inc, count };
+pub const Part = enum {
+    none,
+    label,
+    item,
+    field_label,
+    field_desc,
+    field_error,
+    tab_header,
+    tab_label,
+    title,
+    desc,
+    dec,
+    inc,
+    count,
+    /// A data view's row (index: the item's line), and its cells.
+    row,
+    cell,
+    /// A table's header row and its cells (index: the column).
+    header,
+    /// An alert dialog's buttons.
+    confirm,
+    cancel,
+    /// A dock zone's tab for one panel (node: the panel).
+    zone_tab,
+    /// What opens and closes a collapsible or an accordion item.
+    trigger,
+    /// A breadcrumb item (index: its line).
+    crumb,
+    /// A box a component adds to arrange its parts.
+    frame,
+};
 
 /// Text attributes children inherit, as GPUI's text style cascades.
 pub const Ink = struct {
@@ -123,7 +202,12 @@ pub const Box = struct {
     scroll_y: i32 = 0,
     content_h: i32 = 0,
     hidden: bool = false,
+    /// A data view row's item id.
+    id: []const u8 = "",
 };
+
+/// A row template's values by field name (list.rs's item_values).
+pub const Vals = std.StringHashMapUnmanaged([]const u8);
 
 pub const Edit = struct {
     buf: std.ArrayList(u8) = .empty,
@@ -194,6 +278,12 @@ pub const Ui = struct {
     states: std.AutoHashMapUnmanaged(Node, NodeState) = .empty,
     yg_config: c.YGConfigRef,
     spin: u8 = 0,
+    /// While a list stamps its row template: the item's values by name.
+    vals: ?*const Vals = null,
+    /// The canvas a button went down on, for mouse-up, click and drag.
+    canvas_pressed: Node = 0,
+    /// The row-like part under the pointer, to redraw when it changes.
+    mouse_row: ?*Box = null,
 
     pub fn init(gpa: std.mem.Allocator, src: Source) Ui {
         const cfg = c.YGConfigNew();
@@ -404,15 +494,37 @@ pub const Ui = struct {
                     if (mine.len > 0) ui.focus(mine[0]) else ui.blur();
                 }
             }
-            const want_w: f32 = if (ui.src.number(ov, "width")) |pw| style.cells(@floatCast(pw), .x) else @min(60, @as(f32, @floatFromInt(body.w)) - 4);
-            c.YGNodeStyleSetWidth(ob.yg, @min(want_w, @as(f32, @floatFromInt(body.w))));
-            c.YGNodeStyleSetMaxHeight(ob.yg, @floatFromInt(body.h));
+            const bw: f32 = @floatFromInt(body.w);
+            const bh: f32 = @floatFromInt(body.h);
+            const sheet = ob.kind == .sheet;
+            const side = std.mem.trim(u8, ui.src.text(ov, "side"), " \n");
+            const across = eq(side, "top") or eq(side, "bottom");
+            if (sheet) {
+                // A sheet is a side of the window: the full height (or
+                // width) and `size` points across.
+                const sz: f32 = @floatCast(ui.src.number(ov, "size") orelse 350);
+                if (across) {
+                    c.YGNodeStyleSetWidth(ob.yg, bw);
+                    c.YGNodeStyleSetHeight(ob.yg, @min(bh, @max(3, style.cells(sz, .y))));
+                } else {
+                    c.YGNodeStyleSetWidth(ob.yg, @min(bw, @max(10, style.cells(sz, .x))));
+                    c.YGNodeStyleSetHeight(ob.yg, bh);
+                }
+            } else {
+                const want_w: f32 = if (ui.src.number(ov, "width")) |pw| style.cells(@floatCast(pw), .x) else @min(60, bw - 4);
+                c.YGNodeStyleSetWidth(ob.yg, @min(want_w, bw));
+                c.YGNodeStyleSetMaxHeight(ob.yg, bh);
+            }
             c.YGNodeCalculateLayout(ob.yg, c.YGUndefined, c.YGUndefined, c.YGDirectionLTR);
             const ow: i32 = @intFromFloat(c.YGNodeLayoutGetWidth(ob.yg));
             const oh: i32 = @intFromFloat(c.YGNodeLayoutGetHeight(ob.yg));
             if (ui.src.flag(ov, "modal", true)) g.fill(body, body, 0x00000060);
-            const ox = body.x + @divTrunc(body.w - ow, 2);
-            const oy = body.y + @max(0, @divTrunc(body.h - oh, 3));
+            var ox = body.x + @divTrunc(body.w - ow, 2);
+            var oy = body.y + @max(0, @divTrunc(body.h - oh, 3));
+            if (sheet) {
+                ox = if (eq(side, "left") or across) body.x else body.x + body.w - ow;
+                oy = if (eq(side, "bottom")) body.y + body.h - oh else body.y;
+            }
             ui.place(ob, ox, oy, body);
             c.YGNodeFreeRecursive(ob.yg);
             // A modal overlay takes every hit below it.
@@ -540,6 +652,116 @@ pub const Ui = struct {
                 if (L.h == null) L.h = .{ .pt = 1 };
                 if (L.min_w == null) L.min_w = .{ .pt = 10 };
             },
+            .toolbar, .button_group, .breadcrumb, .title_bar => {
+                if (L.dir == null) L.dir = if (kind == .button_group and eq(ui.src.text(n, "dir"), "col")) .col else .row;
+                if (L.items == null) L.items = .center;
+                if (L.gap_x == null) L.gap_x = 1;
+                // A bar keeps its height when the content below overflows
+                // (Yoga would stretch its buttons across instead).
+                L.shrink = L.shrink orelse 0;
+                if (kind == .title_bar) {
+                    if (L.pad[1] == null) L.pad[1] = .{ .pt = 1 };
+                    if (L.pad[3] == null) L.pad[3] = .{ .pt = 1 };
+                    if (st.look.bg == null) st.look.bg = ui.tok("title-bar", ui.tok("muted", 0xf5f5f5ff));
+                }
+            },
+            .status_bar => {
+                if (L.dir == null) L.dir = .row;
+                if (L.items == null) L.items = .center;
+                if (L.justify == null) L.justify = .between;
+                if (L.gap_x == null) L.gap_x = 2;
+                if (L.pad[1] == null) L.pad[1] = .{ .pt = 1 };
+                if (L.pad[3] == null) L.pad[3] = .{ .pt = 1 };
+                L.shrink = L.shrink orelse 0;
+                if (st.look.bg == null) st.look.bg = ui.tok("muted", 0xf5f5f5ff);
+            },
+            .toggle, .dropdown_button => {
+                if (L.dir == null) L.dir = .row;
+                if (L.items == null) L.items = .center;
+                if (L.pad[1] == null) L.pad[1] = .{ .pt = 1 };
+                if (L.pad[3] == null) L.pad[3] = .{ .pt = 1 };
+                if (L.gap_x == null) L.gap_x = 1;
+                L.shrink = L.shrink orelse 0;
+            },
+            .grid => {
+                L.dir = .col;
+                const gp: f32 = @floatCast(ui.src.number(n, "gap") orelse 0);
+                // A gap keeps rows of buttons apart, even under a row tall.
+                if (L.gap_y == null) L.gap_y = if (gp > 0) @max(1, style.cells(gp, .y)) else 0;
+                if (L.gap_x == null) L.gap_x = style.cells(gp, .x);
+            },
+            .table, .list, .tree, .message_list => {
+                if (L.dir == null) L.dir = .col;
+                if (L.overflow == .visible) L.overflow = .scroll;
+                if (L.h == null and L.grow == null and L.max_h == null) L.grow = 1;
+                if (L.min_h == null) L.min_h = .{ .pt = 2 };
+                if (kind == .message_list and L.gap_y == null) L.gap_y = 1;
+            },
+            .canvas => {
+                if (L.h == null and L.grow == null) L.grow = 1;
+                if (L.min_h == null) L.min_h = .{ .pt = 2 };
+                L.shrink = L.shrink orelse 0;
+            },
+            .chart => {
+                if (L.h == null and L.grow == null) L.h = .{ .pt = 10 };
+                if (L.min_w == null) L.min_w = .{ .pt = 16 };
+            },
+            .description_list => {
+                L.dir = .col;
+                if (L.gap_y == null) L.gap_y = 1;
+            },
+            .sidebar => {
+                if (L.dir == null) L.dir = .col;
+                if (L.w == null) L.w = .{ .pt = if (ui.src.flag(n, "collapsed", false)) 5 else 28 };
+                L.shrink = L.shrink orelse 0;
+                if (L.overflow == .visible) L.overflow = .scroll;
+                if (L.pad[0] == null) L.pad = .{ .{ .pt = 1 }, .{ .pt = 1 }, .{ .pt = 1 }, .{ .pt = 1 } };
+                if (L.gap_y == null) L.gap_y = 1;
+                L.border[if (eq(ui.src.text(n, "side"), "right")) 3 else 1] = true;
+                if (st.look.bg == null) st.look.bg = ui.tok("sidebar", ui.tok("muted", 0xf5f5f5ff));
+            },
+            .sidebar_group, .sidebar_item, .markdown, .dock_panel, .collapsible, .accordion => {
+                if (L.dir == null) L.dir = .col;
+            },
+            .group_box => {
+                L.border = .{ true, true, true, true };
+                if (L.dir == null) L.dir = .col;
+                if (L.pad[1] == null) L.pad[1] = .{ .pt = 1 };
+                if (L.pad[3] == null) L.pad[3] = .{ .pt = 1 };
+                st.look.rounded = true;
+            },
+            .avatar => {
+                L.shrink = L.shrink orelse 0;
+            },
+            .editor => {
+                if (L.h == null and L.grow == null) L.grow = 1;
+                if (L.min_h == null) L.min_h = .{ .pt = 3 };
+                if (L.min_w == null) L.min_w = .{ .pt = 20 };
+            },
+            .sheet, .alert_dialog => {
+                L.border = .{ true, true, true, true };
+                L.dir = L.dir orelse .col;
+                if (L.pad[1] == null) L.pad = .{ .{ .pt = 0 }, .{ .pt = 2 }, .{ .pt = 0 }, .{ .pt = 2 } };
+                if (L.gap_y == null) L.gap_y = 1;
+                st.look.rounded = kind == .alert_dialog;
+                if (st.look.bg == null) st.look.bg = ui.tok("popover", ui.tok("background", 0xffffffff));
+            },
+            .resizable => {
+                if (L.dir == null) L.dir = if (eq(ui.src.text(n, "dir"), "col")) .col else .row;
+                if (L.grow == null and L.h == null) L.grow = 1;
+            },
+            .panel => {
+                if (L.dir == null) L.dir = .col;
+                if (L.overflow == .visible) L.overflow = .hidden;
+            },
+            .accordion_item => {
+                if (L.dir == null) L.dir = .col;
+                L.border[2] = true;
+            },
+            .dock => {
+                if (L.dir == null) L.dir = .row;
+                if (L.grow == null and L.h == null) L.grow = 1;
+            },
             .separator => {
                 if (std.mem.eql(u8, ui.src.text(n, "dir"), "col")) {
                     if (L.w == null) L.w = .{ .pt = 1 };
@@ -562,6 +784,7 @@ pub const Ui = struct {
         switch (b.kind) {
             .text, .styled_text => {
                 b.text = src.text(n, "text");
+                if (ui.vals) |v| b.text = try substitute(a, b.text, v);
                 c.YGNodeSetMeasureFunc(b.yg, measure);
             },
             .img, .svg => {
@@ -571,7 +794,8 @@ pub const Ui = struct {
                 c.YGNodeSetMeasureFunc(b.yg, measure);
             },
             .icon => {
-                b.text = iconGlyph(src.text(n, "name"));
+                const name = src.text(n, "name");
+                b.text = iconGlyph(if (ui.vals) |v| try substitute(a, name, v) else name);
                 c.YGNodeSetMeasureFunc(b.yg, measure);
             },
             .spinner => {
@@ -592,7 +816,7 @@ pub const Ui = struct {
                 b.text = if (label.len > 0) label else src.text(n, "href");
                 c.YGNodeSetMeasureFunc(b.yg, measure);
             },
-            .input, .textarea, .number_input, .slider, .progress, .separator => {
+            .input, .textarea, .number_input, .slider, .progress, .separator, .editor => {
                 // Drawn to whatever size layout gives; no children.
                 c.YGNodeSetMeasureFunc(b.yg, measureFixed);
             },
@@ -736,10 +960,441 @@ pub const Ui = struct {
             .tab => for (src.children(n)) |k| {
                 _ = try ui.build(k, b, ink);
             },
+            .grid => {
+                const cols: usize = @intFromFloat(@max(1, @min(64, src.number(n, "cols") orelse 2)));
+                var row: ?*Box = null;
+                var at: usize = 0;
+                for (src.children(n)) |k| {
+                    const span = @min(cols, ui.colSpan(k, cols));
+                    if (row != null and at + span > cols) {
+                        while (at < cols) : (at += 1) gridCell(try ui.frameBox(n, .grid, .frame, row.?, ink, false, 0), 1);
+                        at = 0;
+                    }
+                    if (at == 0) {
+                        row = try ui.frameBox(n, .grid, .frame, b, ink, true, b.st.layout.gap_x orelse 0);
+                        // Rows share a grid that is given a height.
+                        c.YGNodeStyleSetFlexGrow(row.?.yg, 1);
+                    }
+                    gridCell(try ui.build(k, row.?, ink), span);
+                    at += span;
+                    if (at >= cols) at = 0;
+                }
+                if (row) |r| if (at > 0) while (at < cols) : (at += 1) {
+                    gridCell(try ui.frameBox(n, .grid, .frame, r, ink, false, 0), 1);
+                };
+            },
+            .status_bar => for ([_][]const u8{ "left", "center", "right" }) |slot| {
+                if (ui.childNamed(n, slot)) |k| _ = try ui.build(k, b, ink) else _ = try ui.frameBox(n, .status_bar, .frame, b, ink, true, 0);
+            },
+            .title_bar => {
+                const t = src.text(n, "title");
+                if (t.len > 0) {
+                    var ti = ink;
+                    ti.bold = true;
+                    _ = try ui.leaf(n, .text, .title, b, ti, t);
+                }
+                for (src.children(n)) |k| _ = try ui.build(k, b, ink);
+            },
+            .breadcrumb => {
+                const items = try src.lines(a, n, "items");
+                for (items, 0..) |it, i| {
+                    const e = entryOf(it.fields) orelse continue;
+                    if (i > 0) _ = try ui.leaf(n, .text, .frame, b, ui.mutedInk(ink), "›");
+                    var ci = if (i + 1 == items.len) ink else ui.mutedInk(ink);
+                    ci.bold = i + 1 == items.len;
+                    const lb = try ui.leaf(n, .breadcrumb, .crumb, b, ci, e.label);
+                    lb.index = @intCast(i);
+                    lb.id = e.id;
+                }
+            },
+            .toggle, .dropdown_button => {
+                if (src.prop(n, "icon")) |ic| _ = try ui.leaf(n, .text, .frame, b, ink, iconGlyph(std.mem.trim(u8, ic, " \n")));
+                const label = src.text(n, "label");
+                if (label.len > 0) _ = try ui.leaf(n, .text, .label, b, ink, label);
+                if (b.kind == .dropdown_button) _ = try ui.leaf(n, .text, .frame, b, ink, "▾");
+                if (b.kids.items.len == 0) _ = try ui.leaf(n, .text, .label, b, ink, " ");
+            },
+            .table => try ui.buildTable(b),
+            .list => try ui.buildList(b),
+            .tree => {
+                const items = try src.lines(a, n, "items");
+                try ui.treeRows(b, items, src.text(n, "expanded"), "-", 0);
+            },
+            .description_list => {
+                const items = try src.lines(a, n, "items");
+                const cols: usize = @intFromFloat(@max(1, @min(16, src.number(n, "columns") orelse 3)));
+                const top = eq(std.mem.trim(u8, src.text(n, "labels"), " \n"), "top");
+                var row: ?*Box = null;
+                var i: usize = 0;
+                for (items) |it| {
+                    if (it.fields.len == 0) continue;
+                    if (i % cols == 0) row = try ui.frameBox(n, .description_list, .frame, b, ink, true, 2);
+                    const cell = try ui.frameBox(n, .description_list, .frame, row.?, ink, !top, 1);
+                    gridCell(cell, 1);
+                    var li = ui.mutedInk(ink);
+                    li.nowrap = true;
+                    const lb = try ui.leaf(n, .text, .frame, cell, li, it.fields[0]);
+                    c.YGNodeStyleSetFlexShrink(lb.yg, 0);
+                    if (src.number(n, "label-width")) |lw| c.YGNodeStyleSetWidth(lb.yg, style.cells(@floatCast(lw), .x));
+                    _ = try ui.leaf(n, .text, .frame, cell, ink, try std.mem.join(a, " ", it.fields[1..]));
+                    i += 1;
+                }
+                if (row) |r| while (i % cols != 0) : (i += 1) {
+                    gridCell(try ui.frameBox(n, .description_list, .frame, r, ink, false, 0), 1);
+                };
+            },
+            .sidebar => {
+                const hdr = ui.childNamed(n, "header");
+                const ftr = ui.childNamed(n, "footer");
+                if (hdr) |k| _ = try ui.build(k, b, ink);
+                for (src.children(n)) |k| if (k != hdr and k != ftr) {
+                    _ = try ui.build(k, b, ink);
+                };
+                if (ftr) |k| {
+                    c.YGNodeStyleSetFlexGrow((try ui.frameBox(n, .sidebar, .frame, b, ink, false, 0)).yg, 1);
+                    _ = try ui.build(k, b, ink);
+                }
+            },
+            .sidebar_group => {
+                const label = src.text(n, "label");
+                if (label.len > 0) {
+                    var li = ui.mutedInk(ink);
+                    li.bold = true;
+                    _ = try ui.leaf(n, .text, .frame, b, li, label);
+                }
+                for (src.children(n)) |k| _ = try ui.build(k, b, ink);
+            },
+            .sidebar_item => {
+                var ri = ink;
+                if (src.flag(n, "active", false)) ri.bold = true;
+                if (src.flag(n, "disabled", false)) ri.dim = true;
+                const rb = try ui.frameBox(n, .sidebar_item, .row, b, ri, true, 1);
+                c.YGNodeStyleSetPadding(rb.yg, c.YGEdgeHorizontal, 1);
+                if (src.prop(n, "icon")) |ic| _ = try ui.leaf(n, .text, .frame, rb, ri, iconGlyph(std.mem.trim(u8, ic, " \n")));
+                ri.nowrap = true;
+                ri.truncate = true;
+                const lb = try ui.leaf(n, .text, .frame, rb, ri, src.text(n, "label"));
+                c.YGNodeStyleSetFlexGrow(lb.yg, 1);
+                const badge = src.text(n, "badge");
+                if (badge.len > 0) _ = try ui.leaf(n, .text, .frame, rb, ui.mutedInk(ink), badge);
+                if (src.children(n).len > 0) {
+                    const sub = try ui.frameBox(n, .sidebar_item, .frame, b, ink, false, 0);
+                    c.YGNodeStyleSetPadding(sub.yg, c.YGEdgeLeft, 2);
+                    for (src.children(n)) |k| _ = try ui.build(k, sub, ink);
+                }
+            },
+            .group_box, .sheet => {
+                const title = src.text(n, "title");
+                if (title.len > 0) {
+                    var ti = ink;
+                    ti.bold = true;
+                    _ = try ui.leaf(n, .text, .title, b, ti, title);
+                }
+                for (src.children(n)) |k| _ = try ui.build(k, b, ink);
+            },
+            .avatar => {
+                b.text = try initials(a, src.text(n, "name"));
+                c.YGNodeSetMeasureFunc(b.yg, measure);
+            },
+            .tag => {
+                b.text = try std.fmt.allocPrint(a, " {s}{s} ", .{ src.text(n, "label"), if (src.flag(n, "closable", false)) " ×" else "" });
+                c.YGNodeSetMeasureFunc(b.yg, measure);
+            },
+            .markdown => {
+                b.text = try mdPlain(a, src.text(n, "text"));
+                c.YGNodeSetMeasureFunc(b.yg, measure);
+            },
+            .alert_dialog => {
+                var ti = ink;
+                ti.bold = true;
+                const title = src.text(n, "title");
+                if (title.len > 0) _ = try ui.leaf(n, .text, .title, b, ti, title);
+                const desc = src.text(n, "description");
+                if (desc.len > 0) _ = try ui.leaf(n, .text, .desc, b, ui.mutedInk(ink), desc);
+                for (src.children(n)) |k| _ = try ui.build(k, b, ink);
+                const foot = try ui.frameBox(n, .alert_dialog, .frame, b, ink, true, 2);
+                c.YGNodeStyleSetJustifyContent(foot.yg, c.YGJustifyFlexEnd);
+                const cancel = std.mem.trim(u8, src.text(n, "cancel"), " \n");
+                if (cancel.len > 0) _ = try ui.leaf(n, .alert_dialog, .cancel, foot, ink, try std.fmt.allocPrint(a, " {s} ", .{cancel}));
+                var confirm = std.mem.trim(u8, src.text(n, "confirm"), " \n");
+                if (confirm.len == 0) confirm = "OK";
+                _ = try ui.leaf(n, .alert_dialog, .confirm, foot, ink, try std.fmt.allocPrint(a, " {s} ", .{confirm}));
+            },
+            .resizable => {
+                const row = !eq(std.mem.trim(u8, src.text(n, "dir"), " \n"), "col");
+                for (src.children(n), 0..) |k, i| {
+                    if (i > 0) {
+                        const sp = try ui.newBox(n, .separator, b, ink);
+                        sp.part = .frame;
+                        if (row) c.YGNodeStyleSetWidth(sp.yg, 1) else c.YGNodeStyleSetHeight(sp.yg, 1);
+                        c.YGNodeStyleSetFlexShrink(sp.yg, 0);
+                        c.YGNodeStyleSetAlignSelf(sp.yg, c.YGAlignStretch);
+                    }
+                    const pb = try ui.build(k, b, ink);
+                    if (Kind.of(src.typeOf(k)) != .panel) continue;
+                    if (src.number(k, "size")) |sz| {
+                        c.YGNodeStyleSetFlexBasis(pb.yg, style.cells(@floatCast(sz), if (row) .x else .y));
+                        if (pb.st.layout.grow == null) c.YGNodeStyleSetFlexGrow(pb.yg, 0);
+                        c.YGNodeStyleSetFlexShrink(pb.yg, 1);
+                    } else {
+                        if (pb.st.layout.grow == null) c.YGNodeStyleSetFlexGrow(pb.yg, 1);
+                        c.YGNodeStyleSetFlexBasis(pb.yg, 0);
+                    }
+                }
+            },
+            .dock => {
+                const zones = [_][]const u8{ "left", "center", "bottom", "right" };
+                var have = [_]bool{ false, false, false, false };
+                for (src.children(n)) |k| have[zoneOf(src, k)] = true;
+                if (have[0]) c.YGNodeStyleSetWidth((try ui.dockZone(b, b, zones[0])).yg, 28);
+                const mid = try ui.frameBox(n, .dock, .frame, b, ink, false, 0);
+                c.YGNodeStyleSetFlexGrow(mid.yg, 1);
+                c.YGNodeStyleSetFlexBasis(mid.yg, 0);
+                if (have[1] or !have[2]) c.YGNodeStyleSetFlexGrow((try ui.dockZone(b, mid, zones[1])).yg, 1);
+                if (have[2]) c.YGNodeStyleSetHeight((try ui.dockZone(b, mid, zones[2])).yg, 10);
+                if (have[3]) c.YGNodeStyleSetWidth((try ui.dockZone(b, b, zones[3])).yg, 28);
+            },
+            .message_list => {
+                const msgs = try parseMessages(a, src.text(n, "items"));
+                for (msgs, 0..) |m, i| {
+                    const user = eq(m.role, "user");
+                    const mb = try ui.frameBox(n, .message_list, .row, b, ink, false, 0);
+                    mb.index = @intCast(i);
+                    mb.id = m.role;
+                    c.YGNodeStyleSetPadding(mb.yg, c.YGEdgeHorizontal, 1);
+                    c.YGNodeStyleSetFlexShrink(mb.yg, 0);
+                    c.YGNodeStyleSetMaxWidthPercent(mb.yg, 85);
+                    c.YGNodeStyleSetAlignSelf(mb.yg, if (user) c.YGAlignFlexEnd else c.YGAlignFlexStart);
+                    const head = if (m.time.len > 0) try std.fmt.allocPrint(a, "{s} · {s}", .{ m.role, m.time }) else m.role;
+                    _ = try ui.leaf(n, .text, .frame, mb, ui.mutedInk(ink), head);
+                    _ = try ui.leaf(n, .text, .frame, mb, ink, try mdPlain(a, m.body));
+                }
+                const st = ui.state(n);
+                if (src.flag(n, "stick-to-bottom", true) and !st.open) st.scroll_y = 1 << 20;
+            },
+            .collapsible => {
+                if (ui.childNamed(n, "trigger")) |t| _ = try ui.build(t, try ui.frameBox(n, .collapsible, .trigger, b, ink, false, 0), ink);
+                if (src.flag(n, "open", false)) if (ui.childNamed(n, "content")) |k| {
+                    _ = try ui.build(k, b, ink);
+                };
+            },
+            .accordion_item => {
+                const acc = if (b.parent) |p| p.node else 0;
+                const open = hasWord(src.text(acc, "value"), std.fs.path.basenamePosix(src.path(n)));
+                var ti = ink;
+                ti.bold = true;
+                if (src.flag(n, "disabled", false)) ti.dim = true;
+                _ = try ui.leaf(n, .accordion_item, .trigger, b, ti, try std.fmt.allocPrint(a, "{s} {s}", .{ if (open) "▾" else "▸", src.text(n, "title") }));
+                if (open) {
+                    const body = try ui.frameBox(n, .accordion_item, .frame, b, ink, false, 0);
+                    c.YGNodeStyleSetPadding(body.yg, c.YGEdgeLeft, 2);
+                    for (src.children(n)) |k| _ = try ui.build(k, body, ink);
+                }
+            },
+            .canvas, .chart => {},
             else => for (src.children(n)) |k| {
                 _ = try ui.build(k, b, ink);
             },
         }
+    }
+
+    /// A box a component adds to arrange its parts (a table row, a grid
+    /// row), as a row or a column with `gap` cells between its children.
+    fn frameBox(ui: *Ui, n: Node, kind: Kind, part: Part, parent: *Box, ink: Ink, row: bool, gap: f32) !*Box {
+        const f = try ui.newBox(n, kind, parent, ink);
+        f.part = part;
+        f.hidden = parent.hidden;
+        c.YGNodeStyleSetFlexDirection(f.yg, if (row) c.YGFlexDirectionRow else c.YGFlexDirectionColumn);
+        if (gap > 0) c.YGNodeStyleSetGap(f.yg, if (row) c.YGGutterColumn else c.YGGutterRow, gap);
+        return f;
+    }
+
+    /// A grid child's `col-span` (`col-span-full`: every column).
+    fn colSpan(ui: *Ui, k: Node, cols: usize) usize {
+        for (ui.src.style(k)) |w| {
+            const name = core.slice(w.name);
+            if (eq(name, "col-span-full")) return cols;
+            if (eq(name, "col-span") and w.n_args > 0) return @intFromFloat(@max(1, @min(64, w.args[0].a)));
+        }
+        return 1;
+    }
+
+    fn childNamed(ui: *Ui, n: Node, name: []const u8) ?Node {
+        for (ui.src.children(n)) |k| if (eq(std.fs.path.basenamePosix(ui.src.path(k)), name)) return k;
+        return null;
+    }
+
+    fn mutedInk(ui: *Ui, ink: Ink) Ink {
+        var i = ink;
+        i.fg = ui.tok("muted-foreground", 0x737373ff);
+        return i;
+    }
+
+    /// A table: a header row (cells part `title`, index the column) and a
+    /// row per `rows` line (part `row`): its id, then a cell per column.
+    fn buildTable(ui: *Ui, b: *Box) !void {
+        const n = b.node;
+        const a = ui.arena.allocator();
+        const cols = try ui.src.lines(a, n, "columns");
+        const rows = try ui.src.lines(a, n, "rows");
+        var ci = b.ink;
+        ci.nowrap = true;
+        ci.truncate = true;
+        var hi = ci;
+        hi.bold = true;
+        const sort = std.mem.trim(u8, ui.src.text(n, "sort"), " \n");
+        const hdr = try ui.frameBox(n, .table, .header, b, hi, true, 1);
+        c.YGNodeStyleSetFlexShrink(hdr.yg, 0);
+        c.YGNodeStyleSetPadding(hdr.yg, c.YGEdgeHorizontal, 1);
+        for (cols, 0..) |col, j| {
+            if (col.fields.len == 0) continue;
+            var label = if (col.fields.len > 1) col.fields[1] else col.fields[0];
+            var sw = std.mem.tokenizeScalar(u8, sort, ' ');
+            if (sw.next()) |sc| if (eq(sc, col.fields[0])) {
+                label = try std.fmt.allocPrint(a, "{s} {s}", .{ label, if (eq(sw.next() orelse "asc", "desc")) "↓" else "↑" });
+            };
+            const cell = try ui.leaf(n, .table, .title, hdr, colInk(hi, col.fields), label);
+            cell.index = @intCast(j);
+            colWidth(cell, col.fields);
+        }
+        for (rows, 0..) |r, i| {
+            if (r.fields.len == 0) continue;
+            const rb = try ui.frameBox(n, .table, .row, b, ci, true, 1);
+            rb.index = @intCast(i);
+            rb.id = r.fields[0];
+            c.YGNodeStyleSetFlexShrink(rb.yg, 0);
+            c.YGNodeStyleSetPadding(rb.yg, c.YGEdgeHorizontal, 1);
+            for (cols, 0..) |col, j| {
+                if (col.fields.len == 0) continue;
+                const cell = try ui.leaf(n, .table, .cell, rb, colInk(ci, col.fields), if (j + 1 < r.fields.len) r.fields[j + 1] else "");
+                cell.index = @intCast(j);
+                colWidth(cell, col.fields);
+            }
+        }
+        if (rows.len == 0 and ui.src.flag(n, "loading", false)) _ = try ui.leaf(n, .text, .frame, b, ui.mutedInk(b.ink), "Loading…");
+    }
+
+    /// A list: a row per item, the `row` template stamped with the item's
+    /// values when there is one, else its icon and label.
+    fn buildList(ui: *Ui, b: *Box) !void {
+        const n = b.node;
+        const a = ui.arena.allocator();
+        const items = try ui.src.lines(a, n, "items");
+        const tmpl = ui.childNamed(n, "row");
+        var names: std.ArrayList([]const u8) = .empty;
+        var fw = std.mem.tokenizeAny(u8, ui.src.text(n, "fields"), " \t\n");
+        while (fw.next()) |w| try names.append(a, w);
+        const q = std.mem.trim(u8, ui.src.text(n, "query"), " \n");
+        var ri = b.ink;
+        ri.nowrap = true;
+        ri.truncate = true;
+        for (items, 0..) |it, i| {
+            if (it.fields.len == 0) continue;
+            if (eq(it.fields[0], "#")) {
+                var hi = ui.mutedInk(b.ink);
+                hi.bold = true;
+                _ = try ui.leaf(n, .text, .frame, b, hi, try std.mem.join(a, " ", it.fields[1..]));
+                continue;
+            }
+            if (eq(it.fields[0], "-") and it.fields.len == 1) continue;
+            const e = entryOf(it.fields) orelse continue;
+            if (q.len > 0 and std.ascii.indexOfIgnoreCase(e.label, q) == null) continue;
+            const rb = try ui.frameBox(n, .list, .row, b, if (e.disabled) dimmed(ri) else ri, true, 1);
+            rb.index = @intCast(i);
+            rb.id = e.id;
+            c.YGNodeStyleSetFlexShrink(rb.yg, 0);
+            c.YGNodeStyleSetPadding(rb.yg, c.YGEdgeHorizontal, 1);
+            if (tmpl) |t| {
+                var vals: Vals = .empty;
+                try vals.put(a, "id", e.id);
+                try vals.put(a, "label", e.label);
+                for (names.items, 0..) |name, k| {
+                    const v = if (k == 0) e.label else if (k - 1 < e.rest.len) e.rest[k - 1] else "";
+                    try vals.put(a, name, v);
+                }
+                if (e.icon) |ic| try vals.put(a, "icon", ic);
+                ui.vals = &vals;
+                defer ui.vals = null;
+                const tb = try ui.build(t, rb, b.ink);
+                c.YGNodeStyleSetFlexGrow(tb.yg, 1);
+                c.YGNodeStyleSetFlexShrink(tb.yg, 1);
+            } else {
+                if (e.icon) |ic| _ = try ui.leaf(n, .text, .frame, rb, ri, iconGlyph(ic));
+                const lb = try ui.leaf(n, .list, .cell, rb, rb.ink, e.label);
+                c.YGNodeStyleSetFlexGrow(lb.yg, 1);
+            }
+        }
+        if (items.len == 0 and ui.src.flag(n, "loading", false)) _ = try ui.leaf(n, .text, .frame, b, ui.mutedInk(b.ink), "Loading…");
+    }
+
+    /// A tree's visible rows under `parent`, depth first.
+    fn treeRows(ui: *Ui, b: *Box, items: []const core.Core.Line, expanded: []const u8, parent: []const u8, depth: usize) !void {
+        const a = ui.arena.allocator();
+        for (items, 0..) |it, i| {
+            if (it.fields.len < 2 or !eq(it.fields[1], parent)) continue;
+            const id = it.fields[0];
+            var label: []const u8 = id;
+            var icon: ?[]const u8 = null;
+            for (it.fields[2..], 0..) |f, k| {
+                if (std.mem.startsWith(u8, f, "icon=")) icon = f[5..] else if (k == 0) label = f;
+            }
+            const kids = hasChildren(items, id);
+            const open = kids and hasWord(expanded, id);
+            const indent = try a.alloc(u8, depth * 2);
+            @memset(indent, ' ');
+            const t = try std.fmt.allocPrint(a, "{s}{s} {s}{s}{s}", .{ indent, if (!kids) " " else if (open) "▾" else "▸", if (icon) |ic| iconGlyph(ic) else "", if (icon != null) " " else "", label });
+            var ri = b.ink;
+            ri.nowrap = true;
+            ri.truncate = true;
+            const rb = try ui.leaf(b.node, .tree, .row, b, ri, t);
+            c.YGNodeStyleSetFlexShrink(rb.yg, 0);
+            c.YGNodeStyleSetPadding(rb.yg, c.YGEdgeHorizontal, 1);
+            rb.index = @intCast(i);
+            rb.id = id;
+            if (open and depth < 32) try ui.treeRows(b, items, expanded, id, depth + 1);
+        }
+    }
+
+    /// The panels of one dock zone: a tab per panel and the active one.
+    fn dockZone(ui: *Ui, dock: *Box, parent: *Box, zone: []const u8) !*Box {
+        const n = dock.node;
+        const ink = dock.ink;
+        const z = try ui.frameBox(n, .dock, .frame, parent, ink, false, 0);
+        z.st.layout.border = .{ true, true, true, true };
+        z.st.look.rounded = true;
+        c.YGNodeStyleSetBorder(z.yg, c.YGEdgeAll, 1);
+        c.YGNodeStyleSetOverflow(z.yg, c.YGOverflowHidden);
+        z.st.layout.overflow = .hidden;
+        const hdr = try ui.frameBox(n, .dock, .header, z, ink, true, 0);
+        c.YGNodeStyleSetFlexShrink(hdr.yg, 0);
+        const active = ui.dockActive(n, zone);
+        const zi = zoneIndex(zone);
+        for (ui.src.children(n)) |k| {
+            if (zoneOf(ui.src, k) != zi) continue;
+            var title = ui.src.text(k, "title");
+            if (title.len == 0) title = std.fs.path.basenamePosix(ui.src.path(k));
+            var ti = ink;
+            ti.nowrap = true;
+            if (k == active) ti.bold = true else ti = ui.mutedInk(ti);
+            _ = try ui.leaf(k, .dock_panel, .zone_tab, hdr, ti, try std.fmt.allocPrint(ui.arena.allocator(), " {s} ", .{title}));
+        }
+        if (active != 0) {
+            const pb = try ui.build(active, z, ink);
+            if (pb.st.layout.grow == null) c.YGNodeStyleSetFlexGrow(pb.yg, 1);
+            c.YGNodeStyleSetFlexBasis(pb.yg, 0);
+        }
+        return z;
+    }
+
+    fn dockActive(ui: *Ui, n: Node, zone: []const u8) Node {
+        var first: Node = 0;
+        const zi = zoneIndex(zone);
+        for (ui.src.children(n)) |k| {
+            if (zoneOf(ui.src, k) != zi) continue;
+            if (first == 0) first = k;
+            if (ui.state(k).open) return k;
+        }
+        return first;
     }
 
     fn selectedTab(ui: *Ui, n: Node) Node {
@@ -1013,7 +1668,326 @@ pub const Ui = struct {
                 ui.drawText(g, b, b.text, pen);
             },
             .field, .empty, .alert, .dialog => if (b.part != .none) ui.drawText(g, b, b.text, pen),
-            else => {},
+            .table, .list, .tree => switch (b.part) {
+                .header => g.fill(b.rect, b.clip, ui.tok("muted", 0xf5f5f5ff)),
+                .row => {
+                    ui.drawRow(g, b);
+                    if (b.text.len > 0) ui.drawText(g, b, b.text, pen);
+                },
+                else => if (b.text.len > 0) ui.drawText(g, b, b.text, pen),
+            },
+            .sidebar_item => if (b.part == .row) {
+                if (src.flag(n, "active", false))
+                    g.fill(b.rect, b.clip, ui.tok("sidebar-accent", ui.tok("accent", 0xf5f5f5ff)))
+                else if (ui.under(b))
+                    g.fill(b.rect, b.clip, ui.tok("accent", 0xf5f5f5ff));
+            },
+            .dock => if (b.part == .header) g.fill(b.rect, b.clip, ui.tok("muted", 0xf5f5f5ff)),
+            .dock_panel => if (b.part == .zone_tab) {
+                if (b.ink.bold) pen.bg = ui.tok("background", 0xffffffff);
+                ui.drawText(g, b, b.text, pen);
+            },
+            .message_list => if (b.part == .row) {
+                g.fill(b.rect, b.clip, if (eq(b.id, "user")) ui.tok("secondary", 0xf5f5f5ff) else ui.tok("muted", 0xf5f5f5ff));
+            },
+            .alert_dialog => switch (b.part) {
+                .confirm => {
+                    const danger = eq(std.mem.trim(u8, src.text(n, "variant"), " \n"), "danger");
+                    pen.bg = if (danger) ui.tok("button-danger", ui.tok("danger", 0xef4444ff)) else ui.tok("button-primary", ui.tok("primary", 0x171717ff));
+                    pen.fg = if (danger) ui.tok("button-danger-foreground", 0xfafafaff) else ui.tok("button-primary-foreground", ui.tok("primary-foreground", 0xfafafaff));
+                    if (ui.under(b)) pen.attrs.bold = true;
+                    ui.drawText(g, b, b.text, pen);
+                },
+                .cancel => {
+                    pen.bg = ui.tok("secondary", 0xe5e5e5ff);
+                    if (ui.under(b)) pen.attrs.bold = true;
+                    ui.drawText(g, b, b.text, pen);
+                },
+                else => if (b.part != .none) ui.drawText(g, b, b.text, pen),
+            },
+            .breadcrumb => if (b.part == .crumb) {
+                if (ui.under(b)) pen.attrs.underline = true;
+                ui.drawText(g, b, b.text, pen);
+            },
+            .toggle => ui.drawToggle(g, b),
+            .dropdown_button => if (b.part == .none) ui.drawButton(g, b),
+            .avatar => {
+                g.fill(b.rect, b.clip, ui.tok("secondary", ui.tok("muted", 0xf5f5f5ff)));
+                pen.attrs.bold = true;
+                ui.drawText(g, b, b.text, pen);
+            },
+            .markdown => ui.drawText(g, b, b.text, pen),
+            .tag => {
+                const v = b.st.look.variant orelse "";
+                pen.bg = if (eq(v, "") or eq(v, "secondary") or eq(v, "outline")) ui.tok("secondary", 0xe5e5e5ff) else ui.variantColor(n, b.st.look, ui.tok("primary", 0x171717ff));
+                if (!(eq(v, "") or eq(v, "secondary") or eq(v, "outline"))) pen.fg = ui.tok("primary-foreground", 0xfafafaff);
+                ui.drawText(g, b, b.text, pen);
+            },
+            .editor => ui.drawTextarea(g, b),
+            .canvas => ui.drawCanvas(g, b),
+            .chart => ui.drawChart(g, b),
+            .accordion_item => if (b.part == .trigger) {
+                if (ui.under(b)) pen.attrs.underline = true;
+                ui.drawText(g, b, b.text, pen);
+            },
+            else => if (b.part != .none and b.text.len > 0) ui.drawText(g, b, b.text, pen),
+        }
+    }
+
+    /// Whether the pointer is over the box now (rows of one node).
+    fn under(ui: *Ui, b: *const Box) bool {
+        const m = ui.mouse orelse return false;
+        return b.rect.intersect(b.clip).contains(m.x, m.y);
+    }
+
+    /// A data view row: selected, striped or under the pointer.
+    fn drawRow(ui: *Ui, g: *Grid, b: *Box) void {
+        const n = b.node;
+        const v = ui.src.text(n, "value");
+        var sel = false;
+        if (b.kind == .table) {
+            var it = std.mem.tokenizeAny(u8, v, " \n");
+            if (it.next()) |r| sel = eq(r, b.id);
+        } else sel = hasWord(v, b.id);
+        if (sel) {
+            g.fill(b.rect, b.clip, ui.tok("list-active", ui.tok("accent", 0xf5f5f5ff)));
+            if (ui.focused == n) g.put(b.rect.x, b.rect.y, b.clip, "›", .{ .fg = ui.tok("primary", b.ink.fg), .attrs = .{ .bold = true } });
+        } else if (ui.under(b)) {
+            g.fill(b.rect, b.clip, ui.tok("list-hover", ui.tok("accent", 0xf5f5f5ff)));
+        } else if (b.kind == .table and b.index % 2 == 1 and ui.src.flag(n, "stripe", false)) {
+            g.fill(b.rect, b.clip, ui.tok("table-even", ui.tok("muted", 0xf5f5f5ff)));
+        }
+    }
+
+    fn drawToggle(ui: *Ui, g: *Grid, b: *Box) void {
+        if (b.part != .none) return;
+        const on = ui.src.flag(b.node, "value", false);
+        if (b.st.look.bg == null) {
+            if (on) g.fill(b.rect, b.clip, ui.tok("accent", 0xf5f5f5ff)) else if (ui.under(b)) g.fill(b.rect, b.clip, ui.tok("muted", 0xf5f5f5ff));
+        }
+        for (b.kids.items) |k| if (k.node == b.node) {
+            k.ink.bold = on;
+            if (!on) k.ink.fg = ui.tok("muted-foreground", k.ink.fg);
+            if (ui.src.flag(b.node, "disabled", false)) k.ink.dim = true;
+        };
+        if (ui.focused == b.node) g.put(b.rect.x, b.rect.y + @divTrunc(b.rect.h, 2), b.clip, "›", .{ .fg = b.ink.fg, .attrs = .{ .bold = true } });
+    }
+
+    /// A canvas or chart color: a theme token, `#rgb`, `#rrggbb`,
+    /// `#rrggbbaa` or a few names; null for `none`.
+    fn colorOf(ui: *Ui, s0: []const u8, opacity: f32) ?u32 {
+        const s = std.mem.trim(u8, s0, " ");
+        var v: u32 = 0;
+        if (s.len > 0 and s[0] == '#') {
+            const h = s[1..];
+            const x = std.fmt.parseInt(u32, h, 16) catch return null;
+            v = switch (h.len) {
+                3 => (((x >> 8) & 0xf) * 0x11) << 24 | (((x >> 4) & 0xf) * 0x11) << 16 | ((x & 0xf) * 0x11) << 8 | 0xff,
+                6 => x << 8 | 0xff,
+                8 => x,
+                else => return null,
+            };
+        } else if (ui.src.token(s)) |t| {
+            v = t;
+        } else {
+            const names = std.StaticStringMap(u32).initComptime(.{
+                .{ "white", 0xffffffff }, .{ "black", 0x000000ff },  .{ "red", 0xef4444ff },
+                .{ "green", 0x22c55eff }, .{ "blue", 0x3b82f6ff },   .{ "yellow", 0xeab308ff },
+                .{ "orange", 0xf97316ff }, .{ "purple", 0xa855f7ff }, .{ "gray", 0x737373ff },
+                .{ "grey", 0x737373ff },
+            });
+            v = names.get(s) orelse return null;
+        }
+        if (opacity < 1) {
+            const a: f32 = @floatFromInt(v & 0xff);
+            v = (v & 0xffffff00) | @as(u32, @intFromFloat(std.math.clamp(a * opacity, 0, 255)));
+        }
+        if (v & 0xff == 0) return null;
+        return v;
+    }
+
+    /// Two pixels a cell: the top in the glyph `▀`, the bottom behind it.
+    fn blit(g: *Grid, pm: *const raster.Pixmap, x0: i32, y0: i32, clip: Rect) void {
+        var cy: usize = 0;
+        while (cy * 2 < pm.h) : (cy += 1) {
+            var cx: usize = 0;
+            while (cx < pm.w) : (cx += 1) {
+                const x = x0 + @as(i32, @intCast(cx));
+                const y = y0 + @as(i32, @intCast(cy));
+                if (!clip.contains(x, y)) continue;
+                const top = pm.get(cx, cy * 2);
+                const bot = if (cy * 2 + 1 < pm.h) pm.get(cx, cy * 2 + 1) else 0;
+                if (top == 0 and bot == 0) continue;
+                const cell = g.at(x, y) orelse continue;
+                const t = if (top != 0) top >> 8 else cell.bg;
+                const bo = if (bot != 0) bot >> 8 else cell.bg;
+                cell.attrs = .{};
+                cell.link = "";
+                if (t == bo) {
+                    cell.ch = " ";
+                    cell.bg = t;
+                } else {
+                    cell.ch = "▀";
+                    cell.fg = t;
+                    cell.bg = bo;
+                }
+            }
+        }
+    }
+
+    fn canvasOps(ui: *Ui, n: Node) []const core.Core.Line {
+        return ui.src.lines(ui.arena.allocator(), n, "ops") catch &.{};
+    }
+
+    fn drawCanvas(ui: *Ui, g: *Grid, b: *Box) void {
+        const a = ui.arena.allocator();
+        const r = b.rect;
+        if (r.w <= 0 or r.h <= 0) return;
+        var pm = raster.Pixmap.init(a, @intCast(r.w), @intCast(r.h * 2)) catch return;
+        const hov = ui.state(b.node).hl;
+        const fg = ui.tok("foreground", 0x0a0a0aff);
+        var texts: std.ArrayList(raster.Op) = .empty;
+        for (ui.canvasOps(b.node), 0..) |ln, i| {
+            const o = raster.parseOp(ln.fields) orelse continue;
+            const h = hov == i + 1;
+            const op = if (o.attr("opacity", h)) |v| raster.num(v) else 1;
+            const fill = if (o.attr("fill", h)) |v| ui.colorOf(v, op) else null;
+            const stroke = if (o.attr("stroke", h) orelse o.attr("border", h)) |v| ui.colorOf(v, op) else null;
+            const gm = o.geom;
+            switch (o.kind) {
+                .rect => {
+                    if (fill) |cl| pm.rect(gm[0], gm[1], gm[2], gm[3], cl);
+                    if (stroke) |cl| pm.frame(gm[0], gm[1], gm[2], gm[3], cl);
+                },
+                .circle => {
+                    if (fill) |cl| pm.disc(gm[0], gm[1], gm[2], cl);
+                    if (stroke) |cl| pm.ring(gm[0], gm[1], gm[2], cl);
+                },
+                .line => pm.line(gm[0], gm[1], gm[2], gm[3], stroke orelse fill orelse fg),
+                .path => {
+                    const ls = raster.polylines(a, o.words) catch continue;
+                    for (ls) |l| {
+                        if (fill) |cl| if (l.len > 2) pm.polygon(l, cl);
+                        if (stroke orelse (if (fill == null) fg else null)) |cl| for (1..l.len) |k| {
+                            pm.line(l[k - 1][0], l[k - 1][1], l[k][0], l[k][1], cl);
+                        };
+                    }
+                },
+                .text => texts.append(a, o) catch {},
+                .image => pm.frame(gm[0], gm[1], gm[2], gm[3], ui.tok("border", 0xe5e5e5ff)),
+                .other => {},
+            }
+        }
+        const clip = b.clip.intersect(r);
+        blit(g, &pm, r.x, r.y, clip);
+        for (texts.items) |o| {
+            const tx = r.x + @as(i32, @intFromFloat(style.cells(o.geom[0], .x)));
+            const ty = r.y + @as(i32, @intFromFloat(@floor(o.geom[1] / style.cell_h)));
+            const col = if (o.attr("color", false) orelse o.attr("fill", false)) |v| ui.colorOf(v, 1) orelse fg else fg;
+            const w = o.attr("weight", false) orelse "";
+            _ = g.print(tx, ty, clip, o.text, .{ .fg = col, .attrs = .{ .bold = eq(w, "bold") or eq(w, "semibold") } });
+        }
+    }
+
+    fn drawChart(ui: *Ui, g: *Grid, b: *Box) void {
+        const a = ui.arena.allocator();
+        const n = b.node;
+        const r = innerRect(b);
+        if (r.w < 4 or r.h < 3) return;
+        var yw = std.mem.tokenizeAny(u8, ui.src.text(n, "y"), " \t\n");
+        const pts = chartPoints(a, ui.src.text(n, "data"), std.mem.trim(u8, ui.src.text(n, "x"), " \n"), yw.next() orelse "") catch return;
+        if (pts.len == 0) return;
+        const kind = std.mem.trim(u8, ui.src.text(n, "kind"), " \n");
+        const plot_h = r.h - 1;
+        var pm = raster.Pixmap.init(a, @intCast(r.w), @intCast(plot_h * 2)) catch return;
+        const W: f32 = @floatFromInt(r.w * 8);
+        const H: f32 = @floatFromInt(plot_h * 16);
+        var hi: f64 = 0;
+        var lo: f64 = 0;
+        var sum: f64 = 0;
+        for (pts) |p| {
+            hi = @max(hi, p.y);
+            lo = @min(lo, p.y);
+            sum += @max(0, p.y);
+        }
+        if (hi == lo) hi = lo + 1;
+        var pal: [5]u32 = undefined;
+        for (&pal, 0..) |*p, i| {
+            var nb: [16]u8 = undefined;
+            p.* = ui.tok(std.fmt.bufPrint(&nb, "chart-{d}", .{i + 1}) catch "chart-1", ui.tok("primary", 0x3b82f6ff));
+        }
+        const band = W / @as(f32, @floatFromInt(pts.len));
+        const yOf = struct {
+            fn f(v: f64, l: f64, h: f64, hh: f32) f32 {
+                return hh - @as(f32, @floatCast((v - l) / (h - l))) * (hh - 4);
+            }
+        }.f;
+        if (eq(kind, "pie")) {
+            const cx = W / 2;
+            const cy = H / 2;
+            const rad = @min(W, H) / 2 - 2;
+            var py: usize = 0;
+            while (py < pm.h) : (py += 1) {
+                var px: usize = 0;
+                while (px < pm.w) : (px += 1) {
+                    const dx = (@as(f32, @floatFromInt(px)) + 0.5) * raster.px_w - cx;
+                    const dy = (@as(f32, @floatFromInt(py)) + 0.5) * raster.px_h - cy;
+                    if (dx * dx + dy * dy > rad * rad or sum <= 0) continue;
+                    var ang = std.math.atan2(dx, -dy);
+                    if (ang < 0) ang += std.math.tau;
+                    const frac = ang / std.math.tau;
+                    var acc: f64 = 0;
+                    for (pts, 0..) |p, i| {
+                        acc += @max(0, p.y) / sum;
+                        if (frac <= acc) {
+                            pm.plot(@intCast(px), @intCast(py), pal[i % pal.len]);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if (eq(kind, "bar")) {
+            for (pts, 0..) |p, i| {
+                const x = @as(f32, @floatFromInt(i)) * band + band * 0.2;
+                const top = yOf(@max(p.y, 0), lo, hi, H);
+                const base = yOf(0, lo, hi, H);
+                pm.rect(x, @min(top, base), @max(band * 0.6, 8), @abs(base - top), pal[0]);
+            }
+        } else {
+            var poly: std.ArrayList([2]f32) = .empty;
+            for (pts, 0..) |p, i| poly.append(a, .{ @as(f32, @floatFromInt(i)) * band + band / 2, yOf(p.y, lo, hi, H) }) catch return;
+            if (eq(kind, "area") and poly.items.len > 1) {
+                var area: std.ArrayList([2]f32) = .empty;
+                area.appendSlice(a, poly.items) catch return;
+                area.append(a, .{ poly.items[poly.items.len - 1][0], H }) catch return;
+                area.append(a, .{ poly.items[0][0], H }) catch return;
+                pm.polygon(area.items, (pal[0] & 0xffffff00) | 0x60);
+            }
+            for (1..poly.items.len) |i| pm.line(poly.items[i - 1][0], poly.items[i - 1][1], poly.items[i][0], poly.items[i][1], pal[0]);
+            if (poly.items.len == 1) pm.disc(poly.items[0][0], poly.items[0][1], 4, pal[0]);
+        }
+        const clip = b.clip.intersect(b.rect);
+        blit(g, &pm, r.x, r.y, clip);
+        // The x labels under the plot, as many as fit.
+        const mp: Pen = .{ .fg = ui.tok("muted-foreground", 0x737373ff) };
+        const bw = band / 8;
+        var every: usize = 1;
+        var widest: f32 = 1;
+        for (pts) |p| widest = @max(widest, @as(f32, @floatFromInt(gridmod.width(p.x))) + 1);
+        while (bw * @as(f32, @floatFromInt(every)) < widest and every < pts.len) every += 1;
+        if (eq(kind, "pie")) {
+            var x = r.x;
+            for (pts, 0..) |p, i| {
+                x = g.print(x, r.y + plot_h, clip, "■", .{ .fg = pal[i % pal.len] });
+                x = g.print(x + 1, r.y + plot_h, clip, p.x, mp) + 2;
+            }
+            return;
+        }
+        for (pts, 0..) |p, i| {
+            if (i % every != 0) continue;
+            const cx = r.x + @as(i32, @intFromFloat((@as(f32, @floatFromInt(i)) + 0.5) * bw));
+            const lw: i32 = gridmod.width(p.x);
+            _ = g.print(cx - @divTrunc(lw, 2), r.y + plot_h, clip, p.x, mp);
         }
     }
 
@@ -1048,7 +2022,10 @@ pub const Ui = struct {
     }
 
     fn drawButton(ui: *Ui, g: *Grid, b: *Box) void {
-        const col = ui.buttonColors(b);
+        var col = ui.buttonColors(b);
+        if (b.parent) |p| if (p.kind == .button_group and p.part == .none and hasWord(ui.src.text(p.node, "value"), std.fs.path.basenamePosix(ui.src.path(b.node)))) {
+            col = .{ .bg = ui.tok("button-primary", ui.tok("primary", 0x171717ff)), .fg = ui.tok("button-primary-foreground", ui.tok("primary-foreground", 0xfafafaff)) };
+        };
         if (b.st.look.bg == null) if (col.bg) |bg| g.fill(b.rect, b.clip, bg);
         // Labels inside draw with the button's foreground.
         const disabled = ui.src.flag(b.node, "disabled", false);
@@ -1305,6 +2282,12 @@ pub const Ui = struct {
         var b: ?*Box = b0;
         while (b) |bb| : (b = bb.parent) {
             if (bb.part == .item or bb.part == .tab_label) return bb;
+            switch (bb.part) {
+                .confirm, .cancel, .zone_tab, .trigger, .crumb => return bb,
+                .row => if (bb.kind != .message_list) return bb,
+                .title => if (bb.kind == .table) return bb,
+                else => {},
+            }
             if (bb.kind.focusable() and bb.part == .none) return bb;
             if (bb.kind == .button) return bb;
             if (ui.src.prop(bb.node, "on")) |on| if (std.mem.indexOf(u8, on, "click") != null and bb.part == .none) return bb;
@@ -1336,6 +2319,17 @@ pub const Ui = struct {
         var redraw = ui.setHover(m.x, m.y);
         switch (m.kind) {
             .motion, .drag => {
+                if (ui.canvas_pressed != 0) {
+                    if (ui.boxOf(ui.canvas_pressed)) |cb| ui.canvasEvent(cb, "drag", m.x, m.y, false);
+                } else if (ui.hitAt(m.x, m.y)) |hb| if (hb.kind == .canvas and hb.part == .none) {
+                    ui.canvasEvent(hb, "move", m.x, m.y, false);
+                };
+                if (ui.canvasHover(m.x, m.y)) redraw = true;
+                // Rows and parts light up under the pointer.
+                if (ui.mouse_row != ui.rowAt(m.x, m.y)) {
+                    ui.mouse_row = ui.rowAt(m.x, m.y);
+                    redraw = true;
+                }
                 if (m.kind == .drag and ui.pressed != 0) {
                     if (ui.boxOf(ui.pressed)) |b| if (b.kind == .slider) ui.sliderTo(b, m.x, false);
                     redraw = true;
@@ -1347,6 +2341,7 @@ pub const Ui = struct {
                     if (bb.st.layout.overflow == .scroll) {
                         const s = ui.state(bb.node);
                         s.scroll_y += if (m.kind == .wheel_up) -2 else 2;
+                        if (bb.kind == .message_list) s.open = s.scroll_y < bb.content_h - bb.rect.h;
                         return true;
                     }
                 }
@@ -1369,6 +2364,12 @@ pub const Ui = struct {
                     redraw = true;
                 }
                 const hit = ui.hitAt(m.x, m.y) orelse return redraw;
+                if (hit.kind == .canvas and hit.part == .none) {
+                    if (ui.focused != 0) ui.blur();
+                    ui.canvas_pressed = hit.node;
+                    ui.canvasEvent(hit, "mouse-down", m.x, m.y, true);
+                    return true;
+                }
                 const t = ui.clickTarget(hit) orelse {
                     if (ui.focused != 0) {
                         ui.blur();
@@ -1378,12 +2379,21 @@ pub const Ui = struct {
                 };
                 ui.pressed = t.node;
                 ui.pressed_box = .{ .node = t.node, .part = t.part, .index = t.index };
-                if (t.kind.focusable() and t.part == .none) ui.focus(t.node);
+                if (t.kind.focusable() and (t.part == .none or t.part == .row)) ui.focus(t.node);
                 if (t.kind == .slider) ui.sliderTo(t, m.x, false);
                 if (t.kind.editable()) ui.caretTo(t, m.x, m.y);
                 redraw = true;
             },
             .release => {
+                if (ui.canvas_pressed != 0) {
+                    const cn = ui.canvas_pressed;
+                    ui.canvas_pressed = 0;
+                    if (ui.boxOf(cn)) |cb| {
+                        ui.canvasEvent(cb, "mouse-up", m.x, m.y, true);
+                        if (cb.rect.intersect(cb.clip).contains(m.x, m.y)) ui.canvasEvent(cb, "click", m.x, m.y, true);
+                    }
+                    return true;
+                }
                 const pb = ui.pressed_box orelse return redraw;
                 ui.pressed = 0;
                 ui.pressed_box = null;
@@ -1400,6 +2410,76 @@ pub const Ui = struct {
     fn boxOf(ui: *Ui, n: Node) ?*Box {
         for (ui.hits.items) |h| if (h.box.node == n and h.box.part == .none) return h.box;
         return null;
+    }
+
+    fn rowAt(ui: *Ui, x: i32, y: i32) ?*Box {
+        var b = ui.hitAt(x, y);
+        while (b) |bb| : (b = bb.parent) switch (bb.part) {
+            .row, .confirm, .cancel, .crumb, .trigger => return bb,
+            else => if (bb.kind == .toggle and bb.part == .none) return bb,
+        };
+        return null;
+    }
+
+    /// The canvas op under the pointer, for `hover:` attributes.
+    fn canvasHover(ui: *Ui, x: i32, y: i32) bool {
+        var changed = false;
+        for (ui.hits.items) |h| {
+            const cb = h.box;
+            if (cb.kind != .canvas or cb.part != .none) continue;
+            const st = ui.state(cb.node);
+            const now: usize = if (cb.rect.intersect(cb.clip).contains(x, y)) ui.canvasHit(cb, x, y) else 0;
+            if (now != st.hl) {
+                st.hl = now;
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    fn canvasPoint(cb: *const Box, x: i32, y: i32) [2]f32 {
+        return .{ @floatFromInt((x - cb.rect.x) * 8 + 4), @floatFromInt((y - cb.rect.y) * 16 + 8) };
+    }
+
+    /// 1 + the index of the topmost op under the cell, or 0.
+    fn canvasHit(ui: *Ui, cb: *const Box, x: i32, y: i32) usize {
+        const a = ui.arena.allocator();
+        const q = canvasPoint(cb, x, y);
+        const ops = ui.canvasOps(cb.node);
+        var i = ops.len;
+        while (i > 0) {
+            i -= 1;
+            const o = raster.parseOp(ops[i].fields) orelse continue;
+            if (raster.hits(a, o, q)) return i + 1;
+        }
+        return 0;
+    }
+
+    /// A pointer event the canvas's `on` asks for: `item=` (the topmost op
+    /// under the pointer), canvas-local `x=` `y=` in points, `button=`.
+    fn canvasEvent(ui: *Ui, cb: *Box, name: []const u8, x: i32, y: i32, button: bool) void {
+        if (!hasWord(ui.src.text(cb.node, "on"), name)) return;
+        const q = canvasPoint(cb, x, y);
+        var xb: [16]u8 = undefined;
+        var yb: [16]u8 = undefined;
+        var attrs: [4]core.Attr = undefined;
+        var k: usize = 0;
+        const hit = ui.canvasHit(cb, x, y);
+        if (hit > 0) {
+            const ops = ui.canvasOps(cb.node);
+            if (hit - 1 < ops.len and ops[hit - 1].fields.len > 1) {
+                attrs[k] = .{ "item", ops[hit - 1].fields[1] };
+                k += 1;
+            }
+        }
+        attrs[k] = .{ "x", std.fmt.bufPrint(&xb, "{d}", .{@max(0, q[0])}) catch "0" };
+        attrs[k + 1] = .{ "y", std.fmt.bufPrint(&yb, "{d}", .{@max(0, q[1])}) catch "0" };
+        k += 2;
+        if (button) {
+            attrs[k] = .{ "button", "left" };
+            k += 1;
+        }
+        ui.src.emit(cb.node, name, attrs[0..k]);
     }
 
     fn caretTo(ui: *Ui, b: *Box, x: i32, y: i32) void {
@@ -1429,7 +2509,100 @@ pub const Ui = struct {
         const src = ui.src;
         if (src.flag(n, "disabled", false)) return;
         switch (t.kind) {
-            .button, .link => {
+            .button => if (t.parent != null and t.parent.?.kind == .button_group and t.parent.?.part == .none) {
+                ui.groupPick(t.parent.?.node, n);
+            } else {
+                var buf: [2][16]u8 = undefined;
+                const attrs = ui.clickAttrs(t, x, y, &buf);
+                src.emit(n, "click", &attrs);
+            },
+            .table => switch (t.part) {
+                .row => if (!eq(std.mem.trim(u8, src.text(n, "selectable"), " \n"), "off")) {
+                    var it = std.mem.tokenizeAny(u8, src.text(n, "value"), " \n");
+                    if (!eq(it.next() orelse "", t.id)) {
+                        src.emit(n, "select", &.{.{ "row", t.id }});
+                        src.mirror(n, "value", t.id);
+                    }
+                },
+                .title => if (src.flag(n, "sortable", false)) {
+                    const cols = src.lines(ui.arena.allocator(), n, "columns") catch return;
+                    if (t.index >= cols.len or cols[t.index].fields.len == 0) return;
+                    const col = cols[t.index].fields[0];
+                    var it = std.mem.tokenizeAny(u8, src.text(n, "sort"), " \n");
+                    const cur = it.next() orelse "";
+                    const dir: []const u8 = if (eq(cur, col) and eq(it.next() orelse "asc", "asc")) "desc" else "asc";
+                    src.emit(n, "sort", &.{ .{ "col", col }, .{ "dir", dir } });
+                    const v = std.fmt.allocPrint(ui.arena.allocator(), "{s} {s}", .{ col, dir }) catch return;
+                    src.mirror(n, "sort", v);
+                },
+                else => {},
+            },
+            .list => if (t.part == .row and src.flag(n, "selectable", false)) ui.pickIn(n, t.id, src.flag(n, "multiple", false)),
+            .tree => if (t.part == .row) {
+                const items = src.lines(ui.arena.allocator(), n, "items") catch return;
+                if (hasChildren(items, t.id)) {
+                    const exp = src.text(n, "expanded");
+                    const on = !hasWord(exp, t.id);
+                    var out: std.ArrayList(u8) = .empty;
+                    const a = ui.arena.allocator();
+                    var it = std.mem.tokenizeAny(u8, exp, " \t\n");
+                    while (it.next()) |w| if (!eq(w, t.id)) {
+                        if (out.items.len > 0) out.append(a, ' ') catch {};
+                        out.appendSlice(a, w) catch {};
+                    };
+                    if (on) {
+                        if (out.items.len > 0) out.append(a, ' ') catch {};
+                        out.appendSlice(a, t.id) catch {};
+                    }
+                    src.mirror(n, "expanded", out.items);
+                    src.emit(n, "expand", &.{ .{ "id", t.id }, .{ "value", if (on) "on" else "off" } });
+                }
+                if (src.flag(n, "selectable", false)) ui.pickIn(n, t.id, src.flag(n, "multiple", false));
+            },
+            .sidebar_item => if (t.part == .row) src.emit(n, "click", &.{}),
+            .alert_dialog => switch (t.part) {
+                .confirm => src.emit(n, "confirm", &.{}),
+                .cancel => src.emit(n, "cancel", &.{}),
+                else => {},
+            },
+            .dock_panel => if (t.part == .zone_tab) {
+                const dock = t.parent.?.parent.?.node;
+                const zi = zoneOf(src, n);
+                for (src.children(dock)) |k| if (zoneOf(src, k) == zi) {
+                    ui.state(k).open = k == n;
+                };
+                src.emit(n, "activate", &.{});
+            },
+            .collapsible => if (t.part == .trigger) {
+                const v: []const u8 = if (src.flag(n, "open", false)) "off" else "on";
+                src.mirror(n, "open", v);
+                src.emit(n, "change", &.{.{ "value", v }});
+            },
+            .accordion_item => if (t.part == .trigger) {
+                const acc = (t.parent orelse return).parent orelse return;
+                if (src.flag(n, "disabled", false)) return;
+                const name = std.fs.path.basenamePosix(src.path(n));
+                const a = ui.arena.allocator();
+                const cur = src.text(acc.node, "value");
+                const open = hasWord(cur, name);
+                var out: std.ArrayList(u8) = .empty;
+                if (src.flag(acc.node, "multiple", false)) {
+                    var it = std.mem.tokenizeAny(u8, cur, " \t\n");
+                    while (it.next()) |w| if (!eq(w, name)) {
+                        if (out.items.len > 0) out.append(a, ' ') catch {};
+                        out.appendSlice(a, w) catch {};
+                    };
+                }
+                if (!open) {
+                    if (out.items.len > 0) out.append(a, ' ') catch {};
+                    out.appendSlice(a, name) catch {};
+                }
+                ui.userChange(acc.node, out.items);
+            },
+            .breadcrumb => if (t.part == .crumb) src.emit(n, "click", &.{.{ "id", t.id }}),
+            .toggle => ui.userChange(n, if (src.flag(n, "value", false)) "off" else "on"),
+            .dropdown_button, .editor, .canvas, .chart => {},
+            .link => {
                 var buf: [2][16]u8 = undefined;
                 const attrs = ui.clickAttrs(t, x, y, &buf);
                 src.emit(n, "click", &attrs);
@@ -1472,6 +2645,25 @@ pub const Ui = struct {
                 src.emit(n, "click", &attrs);
             },
         }
+    }
+
+    /// A click on a button in a button group: its name becomes the value
+    /// (toggled in and out of it with `multiple`).
+    fn groupPick(ui: *Ui, group: Node, btn: Node) void {
+        const name = std.fs.path.basenamePosix(ui.src.path(btn));
+        if (!ui.src.flag(group, "multiple", false)) {
+            if (!eq(std.mem.trim(u8, ui.src.text(group, "value"), " \n"), name)) ui.userChange(group, name);
+            return;
+        }
+        ui.userChange(group, toggled(ui.arena.allocator(), ui.src.text(group, "value"), name) catch return);
+    }
+
+    /// A list or tree selection: id alone, or toggled with `multiple`.
+    fn pickIn(ui: *Ui, n: Node, id: []const u8, multiple: bool) void {
+        const v = if (multiple) toggled(ui.arena.allocator(), ui.src.text(n, "value"), id) catch return else id;
+        if (eq(std.mem.trim(u8, ui.src.text(n, "value"), " \n"), v)) return;
+        ui.src.mirror(n, "value", v);
+        ui.src.emit(n, "select", &.{.{ "value", v }});
     }
 
     /// The user changed a value the component owns: mirror it (unless
@@ -1610,6 +2802,25 @@ pub const Ui = struct {
             const kind = Kind.of(ui.src.typeOf(n));
             if (plain and ui.focusedKey(n, kind, k)) return .handled;
         }
+        // Escape asks the top overlay to close; Enter confirms an alert.
+        const ovs = ui.src.overlays(ui.win);
+        if (ovs.len > 0 and plain) {
+            const ov = ovs[ovs.len - 1];
+            switch (Kind.of(ui.src.typeOf(ov))) {
+                .sheet, .dialog => if (eq(k.name, "escape")) {
+                    ui.src.emit(ov, "close", &.{});
+                    return .handled;
+                },
+                .alert_dialog => if (eq(k.name, "escape")) {
+                    ui.src.emit(ov, "cancel", &.{});
+                    return .handled;
+                } else if (eq(k.name, "enter") and n == 0) {
+                    ui.src.emit(ov, "confirm", &.{});
+                    return .handled;
+                },
+                else => {},
+            }
+        }
         if (eq(k.name, "escape") and n != 0) {
             ui.blur();
             return .handled;
@@ -1688,18 +2899,18 @@ pub const Ui = struct {
                 }
                 return ui.editKey(n, kind, k);
             },
-            .input, .textarea => return ui.editKey(n, kind, k),
+            .input, .textarea, .editor => return ui.editKey(n, kind, k),
             else => {},
         }
         return false;
     }
 
     fn editKey(ui: *Ui, n: Node, kind: Kind, k: Key) bool {
-        if (ui.src.flag(n, "readonly", false) and k.text.len > 0) return true;
+        if (ui.src.flag(n, "readonly", false) and (k.text.len > 0 or (eq(k.name, "enter") and kind.multiline()) or eq(k.name, "backspace") or eq(k.name, "delete"))) return true;
         const e = ui.edit(n);
         var changed = false;
         if (eq(k.name, "enter")) {
-            if (kind == .textarea and !k.shift) {
+            if (kind.multiline() and !k.shift) {
                 e.buf.insert(ui.gpa, e.caret, '\n') catch {};
                 e.caret += 1;
                 changed = true;
@@ -1726,10 +2937,10 @@ pub const Ui = struct {
         } else if (eq(k.name, "right")) {
             e.caret = nextBoundary(e.buf.items, e.caret);
         } else if (eq(k.name, "home")) {
-            e.caret = if (kind == .textarea) lineStart(e.buf.items, e.caret) else 0;
+            e.caret = if (kind.multiline()) lineStart(e.buf.items, e.caret) else 0;
         } else if (eq(k.name, "end")) {
-            e.caret = if (kind == .textarea) lineEnd(e.buf.items, e.caret) else e.buf.items.len;
-        } else if (kind == .textarea and (eq(k.name, "up") or eq(k.name, "down"))) {
+            e.caret = if (kind.multiline()) lineEnd(e.buf.items, e.caret) else e.buf.items.len;
+        } else if (kind.multiline() and (eq(k.name, "up") or eq(k.name, "down"))) {
             e.caret = vertical(e.buf.items, e.caret, eq(k.name, "up"));
         } else if (k.text.len > 0) {
             const max = ui.src.number(n, "max-len");
@@ -1749,7 +2960,7 @@ pub const Ui = struct {
             return;
         }
         if (!ui.src.flag(n, "controlled", false)) ui.src.mirror(n, "value", v);
-        if (ui.src.flag(n, "secret", false))
+        if (ui.src.flag(n, "secret", false) or kind == .editor)
             ui.src.emit(n, "change", &.{})
         else
             ui.src.emit(n, "change", &.{.{ "value", v }});
@@ -1797,6 +3008,284 @@ fn padCells(l: ?style.Len) i32 {
         .pt => |p| @intFromFloat(p),
         else => 0,
     };
+}
+
+/// A grid cell (or a description-list item) shares its row evenly.
+fn gridCell(b: *Box, span: usize) void {
+    if (b.st.layout.w != null or b.st.layout.basis != null) return;
+    if (b.st.layout.grow == null) c.YGNodeStyleSetFlexGrow(b.yg, @floatFromInt(span));
+    c.YGNodeStyleSetFlexBasis(b.yg, 0);
+    c.YGNodeStyleSetFlexShrink(b.yg, 1);
+    c.YGNodeStyleSetMinWidth(b.yg, 0);
+}
+
+/// A table column's width (`columns`: `id label width ...`, in points).
+fn colWidth(cell: *Box, fields: []const []const u8) void {
+    const w: f32 = if (fields.len > 2) std.fmt.parseFloat(f32, fields[2]) catch 0 else 0;
+    if (w > 0) {
+        c.YGNodeStyleSetWidth(cell.yg, @max(3, style.cells(w, .x)));
+        c.YGNodeStyleSetFlexShrink(cell.yg, 1);
+        c.YGNodeStyleSetMinWidth(cell.yg, 3);
+    } else {
+        c.YGNodeStyleSetFlexGrow(cell.yg, 1);
+        c.YGNodeStyleSetFlexBasis(cell.yg, 0);
+    }
+}
+
+fn colInk(ink: Ink, fields: []const []const u8) Ink {
+    var i = ink;
+    for (fields) |f| {
+        if (eq(f, "align=right")) i.text_align = .right;
+        if (eq(f, "align=center")) i.text_align = .center;
+    }
+    return i;
+}
+
+fn dimmed(ink: Ink) Ink {
+    var i = ink;
+    i.dim = true;
+    return i;
+}
+
+const Entry = struct {
+    id: []const u8,
+    label: []const u8,
+    rest: []const []const u8,
+    icon: ?[]const u8 = null,
+    disabled: bool = false,
+};
+
+/// An `items` line: `id label [icon=name] [disabled]`, tab-separated
+/// lines carrying more fields after the label.
+fn entryOf(fields: []const []const u8) ?Entry {
+    if (fields.len == 0) return null;
+    var e: Entry = .{ .id = fields[0], .label = fields[0], .rest = &.{} };
+    if (fields.len > 1 and !std.mem.startsWith(u8, fields[1], "icon=")) {
+        e.label = fields[1];
+        e.rest = fields[2..];
+    } else e.rest = fields[1..];
+    var keep: usize = e.rest.len;
+    while (keep > 0) : (keep -= 1) {
+        const f = e.rest[keep - 1];
+        if (std.mem.startsWith(u8, f, "icon=")) e.icon = f[5..] else if (eq(f, "disabled")) e.disabled = true else break;
+    }
+    e.rest = e.rest[0..keep];
+    return e;
+}
+
+fn hasChildren(items: []const core.Core.Line, id: []const u8) bool {
+    for (items) |o| if (o.fields.len > 1 and eq(o.fields[1], id)) return true;
+    return false;
+}
+
+/// The words of s with w added, or taken out if it was there.
+fn toggled(a: std.mem.Allocator, s: []const u8, w: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var it = std.mem.tokenizeAny(u8, s, " \t\n");
+    var had = false;
+    while (it.next()) |x| {
+        if (eq(x, w)) {
+            had = true;
+            continue;
+        }
+        if (out.items.len > 0) try out.append(a, ' ');
+        try out.appendSlice(a, x);
+    }
+    if (!had) {
+        if (out.items.len > 0) try out.append(a, ' ');
+        try out.appendSlice(a, w);
+    }
+    return out.items;
+}
+
+fn hasWord(s: []const u8, w: []const u8) bool {
+    var it = std.mem.tokenizeAny(u8, s, " \t\n");
+    while (it.next()) |x| if (eq(x, w)) return true;
+    return false;
+}
+
+const zone_names = [_][]const u8{ "left", "center", "bottom", "right" };
+
+fn zoneIndex(z: []const u8) usize {
+    for (zone_names, 0..) |name, i| if (eq(name, z)) return i;
+    return 1;
+}
+
+fn zoneOf(src: Source, k: Node) usize {
+    return zoneIndex(std.mem.trim(u8, src.text(k, "zone"), " \n"));
+}
+
+/// Up to two initials of a name, padded: ` AL `.
+fn initials(a: std.mem.Allocator, name: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    try out.append(a, ' ');
+    var it = std.mem.tokenizeAny(u8, name, " \t\n");
+    var k: usize = 0;
+    while (it.next()) |w| : (k += 1) {
+        if (k == 2) break;
+        try out.append(a, std.ascii.toUpper(w[0]));
+    }
+    if (k == 0) try out.appendSlice(a, "?");
+    try out.append(a, ' ');
+    return out.items;
+}
+
+/// Markdown as plain text for a cell grid: heading marks, emphasis and
+/// code ticks dropped, list bullets drawn as `•`.
+pub fn mdPlain(a: std.mem.Allocator, md: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, md, "\n"), '\n');
+    var first = true;
+    while (lines.next()) |l0| {
+        if (!first) try out.append(a, '\n');
+        first = false;
+        var l = l0;
+        if (std.mem.startsWith(u8, l, "```")) continue;
+        while (l.len > 0 and l[0] == '#') l = l[1..];
+        if (l.len < l0.len) l = std.mem.trimStart(u8, l, " ");
+        const lead = l.len - std.mem.trimStart(u8, l, " ").len;
+        const rest = l[lead..];
+        if (std.mem.startsWith(u8, rest, "- ") or std.mem.startsWith(u8, rest, "* ")) {
+            try out.appendSlice(a, l[0..lead]);
+            try out.appendSlice(a, "• ");
+            l = rest[2..];
+        }
+        var i: usize = 0;
+        while (i < l.len) : (i += 1) {
+            if (l[i] == '`') continue;
+            if (i + 1 < l.len and (l[i] == '*' or l[i] == '_') and l[i + 1] == l[i]) {
+                i += 1;
+                continue;
+            }
+            try out.append(a, l[i]);
+        }
+    }
+    return out.items;
+}
+
+/// `{name}` in s replaced by the item's value.
+fn substitute(a: std.mem.Allocator, s: []const u8, vals: *const Vals) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, s, '{') == null) return s;
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < s.len) {
+        if (s[i] == '{') if (std.mem.indexOfScalarPos(u8, s, i, '}')) |j| {
+            if (vals.get(s[i + 1 .. j])) |v| {
+                try out.appendSlice(a, v);
+                i = j + 1;
+                continue;
+            }
+        };
+        try out.append(a, s[i]);
+        i += 1;
+    }
+    return out.items;
+}
+
+const ChartPoint = struct { x: []const u8, y: f64 };
+
+/// chart.rs's points: `data` is TSV with a header row; `x` and `y` name
+/// columns (the first two by default); rows without a number are skipped.
+fn chartPoints(a: std.mem.Allocator, data: []const u8, x: []const u8, y: []const u8) ![]ChartPoint {
+    var out: std.ArrayList(ChartPoint) = .empty;
+    var lines = std.mem.tokenizeScalar(u8, data, '\n');
+    const head = lines.next() orelse return out.items;
+    var xi: ?usize = if (x.len == 0) 0 else null;
+    var yi: ?usize = if (y.len == 0) 1 else null;
+    var hs = std.mem.splitScalar(u8, head, '\t');
+    var k: usize = 0;
+    while (hs.next()) |h| : (k += 1) {
+        const t = std.mem.trim(u8, h, " \r");
+        if (x.len > 0 and eq(t, x)) xi = k;
+        if (y.len > 0 and eq(t, y)) yi = k;
+    }
+    const xc = xi orelse return out.items;
+    const yc = yi orelse return out.items;
+    while (lines.next()) |l| {
+        if (std.mem.trim(u8, l, " \t\r").len == 0) continue;
+        var f: [64][]const u8 = undefined;
+        var nf: usize = 0;
+        var it = std.mem.splitScalar(u8, l, '\t');
+        while (it.next()) |v| : (nf += 1) {
+            if (nf == f.len) break;
+            f[nf] = std.mem.trim(u8, v, " \r");
+        }
+        if (yc >= nf) continue;
+        var buf: [64]u8 = undefined;
+        var bl: usize = 0;
+        for (f[yc]) |ch| if (ch != ',' and bl < buf.len) {
+            buf[bl] = ch;
+            bl += 1;
+        };
+        const v = std.fmt.parseFloat(f64, buf[0..bl]) catch continue;
+        try out.append(a, .{ .x = if (xc < nf) f[xc] else "", .y = v });
+    }
+    return out.items;
+}
+
+const Message = struct { role: []const u8, time: []const u8, body: []const u8 };
+
+fn msgHeader(line: []const u8) ?[3][]const u8 {
+    var w: [4][]const u8 = undefined;
+    var k: usize = 0;
+    var it = std.mem.tokenizeAny(u8, line, " \t");
+    while (it.next()) |x| {
+        if (k == 4) return null;
+        w[k] = x;
+        k += 1;
+    }
+    if (k < 2 or k > 3) return null;
+    for ([_][]const u8{ "user", "assistant", "system", "tool" }) |r| if (eq(w[1], r)) return .{ w[0], w[1], if (k == 3) w[2] else "" };
+    return null;
+}
+
+/// The `messages` format: a header line `id role [time]`, then the body
+/// up to a blank line followed by the next header.
+fn parseMessages(a: std.mem.Allocator, text: []const u8) ![]Message {
+    var out: std.ArrayList(Message) = .empty;
+    var ls: std.ArrayList([]const u8) = .empty;
+    var it = std.mem.splitScalar(u8, text, '\n');
+    while (it.next()) |l| try ls.append(a, std.mem.trimEnd(u8, l, "\r"));
+    const L = ls.items;
+    var i: usize = 0;
+    const blank = struct {
+        fn f(l: []const u8) bool {
+            return std.mem.trim(u8, l, " \t").len == 0;
+        }
+    }.f;
+    while (i < L.len) {
+        if (blank(L[i])) {
+            i += 1;
+            continue;
+        }
+        const h = msgHeader(L[i]) orelse {
+            i += 1;
+            continue;
+        };
+        i += 1;
+        const start = i;
+        var end = i;
+        while (i < L.len) {
+            if (blank(L[i])) {
+                var j = i;
+                while (j < L.len and blank(L[j])) j += 1;
+                if (j >= L.len) {
+                    i = L.len;
+                    break;
+                }
+                if (msgHeader(L[j]) != null) {
+                    i = j;
+                    break;
+                }
+                i = j;
+            } else {
+                i += 1;
+                end = i;
+            }
+        }
+        try out.append(a, .{ .role = h[1], .time = h[2], .body = try std.mem.join(a, "\n", L[start..end]) });
+    }
+    return out.items;
 }
 
 fn darker(rgba: u32, ui: *Ui) u32 {
@@ -2317,3 +3806,9 @@ test "a tooltip file shows above its node after the delay, and a press hides it"
     try testing.expect(!ui.tipDue(gen));
     try testing.expect(ui.tipDue(ui.tipPending().?));
 }
+
+test {
+    _ = raster;
+}
+
+

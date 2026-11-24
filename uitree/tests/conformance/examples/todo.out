@@ -1,0 +1,17 @@
+-- window main Todos
+div root  : v-flex size-full p=24 gap=12 bg=background
+  text h  text=Todos  : text-2xl font-semibold
+  input new  cleanable  placeholder='What needs to be done?'  tag=add
+  scroll body  : flex-1 overflow-y-scroll
+    div items  : v-flex gap=2
+    empty none  title='Nothing to do'  description='Add a task above.'  icon=inbox
+  div foot  : h-flex items-center gap=8 pt=8 border-t-1 border-color=border
+    text count  text='0 items left'  : text-sm text-color=muted-foreground flex-1
+    tabs filter  segmented  sm  value=all  tag=filter
+      tab all  label=All
+      tab active  label=Active
+      tab done  label=Done
+    button clear  ghost  sm  label='Clear completed'  tag=clear
+-- menu/bar
+-- keys
+-- stderr

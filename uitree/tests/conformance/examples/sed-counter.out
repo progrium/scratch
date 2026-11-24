@@ -1,0 +1,14 @@
+-- window main Counter
+div root  : h-flex flex-wrap size-full p=24 gap-x=16 gap-y=8 items-center justify-center content-center bg=background
+  button dec  lg  label=−  tag=dec  : w=64
+  text n  text=0  : text-size=52 font-bold text-center w=176
+  button inc  lg  primary  label=+  tag=inc  : w=64
+  text roman  text=nulla  : w-full text-center text-2xl text-color=muted-foreground font-family=C059
+  button reset  ghost  sm  label=Reset  tag=reset
+-- menu/bar
+-- keys
+=	inc
+-	dec
+0	reset
+escape	quit
+-- stderr

@@ -1,0 +1,4 @@
+type    group-box  tier=component  profile=layout  since=1.0
+prop    title  text  file
+word    normal fill outline  kind=variant
+child   any

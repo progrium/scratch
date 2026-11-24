@@ -1,0 +1,12 @@
+type    dropdown-button  tier=component  since=1.0
+prop    label     text  file
+prop    icon      word
+prop    menu      data  file
+prop    disabled  bool
+word    disabled  kind=flag
+word    primary secondary danger info success warning ghost link outline  kind=variant
+word    xs sm md lg  kind=size
+event   click   kind=action
+event   action  kind=action
+child   none
+file    menu  format=menu

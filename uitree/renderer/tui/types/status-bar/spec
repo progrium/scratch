@@ -1,0 +1,5 @@
+type    status-bar  tier=component  since=1.0
+slot    left
+slot    center
+slot    right
+child   none

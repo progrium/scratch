@@ -1,0 +1,7 @@
+type    accordion  tier=component  profile=layout  since=1.0
+prop    multiple  bool  default=off
+prop    value     text  file
+word    multiple  kind=flag
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   accordion-item

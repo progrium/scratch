@@ -1,0 +1,48 @@
+-- window main Calculator
+div root  : v-flex size-full p=12 gap=12 bg=background
+  div screen  : v-flex items-end justify-end h=96 px=12 rounded-lg bg=muted
+    text expr  : text-sm text-color=muted-foreground truncate
+    text out  text=0  : text-3xl font-semibold truncate
+  grid keys  cols=4  gap=8  : flex-1
+    button clear  secondary  lg  label=AC  tag=clear
+    button neg  secondary  lg  label=±  tag=neg
+    button pct  secondary  lg  label=%  tag=pct
+    button div  primary  lg  label=÷  tag=div
+    button k7  lg  label=7  tag=7
+    button k8  lg  label=8  tag=8
+    button k9  lg  label=9  tag=9
+    button mul  primary  lg  label=×  tag=mul
+    button k4  lg  label=4  tag=4
+    button k5  lg  label=5  tag=5
+    button k6  lg  label=6  tag=6
+    button sub  primary  lg  label=−  tag=sub
+    button k1  lg  label=1  tag=1
+    button k2  lg  label=2  tag=2
+    button k3  lg  label=3  tag=3
+    button add  primary  lg  label=+  tag=add
+    button k0  lg  label=0  tag=0  : col-span=2
+    button dot  lg  label=.  tag=dot
+    button eq  primary  lg  label==  tag=eq
+-- menu/bar
+-- keys
+0  0
+1  1
+2  2
+3  3
+4  4
+5  5
+6  6
+7  7
+8  8
+9  9
+.  dot
++  add
+-  sub
+*  mul
+/  div
+%  pct
+enter      eq
+=          eq
+escape     clear
+backspace  back
+-- stderr

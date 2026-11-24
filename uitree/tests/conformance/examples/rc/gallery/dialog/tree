@@ -1,0 +1,5 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : h-flex gap=8
+    button d  label='Open dialog'  tag=open:dlg
+    button a  label=Delete…  tag=open:del  danger
+    button s  label='Open sheet'  tag=open:sheet  outline

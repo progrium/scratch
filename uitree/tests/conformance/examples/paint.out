@@ -1,0 +1,24 @@
+-- window main Paint
+div root  : v-flex size-full bg=background
+  toolbar bar
+    button-group color  value=foreground  tag=color
+      button foreground  label=Ink
+      button info  label=Blue
+      button danger  label=Red
+      button success  label=Green
+      button warning  label=Amber
+    separator s1  dir=col
+    slider size  min=1  max=24  value=4  tag=size  : w=140
+    separator s2  dir=col
+    button undo  ghost  sm  icon=undo  tag=undo
+    button clear  ghost  sm  icon=trash  tag=clear
+    spacer sp
+    button load  ghost  sm  label=Open  tag=load
+    button save  outline  sm  label=Save  tag=save
+  canvas c  on='mouse-down mouse-up drag'  ops='rect bg 0 0 4000 4000 fill=background'  : flex-1 cursor-crosshair
+-- menu/bar
+-- keys
+cmd-z undo
+cmd-s save
+cmd-o load
+-- stderr

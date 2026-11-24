@@ -23,7 +23,16 @@ cd ../tests/conformance
 ./run -u 14-events                      # rewrite a golden from this run; review the diff
 UITREE_HEADLESS=/path/to/host ./run     # another binary
 ./run-examples                          # the example clients' tree-building phase
+LINUXROOT=/path/to/alpine ./run-examples # and the Linux clients (../../tools/linuxroot)
+./run-examples -u calc                  # rewrite a golden; review the diff
 ```
+
+`run-examples` reads [examples/list](examples/list): each example runs on
+`uitree-headless` through `tree-phase.rc` until its tree stops changing,
+and what it built is diffed with `examples/NAME.out`. Examples flagged
+`nogolden` (live data) are only checked for refused writes. The Go
+clients need `go`; the Linux ones (jq, PostScript, COBOL, Forth, Scheme,
+Lua, Node, Python, Ruby) need `$LINUXROOT` and are skipped without it.
 
 `run` executes `$UITREE_HEADLESS rc ./NN-name.rc` in this directory,
 appends `exit=N`, removes `seq=`, and diffs against `NN-name.out`. If

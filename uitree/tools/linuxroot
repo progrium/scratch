@@ -1,0 +1,20 @@
+#!/bin/bash
+# linuxroot [DIR]: make the Alpine root the Linux examples run on:
+# PostScript, COBOL, jq, Lua, Node, Python, Ruby and Scheme (tools/gforth adds
+# Forth, which Alpine does not package). This has
+# ghostscript, gnucobol (with gcc and musl-dev for cobc),
+# jq, GNU sed, and bash for sh/progress.sh, from Alpine edge (gnucobol is only in edge/testing).
+# Uses apk.static on the host, so it needs no Alpine and no root inside h9.
+set -e
+UITREE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DIR=${1:-$UITREE_DIR/third_party/hyper9/.local/linux/edge-tools}
+E=https://dl-cdn.alpinelinux.org/alpine/edge
+T=$(mktemp -d)
+v=$(curl -sL $E/main/x86_64/APKINDEX.tar.gz | tar xzO APKINDEX | awk '/^P:apk-tools-static$/{f=1} f&&/^V:/{print substr($0,3); exit}')
+curl -sL $E/main/x86_64/apk-tools-static-$v.apk | tar xz -C $T 2>/dev/null
+mkdir -p "$DIR"
+$T/sbin/apk.static --root "$DIR" --initdb --allow-untrusted --no-cache \
+	-X $E/main -X $E/community -X $E/testing \
+	add alpine-base ghostscript jq gnucobol gcc musl-dev sed lua5.4 nodejs python3 ruby chibi-scheme bash coreutils
+rm -rf $T
+echo "$DIR"

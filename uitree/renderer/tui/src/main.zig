@@ -1,6 +1,6 @@
 //! uitree-tui: the uitree terminal host.
 //!
-//!     uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
+//!     uitree-tui [-t TITLE] [--root DIR] [-d SRC[:DST]]... [-e NAME=VALUE]... [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
 //!     uitree-tui [-t TITLE] [--log FILE] [--dark] [--colors ...] --remote ADDR [--role primary|mirror|view]
 //!
 //! Starts the core (libuitcore, through uitcore.h), runs PROG in h9 with
@@ -10,7 +10,9 @@
 //! screen.
 //!
 //! --root is the 9front root for h9 (default $H9ROOT, else h9's built-in
-//! root). --colors is the terminal's color depth (color.zig; default from
+//! root). -d adds an h9 mount: -d ALPINE:#L gives the app a Linux view,
+//! where $ui is /9/mnt/ui. -e sets a variable in the app's environment.
+//! --colors is the terminal's color depth (color.zig; default from
 //! $COLORTERM). The host registers GPUI Kit's theme set (core/types/themes),
 //! so an app's `theme/name` works here as on GPUI.
 //!
@@ -66,7 +68,7 @@ const App = struct {
 };
 
 const usage =
-    \\usage: uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
+    \\usage: uitree-tui [-t TITLE] [--root DIR] [-d SRC[:DST]] [-e NAME=VALUE] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
     \\       uitree-tui [-t TITLE] [--log FILE] [--dark] [--colors ...] --remote ADDR [--role primary|mirror|view]
     \\
 ;
@@ -83,6 +85,8 @@ pub fn main(init: std.process.Init) !u8 {
     var depth = colormod.detect(init.environ_map.get("COLORTERM"));
     var remote: ?[]const u8 = null;
     var role: []const u8 = "primary";
+    var dirs: std.ArrayList([]const u8) = .empty;
+    var env: std.ArrayList([]const u8) = .empty;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -92,6 +96,12 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--root") and i + 1 < args.len) {
             i += 1;
             root = args[i];
+        } else if ((std.mem.eql(u8, a, "-d") or std.mem.eql(u8, a, "--dir")) and i + 1 < args.len) {
+            i += 1;
+            try dirs.append(init.arena.allocator(), args[i]);
+        } else if ((std.mem.eql(u8, a, "-e") or std.mem.eql(u8, a, "--env")) and i + 1 < args.len) {
+            i += 1;
+            try env.append(init.arena.allocator(), args[i]);
         } else if (std.mem.eql(u8, a, "--log") and i + 1 < args.len) {
             i += 1;
             log_path = args[i];
@@ -170,7 +180,7 @@ pub fn main(init: std.process.Init) !u8 {
         exitUi(&vx, writer);
         std.debug.print("uitree-tui: {s}: {t} {s}\n", .{ addr, e, k.lastError() });
         return 1;
-    } else k.runMachine(gpa, .{ .argv = argv, .root = root, .out_fd = log_fd, .err_fd = log_fd }) catch |e| {
+    } else k.runMachine(gpa, .{ .argv = argv, .root = root, .dirs = dirs.items, .env = env.items, .out_fd = log_fd, .err_fd = log_fd }) catch |e| {
         exitUi(&vx, writer);
         std.debug.print("uitree-tui: {s}: {t} {s}\n", .{ argv[0], e, k.lastError() });
         return 1;

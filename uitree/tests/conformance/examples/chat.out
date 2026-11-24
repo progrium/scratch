@@ -1,0 +1,23 @@
+-- window main Chat
+div root  : v-flex size-full bg=background
+  div head  : h-flex items-center gap=10 px=16 py=10 border-b-1 border-color=border
+    avatar a  sm  name=Eliza
+    div n  : v-flex flex-1
+      text name  text=Eliza  : font-semibold
+      text st  text=online  : text-xs text-color=muted-foreground
+    button raw  ghost  sm  icon=file-text  tag=raw
+    button clear  ghost  sm  icon=trash  tag=clear
+  message-list msgs  items=<<END  : flex-1 p=16
+m1 assistant HH:MM
+Hello, I'm **Eliza**. How are you feeling today?
+
+END
+  div compose  : h-flex gap=8 p=12 border-t-1 border-color=border
+    input in  placeholder='Message Eliza…'  tag=send  : flex-1
+    button go  primary  icon=send  tag=send
+-- overlay main/raw
+sheet raw  size=420  title=Transcript
+  editor e  readonly  soft-wrap  language=markdown  : size-full
+-- menu/bar
+-- keys
+-- stderr

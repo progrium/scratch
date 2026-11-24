@@ -84,6 +84,10 @@ pub struct Options {
     pub keep: bool,
     /// h9's `--root` (default the built-in root).
     pub root: Option<String>,
+    /// `-d SRC[:DST]`: h9 mounts; `ALPINE:#L` gives the app a Linux view.
+    pub dirs: Vec<String>,
+    /// `-e NAME=VALUE`: the app's environment.
+    pub env: Vec<String>,
     /// The program and its arguments.
     pub argv: Vec<String>,
     /// Build an N-node tree and measure, instead of running an app.

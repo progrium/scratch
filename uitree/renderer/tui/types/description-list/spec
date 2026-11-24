@@ -1,0 +1,10 @@
+type    description-list  tier=component  profile=data  since=1.0
+prop    items        data  file
+prop    columns      number  default=3
+prop    bordered     bool  default=off
+prop    labels       enum=side,top  default=side
+prop    label-width  number
+word    bordered  kind=flag
+word    xs sm md lg  kind=size
+child   none
+file    items  format=desc-items

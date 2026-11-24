@@ -33,9 +33,41 @@ pub const names = [_][]const u8{
     "spinner",
     "alert",
     "dialog",
+    "grid",
+    "toolbar",
+    "button-group",
+    "toggle",
+    "status-bar",
+    "title-bar",
+    "table",
+    "list",
+    "tree",
+    "canvas",
+    "chart",
+    "description-list",
+    "sidebar",
+    "sidebar-group",
+    "sidebar-item",
+    "group-box",
+    "avatar",
+    "editor",
+    "markdown",
+    "sheet",
+    "alert-dialog",
+    "resizable",
+    "panel",
+    "dock",
+    "dock-panel",
+    "message-list",
+    "collapsible",
+    "accordion",
+    "accordion-item",
+    "breadcrumb",
+    "dropdown-button",
+    "tag",
 };
 
-pub const descriptors = "" ++ @embedFile("div/spec") ++ @embedFile("text/spec") ++ @embedFile("styled-text/spec") ++ @embedFile("img/spec") ++ @embedFile("svg/spec") ++ @embedFile("icon/spec") ++ @embedFile("scroll/spec") ++ @embedFile("spacer/spec") ++ @embedFile("button/spec") ++ @embedFile("checkbox/spec") ++ @embedFile("radio-group/spec") ++ @embedFile("switch/spec") ++ @embedFile("select/spec") ++ @embedFile("input/spec") ++ @embedFile("textarea/spec") ++ @embedFile("number-input/spec") ++ @embedFile("slider/spec") ++ @embedFile("form/spec") ++ @embedFile("field/spec") ++ @embedFile("link/spec") ++ @embedFile("tabs/spec") ++ @embedFile("tab/spec") ++ @embedFile("empty/spec") ++ @embedFile("separator/spec") ++ @embedFile("badge/spec") ++ @embedFile("kbd/spec") ++ @embedFile("progress/spec") ++ @embedFile("spinner/spec") ++ @embedFile("alert/spec") ++ @embedFile("dialog/spec");
+pub const descriptors = "" ++ @embedFile("div/spec") ++ @embedFile("text/spec") ++ @embedFile("styled-text/spec") ++ @embedFile("img/spec") ++ @embedFile("svg/spec") ++ @embedFile("icon/spec") ++ @embedFile("scroll/spec") ++ @embedFile("spacer/spec") ++ @embedFile("button/spec") ++ @embedFile("checkbox/spec") ++ @embedFile("radio-group/spec") ++ @embedFile("switch/spec") ++ @embedFile("select/spec") ++ @embedFile("input/spec") ++ @embedFile("textarea/spec") ++ @embedFile("number-input/spec") ++ @embedFile("slider/spec") ++ @embedFile("form/spec") ++ @embedFile("field/spec") ++ @embedFile("link/spec") ++ @embedFile("tabs/spec") ++ @embedFile("tab/spec") ++ @embedFile("empty/spec") ++ @embedFile("separator/spec") ++ @embedFile("badge/spec") ++ @embedFile("kbd/spec") ++ @embedFile("progress/spec") ++ @embedFile("spinner/spec") ++ @embedFile("alert/spec") ++ @embedFile("dialog/spec") ++ @embedFile("grid/spec") ++ @embedFile("toolbar/spec") ++ @embedFile("button-group/spec") ++ @embedFile("toggle/spec") ++ @embedFile("status-bar/spec") ++ @embedFile("title-bar/spec") ++ @embedFile("table/spec") ++ @embedFile("list/spec") ++ @embedFile("tree/spec") ++ @embedFile("canvas/spec") ++ @embedFile("chart/spec") ++ @embedFile("description-list/spec") ++ @embedFile("sidebar/spec") ++ @embedFile("sidebar-group/spec") ++ @embedFile("sidebar-item/spec") ++ @embedFile("group-box/spec") ++ @embedFile("avatar/spec") ++ @embedFile("editor/spec") ++ @embedFile("markdown/spec") ++ @embedFile("sheet/spec") ++ @embedFile("alert-dialog/spec") ++ @embedFile("resizable/spec") ++ @embedFile("panel/spec") ++ @embedFile("dock/spec") ++ @embedFile("dock-panel/spec") ++ @embedFile("message-list/spec") ++ @embedFile("collapsible/spec") ++ @embedFile("accordion/spec") ++ @embedFile("accordion-item/spec") ++ @embedFile("breadcrumb/spec") ++ @embedFile("dropdown-button/spec") ++ @embedFile("tag/spec");
 
 pub const style_words = @embedFile("style-words");
 pub const theme_tokens = @embedFile("theme-tokens");

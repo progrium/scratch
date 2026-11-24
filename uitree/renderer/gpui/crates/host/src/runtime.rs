@@ -563,12 +563,15 @@ pub fn run(opts: Options) -> i32 {
             return;
         }
         let argv: Vec<&str> = opts.argv.iter().map(String::as_str).collect();
+        let dirs: Vec<&str> = opts.dirs.iter().map(String::as_str).collect();
+        let env: Vec<&str> = opts.env.iter().map(String::as_str).collect();
         let r = inner.core.borrow_mut().run_machine(&uitcore::MachineArgs {
             prog: argv[0],
             argv: &argv,
             root: opts.root.as_deref().unwrap_or(""),
             cwd: "",
-            env: &[],
+            dirs: &dirs,
+            env: &env,
         });
         if let Err(e) = r {
             eprintln!("uitree: {}: {e}", argv[0]);

@@ -1,0 +1,33 @@
+-- window main Mixer
+div root  : v-flex size-full p=24 gap=18 bg=background
+  div top  : h-flex gap=20 items-center
+    div swatch  : size=132 rounded-xl border-1 border-color=border shadow-md bg=#3b82f6
+    div info  : v-flex gap=6 flex-1
+      text hex  text=#3b82f6  : text-3xl font-bold font-family=monospace
+      text rgb  text='rgb(59, 130, 246)'  : text-sm text-color=muted-foreground font-family=monospace
+      text name  text='close to blue'  : text-sm text-color=muted-foreground
+  div sliders  tag=rgb  : v-flex gap=10
+    div r  : h-flex gap=12 items-center
+      text l  text=R  : w=16 font-semibold text-color=danger
+      slider s  max=255  value=59  : flex-1
+      text v  text=59  : w=36 text-right font-family=monospace
+    div g  : h-flex gap=12 items-center
+      text l  text=G  : w=16 font-semibold text-color=success
+      slider s  max=255  value=130  : flex-1
+      text v  text=130  : w=36 text-right font-family=monospace
+    div b  : h-flex gap=12 items-center
+      text l  text=B  : w=16 font-semibold text-color=info
+      slider s  max=255  value=246  : flex-1
+      text v  text=246  : w=36 text-right font-family=monospace
+  div row  : h-flex gap=8 items-center
+    input hex  placeholder=#rrggbb  tag=hex  : w=150 font-family=monospace
+    button save  outline  sm  label='Save swatch'  icon=plus  tag=save
+    button random  ghost  sm  label=Random  icon=shuffle  tag=random
+  text ph  text=Palette  : text-sm font-semibold
+  div palette  : h-flex flex-wrap gap=8
+    text none  text='Saved colors appear here.'  : text-sm text-color=muted-foreground
+-- menu/bar
+-- keys
+cmd-s save
+cmd-r random
+-- stderr

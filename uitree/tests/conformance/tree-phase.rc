@@ -8,7 +8,7 @@
 # The first argument is the directory to run in; the rest is the command
 # (an .rc file name alone means rc NAME). The example runs in the
 # background; once its windows' trees stop changing (two reads half a
-# second apart agree, for up to 15 seconds) this prints each window's title
+# second apart agree, for up to 30 seconds) this prints each window's title
 # and tree, its overlays, the menus, the key bindings and anything the
 # example wrote to standard error, which in the tree-building phase means a
 # write the host refused. Then it quits the app, as a user would.
@@ -18,6 +18,9 @@ dir=$1
 shift
 cmd=($*)
 if(~ $#cmd 1 && ~ $cmd *.rc) cmd=(rc $cmd)
+# linux CMD: a Linux client, run by the Alpine sh from the Linux tree
+# (h9 -d ALPINE:#L), where the Plan 9 namespace, and so $ui, is under /9.
+fn linux { ui=/9$ui '#L/bin/sh' -c $"* }
 
 fn snap {
 	for(win in `{ls -p $k/win}) {
@@ -37,14 +40,16 @@ fn snap {
 
 i=0
 stable=()
-while(~ $#stable 0 && ! ~ $i 30) {
+while(~ $#stable 0 && ! ~ $i 60) {
 	sleep 0.5
 	snap >/tmp/snap.new >[2]/dev/null
-	if(test -s /tmp/snap.new && cmp -s /tmp/snap.new /tmp/snap.old) stable=1
+	# Stable is two reads that agree and hold more than the empty root a
+	# window starts with, since a client can take seconds to start.
+	if(test -s /tmp/snap.new && cmp -s /tmp/snap.new /tmp/snap.old && grep -s -v '^(-- window .*|div root)$' /tmp/snap.new) stable=1
 	cp /tmp/snap.new /tmp/snap.old
 	i=`{echo $i | awk '{ print $1 + 1 }'}
 }
-if(~ $#stable 0) echo '-- not stable after 15 seconds'
+if(~ $#stable 0) echo '-- not stable after 30 seconds'
 cat /tmp/snap.new
 echo '-- menu/bar'
 cat $k/menu/bar

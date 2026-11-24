@@ -33,9 +33,20 @@ cd ../../renderer/gpui
 cargo test && cargo test -p host    # GPUI test platform, no display
 cargo build --release -p uitree     # build.rs runs zig build for the core
 tools/sign target/release/uitree    # macOS: h9.entitlements; elsewhere a no-op
-tools/shoot-examples                # every 0.2 example under Xvfb, screenshots
+tools/shoot-examples                # every example under Xvfb, screenshots
 cd ../tui && zig build test         # the terminal renderer
+tools/shoot-examples                # every example in xterm under Xvfb
 ```
+
+The examples are uitreefs's, ported: 14 rc apps and clients in awk, C,
+COBOL, Forth, Go, jq, Lua, JavaScript (Node), PostScript (Ghostscript),
+Python, Ruby, Scheme, sed and sh, listed in
+[tests/conformance/examples/list](tests/conformance/examples/list), which
+`run-examples` and both renderers' `shoot-examples` read. The Plan 9 ones
+run on a 9front root; the Linux ones (jq onward in the list) run with
+`-d $LINUXROOT:#L`, an Alpine tree with the interpreters that
+[tools/linuxroot](tools/linuxroot) (and [tools/gforth](tools/gforth) for
+Forth) builds, and are skipped without it.
 
 `H9ROOT` is a 9front root with `rc` in it: in `third_party/hyper9`,
 `scripts/fetch.sh isoamd64`, then

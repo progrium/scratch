@@ -1,0 +1,49 @@
+-- window main Expenses
+div root  : h-flex items-stretch size-full bg=background
+  div side  : v-flex w=300 p=20 gap=16 border-r-1 border-color=border
+    text h  text='Add an expense'  : text-lg font-semibold
+    form f  labels=top  dir=col  tag=add
+      field what  label=What
+        input in  placeholder='Coffee beans'
+      field amount  label=Amount
+        input in  placeholder=12.50
+      field cat  label=Category
+        select in  value=Food  items=<<END
+Food Food
+Transport Transport
+Home Home
+Fun Fun
+Health Health
+Other Other
+END
+      field go
+        button add  primary  label=Add  icon=plus  : w-full
+    separator s
+    description-list totals  bordered  columns=1  items=<<END
+Total 0.00
+Entries 0
+Biggest -
+END
+  div main  : v-flex flex-1 p=20 gap=16
+    div head  : h-flex items-center gap=8
+      text h  text=Spending  : text-lg font-semibold flex-1
+      button del  disabled  ghost  sm  label='Delete row'  icon=trash  tag=del
+    chart bycat  kind=bar  x=category  y=amount  data=<<END  : h=200
+category amount
+Food 0.00
+Transport 0.00
+Home 0.00
+Fun 0.00
+Health 0.00
+Other 0.00
+END
+    table rows  stripe  sortable  sorted  tag=pick  columns=<<END  : flex-1
+what What 260 sort
+cat Category 120 sort
+day Date 120 sort
+amount Amount 100 sort align=right
+END
+-- menu/bar
+-- keys
+cmd-backspace del
+-- stderr

@@ -1,0 +1,18 @@
+-- window main Tic-tac-toe
+div root  : v-flex items-center p=24 gap=16 bg=background
+  text status  text='You''re X. Your move.'  : text-lg font-semibold text-center w-full
+  grid board  cols=3  gap=8  : w=292
+    text c0  tag=c0  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c1  tag=c1  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c2  tag=c2  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c3  tag=c3  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c4  tag=c4  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c5  tag=c5  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c6  tag=c6  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c7  tag=c7  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+    text c8  tag=c8  on=click  : h=92 flex items-center justify-center rounded-lg border-1 border-color=border text-size=52 font-bold cursor-pointer hover:bg=accent
+  text score  text='You 0   jq 0   draws 0'  : text-sm text-center text-color=muted-foreground
+  button again  ghost  label='New game'  tag=again
+-- menu/bar
+-- keys
+-- stderr

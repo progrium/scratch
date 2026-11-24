@@ -1,14 +1,20 @@
 #!/bin/sh
-# run-examples: run each ported example client's tree-building phase on
+# run-examples: run each example client's tree-building phase on
 # uitree-headless and compare what it built with examples/NAME.out, and
 # the drive scripts that take an example further (files-drop.rc).
 #
 #	tests/conformance/run-examples [-u] [NAME...]
 #
-# With -u, writes examples/NAME.out instead: review that diff by hand,
-# since a golden recorded from a buggy host is worse than none. The host's
-# `uitree: ` error lines are appended to the output, so a write the host
-# refused shows up as a diff. UITREE_HEADLESS as for run.
+# The examples are examples/list (one line each: directory, view, flags,
+# command). With -u, writes examples/NAME.out instead: review that diff by
+# hand, since a golden recorded from a buggy host is worse than none. The
+# host's `uitree: ` error lines are appended to the output, so a write the
+# host refused shows up as a diff. Times of day (HH:MM) are masked. An
+# example flagged nogolden has live data: only its errors are checked.
+#
+# Linux examples need $LINUXROOT, the Alpine tree tools/linuxroot (and
+# tools/gforth) make, and are skipped without it; the Go ones need go on
+# the host. UITREE_HEADLESS as for run.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$here"
@@ -16,40 +22,56 @@ update=0
 while getopts u o; do
 	case $o in
 	u) update=1 ;;
-	*) sed -n '5p' "$0" >&2; exit 2 ;;
+	*) sed -n '7p' "$0" >&2; exit 2 ;;
 	esac
 done
 shift $((OPTIND - 1))
 host=${UITREE_HEADLESS:-../../core/zig-out/bin/uitree-headless}
+linux=${LINUXROOT:-}
 
-# name | directory | command
+ARGS="$*"
+
+# The examples, then the drive scripts (a directory of -).
 list() {
-	cat <<'END'
-hello|examples/rc|hello.rc
-counter|examples/rc|counter.rc
-confirm|examples/rc|confirm.rc Delete?
-signin|examples/rc|signin.rc
-settings|examples/rc|settings.rc
-csvview|examples/awk|awk -f csvview.awk planets.csv
-files-drop|-|files-drop.rc
-END
+	grep -v '^#' examples/list | grep .
+	echo 'files-drop|-|-|plan9||files-drop.rc'
 }
 
 mkdir -p out/examples
 fail=0
 list | {
-while IFS='|' read -r name dir cmd; do
-	[ $# -gt 0 ] && ! echo " $* " | grep -q " $name " && continue
+while IFS='|' read -r name dir title view flags cmd; do
+	[ -n "$ARGS" ] && ! echo " $ARGS " | grep -q " $name " && continue
 	out=out/examples/$name.out
-	# A directory of - is a script that drives an example past its
-	# tree-building phase (files-drop.rc: a drop from the desktop).
+	case ",$flags," in *,go,*)
+		if ! command -v go >/dev/null; then echo "skip $name (no go)"; continue; fi
+		(cd "examples/$dir" && GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o "$(basename "$dir")" .) || { echo "FAIL $name (go build)"; fail=1; continue; }
+	esac
+	# Programs built in h9 are built afresh each run.
+	rm -f examples/c/life examples/c/*.6 examples/cobol/payroll
 	if [ "$dir" = - ]; then
-		"$host" rc "$cmd" >"$out" 2>"$out.stderr"
+		# A script that drives an example past its tree-building phase
+		# (files-drop.rc: a drop from the desktop).
+		"$host" rc "$cmd" >"$out.raw" 2>"$out.stderr"
+	elif [ "$view" = linux ]; then
+		if [ -z "$linux" ]; then echo "skip $name (no LINUXROOT)"; continue; fi
+		# The driver is rc in the Plan 9 view, where $ui is /mnt/ui;
+		# tree-phase's linux runs the command with the Alpine sh.
+		"$host" -d "$linux:#L" -e ui=/mnt/ui /9/bin/rc tree-phase.rc "examples/$dir" linux "$cmd" >"$out.raw" 2>"$out.stderr"
 	else
-		# shellcheck disable=SC2086
-		"$host" rc tree-phase.rc "$dir" $cmd >"$out" 2>"$out.stderr"
+		eval "set -- $cmd"
+		"$host" rc tree-phase.rc "examples/$dir" "$@" >"$out.raw" 2>"$out.stderr"
 	fi
+	sed 's/\([^0-9]\)[0-9][0-9]:[0-9][0-9]\([^0-9]\|$\)/\1HH:MM\2/g' "$out.raw" >"$out"
 	grep '^uitree: ' "$out.stderr" >>"$out"
+	case ",$flags," in *,nogolden,*)
+		if sed -n '/^-- stderr$/,$p' "$out" | sed 1d | grep -q . || ! grep -q '^-- window' "$out"; then
+			echo "FAIL $name"; sed -n '/^-- stderr$/,$p' "$out" | sed 's/^/	/'; fail=1
+		else
+			echo "pass $name (live data: errors only)"
+		fi
+		continue
+	esac
 	golden=examples/$name.out
 	if [ $update -eq 1 ]; then
 		cp "$out" "$golden"; echo "updated $name"

@@ -1,0 +1,34 @@
+-- window main Derivatives
+div root  : h-flex items-stretch size-full bg=background
+  div side  : v-flex w=210 p=12 gap=8 border-r-1 border-color=border bg=muted
+    text h  text=Examples  : text-sm font-semibold px=4
+    list ex  selectable  tag=ex  items=<<END  value=prod  : flex-1
+prod 'x·sin(x)'
+cubic 'Cubic'
+bell 'Bell curve'
+chain 'sin(x²)'
+sinc 'sin(x)/x'
+log 'x·log(x)'
+tan 'tan(x)'
+xx 'xˣ'
+hyp '√(1 + x²)'
+END
+    text help  text='+ − * / ^, sin cos tan exp log sqrt, x, pi, e'  : text-xs text-color=muted-foreground px=4
+  div page  : v-flex flex-1 p=20 gap=12
+    form in  tag=expr
+      field e  label='f(x), as a Scheme expression'
+        input f  value='(* x (sin x))'  : font-family=monospace
+    div res  : v-flex gap=4
+      div f  : h-flex gap=12 items-center
+        text k  text=f(x)  : w=60 text-sm font-semibold text-color=info
+        text v  text=x·sin(x)  : text-lg
+      div d  : h-flex gap=12 items-center
+        text k  text=f′(x)  : w=60 text-sm font-semibold text-color=danger
+        text v  text='sin(x) + x·cos(x)'  : text-lg
+      div s  : h-flex gap=12 items-center
+        text k  text=Scheme  : w=60 text-xs text-color=muted-foreground
+        text v  text='(+ (sin x) (* x (cos x)))'  : text-xs font-family=monospace text-color=muted-foreground truncate
+    canvas c  tag=plot  on=move  : w=680 h=380 rounded-lg
+-- menu/bar
+-- keys
+-- stderr

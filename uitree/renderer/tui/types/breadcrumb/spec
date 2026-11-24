@@ -1,0 +1,5 @@
+type    breadcrumb  tier=component  profile=nav  since=1.0
+prop    items  data  file
+event   click  kind=action
+child   none
+file    items  format=items

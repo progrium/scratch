@@ -1,0 +1,7 @@
+</$objtype/mkfile
+
+TARG=life
+OFILES=life.$O
+BIN=.
+
+</sys/src/cmd/mkone

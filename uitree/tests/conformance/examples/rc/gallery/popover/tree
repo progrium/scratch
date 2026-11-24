@@ -1,0 +1,5 @@
+scroll story  : flex-1 overflow-y-scroll p=24
+  div v  : h-flex gap=8
+    button p  label='Click me'
+    button h  label='Hover card'  outline
+    button t  label='With tooltip'  ghost

@@ -56,10 +56,10 @@ app's `theme/name Catppuccin` picks the same colors here as on GPUI.
 | `core` (all) | `div` `text` `styled-text` `img` `svg` `icon` `scroll` `spacer` |
 | `form` (all) | `button` `checkbox` `radio-group` `switch` `select` `input` `textarea` `number-input` `slider` `form` `field` |
 | extras the examples need | `link` `tabs` `tab` `empty` `separator` `badge` `kbd` `progress` `spinner` `alert` `dialog` |
+| what the ported uitreefs examples use | `grid` `toolbar` `button-group` `toggle` `status-bar` `title-bar` `table` `list` `tree` `canvas` `chart` `description-list` `sidebar` `sidebar-group` `sidebar-item` `group-box` `avatar` `editor` `markdown` `sheet` `alert-dialog` `resizable` `panel` `dock` `dock-panel` `message-list` `collapsible` `accordion` `accordion-item` `breadcrumb` `dropdown-button` `tag` |
 
-Every other type is left out, so the core refuses `new` for it with
-`unknown type`, and an app degrades with `alt=` as components.md's
-Degrading section says.
+Any other type the core accepts is drawn as a plain container of its
+children.
 
 ## How it draws
 
@@ -112,6 +112,21 @@ families and text sizes are accepted and not drawn.
 | `empty`, `alert`, `badge`, `kbd`, `separator`, `spinner`, `icon` | glyphs: `▭ Nothing to do`, a bordered box, ` 3 `, ` ⌘K `, `───`, `⠋`, `×` |
 | `img`, `svg` | `[image name]`, dim |
 | any node's `tooltip` file | one row in popover colors above the node (below it on the top row), 500 ms after the pointer rests on it, hidden when the pointer leaves or presses; nothing is sent to the client. The `tooltip` overlay type isn't registered (no `overlay` profile) |
+| `grid` | rows of `cols` cells sharing the width, `gap` between |
+| `toolbar`, `button-group`, `breadcrumb`, `title-bar`, `status-bar` | a row; a button group's selected buttons in the primary colors, a click sets `value` and sends `change`; crumbs muted with `›`, the last bold, `click id=`; a status bar's `left`, `center` and `right` slots spread on a muted strip |
+| `toggle`, `dropdown-button`, `tag` | a button-like row, bold on an accent fill when on; a label with `▾` (its menu isn't drawn yet); ` label ` on its variant color |
+| `table` | a bold header on a muted strip (`↑`/`↓` on the `sort` column; a click sends `sort col= dir=` when `sortable`), a row per `rows` line in `columns` widths, `stripe`, the selected row on `list-active`; a click sends `select row=` |
+| `list` | a row per `items` line (`# ` headers, icons), or the `row` template stamped with each item's `{field}` values (`fields` names them); with `selectable`, a click mirrors `value` and sends `select value=` |
+| `tree` | `tree-items` indented two cells a level, `▸`/`▾` on parents; a click on a parent mirrors `expanded` and sends `expand id= value=`; `selectable` selects as a list does |
+| `canvas` | `ops` rasterized at two pixels a cell (`▀` with the top pixel in the glyph color and the bottom one behind it, 8×8 points a pixel): rects, circles, lines, SVG paths, `hover:` attributes; text ops printed in cells. Pointer events per `on`: `mouse-down`, `mouse-up`, `click`, `move`, `drag` with `item=` (the topmost op hit) and canvas-local `x=` `y=` |
+| `chart` | `line`, `area`, `bar` and `pie` from `data` (TSV, `x` and `y` columns), in the `chart-1`… colors, with the x labels that fit under it |
+| `description-list` | `columns` items a row, the label muted beside (or above, `labels=top`) the value |
+| `sidebar`, `sidebar-group`, `sidebar-item` | a bordered column 28 cells wide on the `sidebar` color: `header`, groups with muted labels, `footer` at the bottom; items with icon, label and badge, the `active` one on an accent fill; a click sends `click` |
+| `resizable`, `panel`, `dock`, `dock-panel` | panels side by side at their `size`, a line between (not draggable); a dock's `left`, `center`, `bottom` and `right` zones as bordered boxes with a tab per panel, a click on one shows it and sends `activate` |
+| `message-list` | each message as a muted block (`user`'s on the right), role and time over the body, stuck to the bottom until scrolled up |
+| `collapsible`, `accordion` | the trigger (or `▸ title`) and, when open, the content; a click toggles `open` or the accordion's `value` and sends `change` |
+| `markdown`, `editor`, `avatar`, `group-box` | plain text with heading marks and emphasis dropped; a multi-line field as `textarea` (no highlighting, `change` without a value since `value` is mirrored); initials on a fill; a bordered box with its title |
+| `sheet`, `alert-dialog` | overlays: a sheet fills its `side` of the window, `size` points across; an alert dialog is centered with its `cancel` and `confirm` buttons. Escape sends `close` to an open sheet or dialog and `cancel` to an alert, Enter its `confirm` |
 | `dialog` | from `uit_overlays`: centered over a scrim, opaque, bordered, title, description, children, `footer` last; while one is open, focus and Tab stay inside it, and focus goes back when it closes |
 
 **Input.** Tab and Shift-Tab move focus between controls in tree order.
@@ -129,7 +144,16 @@ Each drawn node's rect goes to `uit_bounds` in window points, for its
 
 ## Examples
 
-[examples/](examples/) has counter, hello, signin and todo in the 0.2
+All 30 of the shared examples in
+[tests/conformance/examples/list](../../tests/conformance/examples/list)
+(the uitreefs examples, ported) run here too.
+[tools/shoot-examples](tools/shoot-examples) runs each in xterm under
+Xvfb and screenshots it once its tree is built, as GPUI's does; the shots
+are in [examples/screenshots/ci/](examples/screenshots/ci/). The terminal
+is 120×40, so the larger windows (life's 576-point board) are cut off at
+the bottom.
+
+[examples/](examples/) also has counter, hello, signin and todo in the 0.2
 spelling. Each was run under h9 on the 9front 11952 amd64 root in xterm,
 driven by [tools/shoot.sh](tools/shoot.sh) (Xvfb, xterm and tmux, which
 sends the keys and SGR mouse reports), which also records the
@@ -148,7 +172,10 @@ always shown: `group-hover` is a uitreefs extra that 0.2 doesn't have.
 ## Not done yet
 
 Menus (`uit_menu_bar` is ENOTSUP; a terminal menu bar would be a row of
-labels with a dropdown), several windows (only `main` is drawn),
+labels with a dropdown, and `dropdown-button` and `context-menu` have
+none either), popovers anchored to their node (they are centered),
+dragging a `resizable` divider or a dock panel, keyboard navigation in
+tables, lists and trees, canvas `pixels`, syntax highlighting, several windows (only `main` is drawn),
 `styled-text` runs, drag and drop, the clipboard, mouse-wheel scrolling of
 inputs, soft wrapping in a textarea, and a spinner that spins (it needs a
 timer in the loop).

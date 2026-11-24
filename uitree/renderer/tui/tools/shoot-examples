@@ -1,0 +1,85 @@
+#!/bin/bash
+# shoot-examples: run every example in tests/conformance/examples/list
+# in the terminal renderer (xterm on Xvfb, through tmux) and screenshot
+# each once its tree is built, as renderer/gpui/tools/shoot-examples does
+# for GPUI.
+#
+#	tools/shoot-examples [OUTDIR] [NAME...]
+#
+# Needs Xvfb, xterm, tmux and ImageMagick, a built zig-out/bin/uitree-tui,
+# and $H9ROOT naming a 9front root (README.md); the Linux examples need
+# $LINUXROOT (../../tools/linuxroot) and are skipped without it, and the Go
+# ones need go. OUTDIR defaults to examples/screenshots/ci; each example's
+# log (the app's output and the host's) is NAME.log beside its shot.
+# SHOOT_WAIT is the seconds before the shot (default 8; Linux clients get
+# twice that); SHOOT_SIZE the terminal's COLSxROWS (default 120x40). Exit 1
+# if an example exits before it is shot, or its log has a refused write.
+set -u
+here=$(cd "$(dirname "$0")/.." && pwd)
+bin=$here/zig-out/bin/uitree-tui
+ex=$here/../../tests/conformance/examples
+out=${1:-$here/examples/screenshots/ci}
+[ $# -gt 0 ] && shift
+want="$*"
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+[ -x "$bin" ] || { echo "shoot-examples: no $bin (zig build)" >&2; exit 2; }
+: "${H9ROOT:?shoot-examples: set H9ROOT to a 9front root}"
+linux=${LINUXROOT:-}
+wait_secs=${SHOOT_WAIT:-8}
+size=${SHOOT_SIZE:-120x40}
+cols=${size%x*} rows=${size#*x}
+sock=uitree-tui-shoot-$$
+disp=:${DISPLAY_NUM:-78}
+T() { tmux -L "$sock" "$@"; }
+q() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+Xvfb "$disp" -screen 0 1600x1200x24 >/dev/null 2>&1 &
+xvfb=$!
+trap 'T kill-server 2>/dev/null; kill $xvfb 2>/dev/null' EXIT INT TERM
+sleep 1
+
+fail=0
+while IFS='|' read -r name dir title view flags cmd; do
+	if [ -n "$want" ] && ! echo " $want " | grep -q " $name "; then continue; fi
+	log=$out/$name.log
+	secs=$wait_secs
+	case ",$flags," in *,go,*)
+		command -v go >/dev/null || { echo "skip $name (no go)"; continue; }
+		(cd "$ex/$dir" && GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o "$(basename "$dir")" .) || { echo "FAIL $name (go build)"; fail=1; continue; }
+	esac
+	if [ "$view" = linux ]; then
+		[ -n "$linux" ] || { echo "skip $name (no LINUXROOT)"; continue; }
+		secs=$((wait_secs * 2))
+		run="$(q "$bin") --log $(q "$log") -t $(q "$title") -d $(q "$linux:#L") sh -c $(q "$cmd")"
+	else
+		run="$(q "$bin") --log $(q "$log") -t $(q "$title") $cmd"
+	fi
+	rm -f "$log"
+	T new-session -d -s ui -x "$cols" -y "$rows" \
+		"cd $(q "$ex/$dir") && TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 $run; echo EXITED \$? >>$(q "$log"); sleep 600"
+	T set -t ui status off
+	LANG=C.UTF-8 LC_ALL=C.UTF-8 DISPLAY=$disp xterm -u8 -geometry "${cols}x${rows}+0+0" \
+		-fa 'DejaVu Sans Mono' -fs 11 -bg white -fg black -b 0 -bw 0 +sb \
+		-xrm 'XTerm*termName: xterm-direct' \
+		-e env LANG=C.UTF-8 tmux -L "$sock" -u attach -t ui >/dev/null 2>&1 &
+	xterm=$!
+	sleep "$secs"
+	DISPLAY=$disp import -window root "$out/$name.raw.png"
+	convert "$out/$name.raw.png" -bordercolor black -border 1 -trim +repage "$out/$name.png"
+	rm -f "$out/$name.raw.png"
+	T kill-server 2>/dev/null
+	kill $xterm 2>/dev/null; wait $xterm 2>/dev/null
+	if grep -q '^EXITED' "$log" 2>/dev/null; then
+		echo "FAIL $name: exited before the screenshot (see $log)"
+		tail -n 8 "$log" | sed 's/^/	/'
+		fail=1
+	elif grep -q '^uitree: ' "$log" 2>/dev/null; then
+		echo "FAIL $name: refused writes (see $log)"
+		grep '^uitree: ' "$log" | sort | uniq -c | sort -rn | head -8 | sed 's/^/	/'
+		fail=1
+	else
+		echo "shot $name $out/$name.png"
+	fi
+done < <(grep -v '^#' "$ex/list" | grep .)
+exit $fail

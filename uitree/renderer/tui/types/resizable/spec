@@ -1,0 +1,4 @@
+type    resizable  tier=component  profile=layout  since=1.0
+prop    dir  enum=row,col  default=row
+event   resize  kind=state
+child   panel

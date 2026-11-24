@@ -1,0 +1,7 @@
+# Built by run-examples and the shoot tools, in h9 or with GOOS=plan9.
+/go/greet/greet
+/go/clock/clock
+/c/life
+/c/*.6
+/cobol/payroll
+/c/6.out

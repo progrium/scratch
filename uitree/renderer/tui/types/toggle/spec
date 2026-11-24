@@ -1,0 +1,11 @@
+type    toggle  tier=component  since=1.0
+prop    label       text  file
+prop    icon        word
+prop    value       enum=on,off  default=off
+prop    disabled    bool
+prop    controlled  bool
+word    disabled controlled  kind=flag
+word    ghost outline  kind=variant
+word    xs sm md lg  kind=size
+event   change  kind=state
+child   none

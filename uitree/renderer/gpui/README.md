@@ -109,10 +109,15 @@ The gallery stories the tests load are copied, converted to 0.2, into
 
 ## Examples
 
-The examples W5 ported to 0.2 (`tests/conformance/examples/`) run in h9
-under Xvfb: hello, counter, confirm, signin and csvview (awk). Typing and
-Enter in hello, clicks and keys in counter, and the filter in csvview were
-driven with xdotool. Screenshots: [examples/screenshots/](examples/screenshots/).
+All 30 examples in
+[tests/conformance/examples/list](../../tests/conformance/examples/list)
+(uitreefs's examples, ported: rc apps and awk, C, COBOL, Forth, Go, jq,
+Lua, Node, PostScript, Python, Ruby, Scheme, sed and sh clients) run in h9
+under Xvfb. `tools/shoot-examples [OUTDIR] [NAME...]` screenshots each
+once its tree is built; the Linux clients need `$LINUXROOT`
+(`../../tools/linuxroot`) and run with `-d $LINUXROOT:#L`, which
+`uitree -d SRC[:DST]` and `-e NAME=VALUE` pass to h9 for any app.
+Screenshots: [examples/screenshots/](examples/screenshots/).
 
 ## What the core does not offer yet
 

@@ -1,0 +1,117 @@
+#!/bin/rc
+# calc.rc: a pocket calculator. Click the keys or type them.
+#
+#	uitree -t Calculator rc calc.rc
+#
+# Shows: the grid layout component with col-span, buttons with variant
+# words, key bindings whose action ids are the buttons' tags, so a click
+# and a keystroke arrive with the same key, $ev(2), and take one code path.
+# Arithmetic is done by awk (there is no hoc in the built-in root).
+# Needs: M3
+. ./lib.rc
+m=$ui/win/main
+
+echo 'set . title=Calculator size=300,420 resizable=off pos=center' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full p=12 gap=12 bg=background
+  div screen  : v-flex items-end justify-end h=96 px=12 rounded-lg bg=muted
+    text expr  : text-sm text-color=muted-foreground truncate
+    text out  text=0  : text-3xl font-semibold truncate
+  grid keys  cols=4  gap=8  : flex-1
+    button clear  label=AC  tag=clear  secondary lg
+    button neg  label=±  tag=neg  secondary lg
+    button pct  label=%  tag=pct  secondary lg
+    button div  label=÷  tag=div  primary lg
+    button k7  label=7  tag=7  lg
+    button k8  label=8  tag=8  lg
+    button k9  label=9  tag=9  lg
+    button mul  label=×  tag=mul  primary lg
+    button k4  label=4  tag=4  lg
+    button k5  label=5  tag=5  lg
+    button k6  label=6  tag=6  lg
+    button sub  label=−  tag=sub  primary lg
+    button k1  label=1  tag=1  lg
+    button k2  label=2  tag=2  lg
+    button k3  label=3  tag=3  lg
+    button add  label=+  tag=add  primary lg
+    button k0  label=0  tag=0  lg  : col-span=2
+    button dot  label=.  tag=dot  lg
+    button eq  label==  tag=eq  primary lg
+END
+
+# Each key's action id is the tag of the button it stands for.
+cat >$ui/keys <<'END'
+0  0
+1  1
+2  2
+3  3
+4  4
+5  5
+6  6
+7  7
+8  8
+9  9
+.  dot
++  add
+-  sub
+*  mul
+/  div
+%  pct
+enter      eq
+=          eq
+escape     clear
+backspace  back
+END
+
+x=''		# the expression, in awk syntax
+fn shown {
+	echo $x | sed 's/\*/×/g; s/\//÷/g; s/-/−/g'
+}
+fn eval {
+	awk 'BEGIN { v = '$x'; if(v == int(v)) printf "%d\n", v; else printf "%.10g\n", v }' >[2]/dev/null
+}
+
+fn press {
+	switch($1){
+	case [0-9]
+		x=$x^$1
+	case dot
+		x=$x^.
+	case add
+		x=$x^+
+	case sub
+		x=$x^-
+	case mul
+		x=$x^'*'
+	case div
+		x=$x^/
+	case back
+		x=`{echo $x | sed 's/.$//'}
+		if(~ $#x 0) x=''
+	case clear
+		x=''
+	case neg pct eq
+		v=`{eval}
+		if(~ $#v 0) { x=''; err=1 }
+		if not switch($1){
+		case neg
+			x=`{echo $v | awk '{ print -$1 }'}
+		case pct
+			x=`{echo $v | awk '{ print $1 / 100 }'}
+		case eq
+			echo 'set screen/expr text='''`{shown}' =''' >$m/ctl
+			x=$v
+		}
+	}
+	if(~ $#err 1) { out=Error; err=() }
+	if not if(~ $x '') out=0
+	if not out=`{shown}
+	echo 'set screen/out text='''$out'''' >$m/ctl
+}
+
+cat $ui/events | while(ev=`{read}){
+	switch($ev(1)){
+	case click action
+		press $ev(2)
+	}
+}

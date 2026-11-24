@@ -1,9 +1,9 @@
 # lib.rc: helpers shared by the rc examples.  Use: . ./lib.rc
 #
 # The examples use only the commands in h9's built-in root (rc, awk, sed,
-# cat, ls, read, sleep, date, ...), so they run with uitreefs --root builtin.
+# cat, ls, read, sleep, date, ...), so they run with h9's built-in root.
 
-# Where the tree is mounted. uitreefs sets $ui in the guest.
+# Where the tree is mounted. uitree sets $ui in the guest.
 if(~ $#ui 0) ui=/mnt/ui
 
 # The event loop reads one line per event:

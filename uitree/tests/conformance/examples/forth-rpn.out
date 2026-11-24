@@ -1,0 +1,42 @@
+-- window main RPN
+div root  : v-flex size-full p=16 gap=12 bg=background
+  div stack  : v-flex justify-end gap=2 px=14 py=10 h=228 rounded-lg bg=muted overflow-hidden
+    text empty  text='The stack is empty.'  : text-sm text-color=muted-foreground
+  div out  : h-flex gap=8 items-start min-h=24
+    text t  text='Type Forth below, or use the keys.'  : flex-1 text-sm text-color=muted-foreground font-family=monospace
+    text st  text='depth 0'  : text-xs text-color=muted-foreground
+  input line  placeholder='3 4 +   or   : sq dup * ;'  tag=line  : font-family=monospace
+  button-group base  value=dec  tag=base
+    button dec  label=DEC
+    button hex  label=HEX
+    button bin  label=BIN
+  grid pad  cols=4  gap=6
+    button kdup  secondary  label=dup  tag=k:dup
+    button kdrop  secondary  label=drop  tag=k:drop
+    button kswap  secondary  label=swap  tag=k:swap
+    button kover  secondary  label=over  tag=k:over
+    button d7  label=7  tag=d:7
+    button d8  label=8  tag=d:8
+    button d9  label=9  tag=d:9
+    button kdiv  primary  label=/  tag=k:/
+    button d4  label=4  tag=d:4
+    button d5  label=5  tag=d:5
+    button d6  label=6  tag=d:6
+    button kmul  primary  label=*  tag=k:*
+    button d1  label=1  tag=d:1
+    button d2  label=2  tag=d:2
+    button d3  label=3  tag=d:3
+    button ksub  primary  label=-  tag=k:-
+    button d0  label=0  tag=d:0
+    button kneg  secondary  label=negate  tag=k:negate
+    button kmod  secondary  label=mod  tag=k:mod
+    button kadd  primary  label=+  tag=k:+
+    button kenter  primary  label=Enter  tag=enter  : col-span=2
+    button kback  outline  label=⌫  tag=back
+    button kclear  outline  label=clear  tag=k:clearstack
+  text wl  text='Your words'  : text-sm font-semibold
+  div words  : h-flex flex-wrap gap=6
+    text none  text='Define one with  : name ... ;  and it becomes a key.'  : text-sm text-color=muted-foreground
+-- menu/bar
+-- keys
+-- stderr

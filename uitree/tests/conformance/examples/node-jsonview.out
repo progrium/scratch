@@ -1,0 +1,101 @@
+-- window main sample.json — JSON
+div root  : v-flex size-full bg=background
+  div top  : h-flex items-center gap=8 px=12 py=8 border-b-1 border-color=border
+    icon i  name=braces  : size=18 text-color=primary
+    text name  text=sample.json  : font-semibold flex-1
+    input q  cleanable  placeholder='Filter keys and values'  tag=filter  : w=300
+  resizable split  : flex-1
+    panel left  size=420  min=260
+      tree t  selectable  tag=pick  items=<<END  expanded='n0 n1 n2 n3 n4 n5 n18 n25 n72 n77 n78'  : size-full p=4
+n0 - 'sample.json: {10}' icon=folder
+n1 n0 'name: "uitreefs"' icon=type
+n2 n0 'version: "0.2.0"' icon=type
+n3 n0 'description: "GPUI Kit as a 9P file tree"' icon=type
+n4 n0 'mount: "/mnt/ui"' icon=type
+n5 n0 'protocol: {4}' icon=folder
+n6 n5 'event: [4]' icon=list
+n7 n6 '[0]: "name"' icon=type
+n8 n6 '[1]: "key"' icon=type
+n9 n6 '[2]: "path"' icon=type
+n10 n6 '[3]: "attrs"' icon=type
+n11 n5 'ctl: [4]' icon=list
+n12 n11 '[0]: "set"' icon=type
+n13 n11 '[1]: "new"' icon=type
+n14 n11 '[2]: "delete"' icon=type
+n15 n11 '[3]: "tree"' icon=type
+n16 n5 'here_values: true' icon=toggle-left
+n17 n5 'quoting: "Plan 9 tokenize"' icon=type
+n18 n0 'roots: {6}' icon=folder
+n19 n18 'win: "windows, each its own root node"' icon=type
+n20 n18 'keys: "key bindings"' icon=type
+n21 n18 'menu: "the app menu bar"' icon=type
+n22 n18 'clip: "the clipboard"' icon=type
+n23 n18 'drag: "drag payloads"' icon=type
+n24 n18 'asset: "icons, images and fonts"' icon=type
+n25 n0 'clients: [12]' icon=list
+n26 n25 '[0]: {3}' icon=folder
+n27 n26 'lang: "rc"' icon=type
+n28 n26 'examples: 15' icon=hash
+n29 n26 'needs: null' icon=circle-off
+n30 n25 '[1]: {3}' icon=folder
+n31 n30 'lang: "Go"' icon=type
+n32 n30 'examples: 2' icon=hash
+n33 n30 'goos: "plan9"' icon=type
+n34 n25 '[2]: {2}' icon=folder
+n35 n34 'lang: "C"' icon=type
+n36 n34 'examples: 1' icon=hash
+n37 n25 '[3]: {2}' icon=folder
+n38 n37 'lang: "awk"' icon=type
+n39 n37 'examples: 1' icon=hash
+n40 n25 '[4]: {3}' icon=folder
+n41 n40 'lang: "sed"' icon=type
+n42 n40 'examples: 1' icon=hash
+n43 n40 'note: "counts in Roman numerals"' icon=type
+n44 n25 '[5]: {3}' icon=folder
+n45 n44 'lang: "PostScript"' icon=type
+n46 n44 'examples: 1' icon=hash
+n47 n44 'linux: true' icon=toggle-left
+n48 n25 '[6]: {3}' icon=folder
+n49 n48 'lang: "COBOL"' icon=type
+n50 n48 'examples: 1' icon=hash
+n51 n48 'linux: true' icon=toggle-left
+n52 n25 '[7]: {3}' icon=folder
+n53 n52 'lang: "jq"' icon=type
+n54 n52 'examples: 1' icon=hash
+n55 n52 'linux: true' icon=toggle-left
+n56 n25 '[8]: {3}' icon=folder
+n57 n56 'lang: "Lua"' icon=type
+n58 n56 'examples: 1' icon=hash
+n59 n56 'linux: true' icon=toggle-left
+n60 n25 '[9]: {3}' icon=folder
+n61 n60 'lang: "Node"' icon=type
+n62 n60 'examples: 1' icon=hash
+n63 n60 'linux: true' icon=toggle-left
+n64 n25 '[10]: {3}' icon=folder
+n65 n64 'lang: "Python"' icon=type
+n66 n64 'examples: 2' icon=hash
+n67 n64 'linux: true' icon=toggle-left
+n68 n25 '[11]: {3}' icon=folder
+n69 n68 'lang: "Ruby"' icon=type
+n70 n68 'examples: 1' icon=hash
+n71 n68 'linux: true' icon=toggle-left
+n72 n0 'limits: {4}' icon=folder
+n73 n72 'ctl_write: 65536' icon=hash
+n74 n72 'queued_actions: 4096' icon=hash
+n75 n72 'request_timeout_s: 5' icon=hash
+n76 n72 'node_depth: 64' icon=hash
+n77 n0 'open_questions: 11' icon=hash
+n78 n0 'it''s: "quoted with ''''"' icon=type
+END
+    panel right
+      div v  : v-flex size-full p=16 gap=12
+        text path  text='Pick a value'  : font-family=monospace text-sm font-semibold
+        description-list facts  bordered  columns=1
+        editor val  readonly  soft-wrap  language=json  : flex-1
+  status-bar st
+    text left  text='79 values'  : text-xs text-color=muted-foreground
+-- menu/bar
+-- keys
+cmd-f find
+escape clear
+-- stderr

@@ -4,14 +4,17 @@
 #
 #	tools/shoot-examples [OUTDIR] [NAME...]
 #
-# The examples are the ones ported to 0.2 in tests/conformance/examples
-# (run-examples checks what they build; this checks they draw). Needs a
-# release build (cargo build --release -p uitree), Xvfb, ImageMagick's
-# import, and $H9ROOT naming a 9front root (README.md). OUTDIR defaults
-# to examples/screenshots/ci. GPUI needs Vulkan: on a machine with no GPU
+# The examples are tests/conformance/examples/list (run-examples checks
+# what they build; this checks they draw). Needs a release build (cargo
+# build --release -p uitree), Xvfb, ImageMagick's import, and $H9ROOT
+# naming a 9front root (README.md); the Linux examples need $LINUXROOT,
+# the Alpine tree ../../tools/linuxroot makes, and are skipped without
+# it, and the Go ones need go. OUTDIR defaults to
+# examples/screenshots/ci. GPUI needs Vulkan: on a machine with no GPU
 # install Mesa's lavapipe (mesa-vulkan-drivers) or point VK_ICD_FILENAMES
-# at its lvp_icd.json. Exit 1 if an example exits before it is shot
-# or a screenshot is blank.
+# at its lvp_icd.json. SHOOT_WAIT is the seconds to wait before the shot
+# (default 8; Linux clients get twice that). Exit 1 if an example exits
+# before it is shot or a screenshot is blank.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 bin=$here/target/release/uitree
@@ -22,18 +25,11 @@ mkdir -p "$out"
 out=$(cd "$out" && pwd)
 [ -x "$bin" ] || { echo "shoot-examples: no $bin (cargo build --release -p uitree)" >&2; exit 2; }
 : "${H9ROOT:?shoot-examples: set H9ROOT to a 9front root}"
+linux=${LINUXROOT:-}
 wait_secs=${SHOOT_WAIT:-8}
 
-# name | directory | title | command
-list() {
-	cat <<END
-hello|$ex/rc|Hello|rc hello.rc
-counter|$ex/rc|Counter|rc counter.rc
-confirm|$ex/rc|Confirm|rc confirm.rc Delete?
-signin|$ex/rc|Sign in|rc signin.rc
-csvview|$ex/awk|planets.csv|awk -f csvview.awk planets.csv
-END
-}
+list() { grep -v '^#' "$ex/list" | grep .; }
+want="$*"
 
 disp=:${DISPLAY_NUM:-91}
 Xvfb "$disp" -screen 0 1280x800x24 >/dev/null 2>&1 &
@@ -43,13 +39,24 @@ sleep 1
 
 fail=0
 list | {
-while IFS='|' read -r name dir title cmd; do
-	if [ $# -gt 0 ] && ! echo " $* " | grep -q " $name "; then continue; fi
+while IFS='|' read -r name dir title view flags cmd; do
+	if [ -n "$want" ] && ! echo " $want " | grep -q " $name "; then continue; fi
 	log=$out/$name.log
-	# shellcheck disable=SC2086
-	(cd "$dir" && DISPLAY=$disp exec "$bin" -k -t "$title" $cmd) >"$log" 2>&1 &
+	secs=$wait_secs
+	case ",$flags," in *,go,*)
+		command -v go >/dev/null || { echo "skip $name (no go)"; continue; }
+		(cd "$ex/$dir" && GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o "$(basename "$dir")" .) || { echo "FAIL $name (go build)"; fail=1; continue; }
+	esac
+	if [ "$view" = linux ]; then
+		[ -n "$linux" ] || { echo "skip $name (no LINUXROOT)"; continue; }
+		secs=$((wait_secs * 2))
+		(cd "$ex/$dir" && DISPLAY=$disp exec "$bin" -k -t "$title" -d "$linux:#L" sh -c "$cmd") >"$log" 2>&1 &
+	else
+		eval "set -- $cmd"
+		(cd "$ex/$dir" && DISPLAY=$disp exec "$bin" -k -t "$title" "$@") >"$log" 2>&1 &
+	fi
 	pid=$!
-	sleep "$wait_secs"
+	sleep "$secs"
 	if ! kill -0 $pid 2>/dev/null; then
 		wait $pid; st=$?
 		echo "FAIL $name: exited ($st) before the screenshot (see $log)"

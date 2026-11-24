@@ -6,7 +6,11 @@
 set -e
 TYPES="div text styled-text img svg icon scroll spacer
 button checkbox radio-group switch select input textarea number-input slider form field
-link tabs tab empty separator badge kbd progress spinner alert dialog"
+link tabs tab empty separator badge kbd progress spinner alert dialog
+grid toolbar button-group toggle status-bar title-bar table list tree canvas chart
+description-list sidebar sidebar-group sidebar-item group-box avatar editor markdown
+sheet alert-dialog resizable panel dock dock-panel message-list collapsible accordion
+accordion-item breadcrumb dropdown-button tag"
 src=../../../core/types
 for t in $TYPES; do mkdir -p "$t"; cp "$src/$t/spec" "$t/spec"; done
 cp "$src/style-words" "$src/theme-tokens" "$src/themes" .

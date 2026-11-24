@@ -18,6 +18,8 @@ const gpa = std.heap.c_allocator;
 
 /// Where the machine mounts the tree.
 pub const mount_point = "/mnt/ui";
+/// Where $ui is in the Linux view, when the app has one (a mount at #L).
+pub const linux_mount_point = "/9" ++ mount_point;
 
 pub const OnExit = *const fn (ctx: *anyopaque, status: []const u8) void;
 
@@ -81,10 +83,15 @@ pub const Runner = struct {
         } else {
             try mounts.append(ar, .{ .kind = .dir, .src = try r.real(root) });
         }
+        // A Linux view (a mount at #L) puts the Plan 9 namespace under
+        // /9, so $ui is /9/mnt/ui then, as uitreefs did, unless the
+        // caller's env says otherwise.
+        var linux = false;
         for (try list(ar, args.dirs, args.n_dirs)) |d| {
             var why: []const u8 = "";
             var mt = h9.Mount.parse(ar, .dir, d, &why) catch return error.BadDir;
             mt.src = try r.real(mt.src);
+            if (std.mem.eql(u8, mt.dst, "#L") or std.mem.startsWith(u8, mt.dst, "#L/")) linux = true;
             try mounts.append(ar, mt);
         }
         // h9 dials the core's own 9P socket: no fd relay, no shim.
@@ -93,11 +100,13 @@ pub const Runner = struct {
         const cwd = args.cwd.slice();
         opts.cwd = if (cwd.len > 0) try r.real(cwd) else try r.real(".");
         var env: std.ArrayList(h9.EnvVar) = .empty;
-        try env.append(ar, .{ .name = "ui", .value = mount_point });
+        var ui_given = false;
         for (try list(ar, args.env, args.n_env)) |e| {
             const eq = std.mem.indexOfScalar(u8, e, '=') orelse return error.BadEnv;
+            if (std.mem.eql(u8, e[0..eq], "ui")) ui_given = true;
             try env.append(ar, .{ .name = e[0..eq], .value = e[eq + 1 ..] });
         }
+        if (!ui_given) try env.append(ar, .{ .name = "ui", .value = if (linux) linux_mount_point else mount_point });
         opts.env = env.items;
         if (args.n_h9_flags > 0) return error.FlagsNotInSpike;
         // Host fds for the guest's output; on Windows the core's own.

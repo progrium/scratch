@@ -1,0 +1,41 @@
+# Every example, one per line, for run-examples, shoot-examples and
+# shoot-tui: NAME|DIR|TITLE|VIEW|FLAGS|COMMAND
+#
+# DIR is under examples/. VIEW is plan9 (COMMAND is words, run as the
+# program and its arguments) or linux (COMMAND is a line for the Alpine
+# sh, run with the tree from tools/linuxroot on #L and $ui at /9/mnt/ui).
+# FLAGS, comma-separated: nogolden (live data, or a tree that keeps
+# growing for seconds: run-examples checks only
+# that the tree builds with nothing refused), go (build the Go program
+# first, with GOOS=plan9), net (needs outbound network, which h9 doesn't
+# give an app: it runs, but has nothing to show).
+hello|rc|Hello|plan9||rc hello.rc
+counter|rc|Counter|plan9||rc counter.rc
+confirm|rc|Confirm|plan9||rc confirm.rc Delete?
+signin|rc|Sign in|plan9||rc signin.rc
+settings|rc|Settings|plan9||rc settings.rc
+todo|rc|Todos|plan9||rc todo.rc
+calc|rc|Calculator|plan9||rc calc.rc
+gallery|rc|Gallery|plan9||rc gallery.rc
+files|rc|Files|plan9|nogolden|rc files.rc
+stocks|rc|Stocks|plan9|nogolden|rc stocks.rc
+dock|rc|Workspace|plan9|nogolden|rc dock.rc
+chat|rc|Chat|plan9||rc chat.rc
+notes|rc|Notes|plan9||rc notes.rc
+paint|rc|Paint|plan9||rc paint.rc
+csvview|awk|planets.csv|plan9||awk -f csvview.awk planets.csv
+go-greet|go/greet|Greeter|plan9|go|./greet
+go-clock|go/clock|Clock|plan9|go,nogolden|./clock
+c-life|c|Life|plan9|nogolden|rc -c 'mk install >/dev/null && exec ./life'
+sed-counter|sed|Counter|plan9||sed -nuf counter.sed /mnt/ui/events
+jq-ttt|jq|Tic-tac-toe|linux||exec jq -nRj --unbuffered -f ttt.jq <$ui/events >$ui/win/main/ctl
+ps-stamps|ps|Stamps|linux|nogolden|exec gs -q -dNODISPLAY -sui="$ui" --permit-file-all="$ui/*" stamps.ps <$ui/events
+cobol-payroll|cobol|Payroll|linux||cobc -x payroll.cob && exec ./payroll
+forth-rpn|forth|RPN|linux||exec gforth rpn.fs
+scheme-deriv|scheme|Derivatives|linux||exec chibi-scheme deriv.scm
+lua-mixer|lua|Mixer|linux||exec lua5.4 mixer.lua
+node-jsonview|node|JSON|linux||exec node jsonview.js sample.json
+python-expenses|python|Expenses|linux||exec python3 expenses.py
+python-hn|python|Hacker News|linux|nogolden,net|exec python3 hn.py
+ruby-regex|ruby|Regex|linux||exec ruby regex.rb
+sh-progress|sh|Sleeping|linux|nogolden|exec bash progress.sh -n 8 Sleeping sh -c 'for i in 1 2 3 4 5 6 7 8; do echo step $i; sleep 1; done'

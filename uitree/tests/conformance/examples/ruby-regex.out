@@ -1,0 +1,39 @@
+-- window main Regex
+div root  : v-flex size-full p=20 gap=14 bg=background
+  form f  labels=side  label-width=90  tag=re
+    field pat  label=Pattern
+      input in  value=\b\w+@[\w.-]+  : font-family=monospace
+    field opts  label=Options
+      div row  : h-flex gap=20
+        switch i  label='Ignore case'
+        switch m  label='Dot matches newline'
+        switch x  label=Extended
+    field text  label=Text
+      textarea in  rows=5  value=<<END  : font-family=monospace
+Plan 9 from Bell Labs shipped in 1992; Inferno followed in 1996.
+Mail rob@plan9.bell-labs.com or ken@plan9.bell-labs.com, or call
++1 908 582-3000. uitreefs 0.2 was tagged on 2026-11-22.
+
+END
+  div out  : v-flex gap=8 flex-1
+    text h  text='2 matches'  : text-sm font-semibold
+    styled-text hl  text=<<END  runs=<<END2  : p=12 rounded-md border-1 border-color=border bg=muted font-family=monospace text-sm
+Plan 9 from Bell Labs shipped in 1992; Inferno followed in 1996.
+Mail rob@plan9.bell-labs.com or ken@plan9.bell-labs.com, or call
++1 908 582-3000. uitreefs 0.2 was tagged on 2026-11-22.
+END
+70 23 bg=warning text-color=background font-bold
+97 23 bg=info text-color=background font-bold
+END2
+    table t  stripe  columns=<<END  rows=<<END2  : flex-1
+n # 40 align=right
+at Offset 70 align=right
+match Match 260
+groups Groups 320
+END
+m0 1 70 "rob@plan9.bell-labs.com" ''
+m1 2 97 "ken@plan9.bell-labs.com" ''
+END2
+-- menu/bar
+-- keys
+-- stderr

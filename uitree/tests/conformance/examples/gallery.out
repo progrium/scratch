@@ -1,0 +1,85 @@
+-- window main GPUI Kit Gallery
+div root  : h-flex items-stretch size-full bg=background
+  sidebar nav  : w=230
+    div header  : h-flex items-center gap=8 p=12
+      icon logo  name=layout-dashboard  : size=18 text-color=primary
+      text name  text='GPUI Kit'  : font-semibold
+    sidebar-group basic  label=Basic
+      sidebar-item button  active  label=Button  tag=story:button
+      sidebar-item badge  label='Badge & Tag'  tag=story:badge
+      sidebar-item avatar  label=Avatar  tag=story:avatar
+      sidebar-item kbd  label=Kbd  tag=story:kbd
+    sidebar-group form  label=Form
+      sidebar-item input  label=Input  tag=story:input
+      sidebar-item toggles  label='Checkbox & Switch'  tag=story:toggles
+      sidebar-item select  label=Select  tag=story:select
+      sidebar-item slider  label=Slider  tag=story:slider
+      sidebar-item date  label='Date Picker'  tag=story:date
+    sidebar-group data  label=Data
+      sidebar-item table  label=Table  tag=story:table
+      sidebar-item treeview  label=Tree  tag=story:treeview
+      sidebar-item progress  label=Progress  tag=story:progress
+      sidebar-item chart  label=Chart  tag=story:chart
+    sidebar-group overlay  label=Overlay
+      sidebar-item dialog  label=Dialog  tag=story:dialog
+      sidebar-item popover  label='Popover & Tooltip'  tag=story:popover
+      sidebar-item notify  label=Notification  tag=story:notify
+    sidebar-group layout  label=Layout
+      sidebar-item tabs  label=Tabs  tag=story:tabs
+      sidebar-item accordion  label=Accordion  tag=story:accordion
+      sidebar-item resizable  label=Resizable  tag=story:resizable
+    sidebar-group text  label=Text
+      sidebar-item editor  label=Editor  tag=story:editor
+      sidebar-item markdown  label=Markdown  tag=story:markdown
+  div main  : v-flex flex-1
+    div head  : h-flex items-center gap=12 px=24 py=16 border-b-1 border-color=border
+      div t  : v-flex flex-1
+        text title  text=Button  : text-xl font-semibold
+        text desc  text='Variants, sizes, icons and states.'  : text-sm text-color=muted-foreground
+      switch dark  label=Dark  tag=dark
+    scroll story  : flex-1 overflow-y-scroll p=24
+      div v  : v-flex gap=16
+        div variants  : h-flex gap=8 flex-wrap
+          button a  primary  label=Primary
+          button b  secondary  label=Secondary
+          button c  outline  label=Outline
+          button d  ghost  label=Ghost
+          button e  danger  label=Danger
+          button f  link  label=Link
+        div sizes  : h-flex items-center gap=8
+          button xs  xs  label=XSmall
+          button sm  sm  label=Small
+          button md  label=Medium
+          button lg  lg  label=Large
+        div states  : h-flex gap=8
+          button icon  label=Search  icon=search
+          button load  loading  label=Saving
+          button off  disabled  label=Disabled
+          button sel  selected  outline  label=Selected
+        button-group g  value=b
+          button a  label=Day
+          button b  label=Week
+          button c  label=Month
+        dropdown-button more  label=More  menu=<<END
+item copy label=Copy key=cmd-c
+item paste label=Paste key=cmd-v
+sep
+item del label=Delete
+END
+    status-bar log
+      text left  text='resync - - seq=0'  : text-xs font-family=monospace text-color=muted-foreground truncate
+-- overlay main/del
+alert-dialog del  title='Delete 3 files?'  description='This cannot be undone.'  confirm=Delete  cancel=Keep  variant=danger  tag=del
+-- overlay main/dlg
+dialog dlg  keyboard  title='Edit profile'  description='Make changes to your profile here.'  width=420
+  input name  placeholder=Name
+  div footer  : h-flex justify-end gap=8
+    button cancel  ghost  label=Cancel  tag=dlg:cancel
+    button save  primary  label=Save  tag=dlg:save
+-- overlay main/sheet
+sheet sheet  size=360  title=Filters
+  checkbox a  label='Only open'
+  checkbox b  label='Assigned to me'
+-- menu/bar
+-- keys
+-- stderr
