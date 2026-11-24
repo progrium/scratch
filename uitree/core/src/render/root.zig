@@ -5,6 +5,7 @@ pub const stream = @import("stream.zig");
 pub const hub = @import("hub.zig");
 pub const replica = @import("replica.zig");
 pub const check = @import("check.zig");
+pub const dial = @import("dial.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

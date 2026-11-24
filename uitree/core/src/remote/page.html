@@ -1,0 +1,453 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uitree</title>
+<!--
+  The browser renderer for uitree-remote -W (protocols/render.md). A 9P2000
+  client over a WebSocket: it says hello, reads `changes` (a snapshot, then
+  one batch per pump), keeps its own copy of the tree, draws it as DOM, and
+  writes clicks and typing to `input`. It knows the common types (text,
+  button, input, textarea, checkbox, switch, link, tabs) and the common
+  style words; anything else draws as a box with its children. ?role=mirror
+  attaches as a mirror (a host that draws itself refuses a second primary).
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 16px; font: 14px system-ui, sans-serif; background: #e9e9ed; color: #111; }
+  @media (prefers-color-scheme: dark) { body { background: #1b1b1f; color: #eee; } }
+  #status { font-size: 12px; opacity: .6; margin-bottom: 8px; }
+  .uit-win { display: inline-flex; flex-direction: column; margin: 0 16px 16px 0; vertical-align: top;
+    border: 1px solid #0003; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 16px #0002;
+    background: var(--t-background, #fff); color: var(--t-foreground, #111); max-width: calc(100vw - 32px); }
+  .uit-title { padding: 6px 10px; font-size: 12px; font-weight: 600; background: #0000000d; border-bottom: 1px solid #0002; }
+  .uit-body { position: relative; flex: 1; display: flex; flex-direction: column; overflow: auto; }
+  .uit-body > * { flex: 1; }
+  .uit-node { box-sizing: border-box; min-width: 0; }
+  .uit-box { display: block; }
+  button.uit-node { font: inherit; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--t-border, #ccc);
+    background: var(--t-button, #fff); color: var(--t-button-foreground, inherit); cursor: pointer; }
+  button.uit-node.primary { background: var(--t-button-primary, #111); color: var(--t-button-primary-foreground, #fff); border-color: transparent; }
+  button.uit-node.ghost { background: transparent; border-color: transparent; }
+  button.uit-node.sm { padding: 2px 8px; font-size: 12px; }
+  input.uit-node, textarea.uit-node { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--t-input, #ccc);
+    background: transparent; color: inherit; }
+  .uit-tabs-head { display: flex; gap: 4px; }
+  .uit-tabs-head button { font: inherit; border: 0; background: transparent; color: inherit; padding: 2px 8px; border-radius: 4px; cursor: pointer; }
+  .uit-tabs-head button.on { background: var(--t-accent, #eee); }
+  .uit-ph { font-size: 11px; opacity: .5; }
+</style>
+<div id="status">connecting…</div>
+<div id="wins"></div>
+<script>
+"use strict";
+const qs = new URLSearchParams(location.search);
+const role = qs.get("role") || "primary";
+const statusEl = document.getElementById("status");
+const winsEl = document.getElementById("wins");
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+// ---------------------------------------------------------------- 9P2000
+
+class NineP {
+  constructor(ws) {
+    this.ws = ws; this.buf = new Uint8Array(0); this.waiting = new Map(); this.tag = 1; this.msize = 65536;
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (e) => this.recv(new Uint8Array(e.data));
+  }
+  recv(b) {
+    const all = new Uint8Array(this.buf.length + b.length); all.set(this.buf); all.set(b, this.buf.length); this.buf = all;
+    while (this.buf.length >= 4) {
+      const dv = new DataView(this.buf.buffer, this.buf.byteOffset);
+      const size = dv.getUint32(0, true);
+      if (this.buf.length < size) break;
+      const msg = this.buf.slice(0, size); this.buf = this.buf.slice(size);
+      const m = new DataView(msg.buffer);
+      const type = m.getUint8(4), tag = m.getUint16(5, true);
+      const w = this.waiting.get(tag); this.waiting.delete(tag);
+      if (!w) continue;
+      if (type === 107) { const n = m.getUint16(7, true); w.reject(new Error(dec.decode(msg.slice(9, 9 + n)))); }
+      else w.resolve(msg.slice(7));
+    }
+  }
+  rpc(type, body, tag) {
+    if (tag === undefined) { tag = this.tag; this.tag = this.tag % 60000 + 1; }
+    const out = new Uint8Array(7 + body.length); const dv = new DataView(out.buffer);
+    dv.setUint32(0, out.length, true); dv.setUint8(4, type); dv.setUint16(5, tag, true); out.set(body, 7);
+    return new Promise((resolve, reject) => { this.waiting.set(tag, { resolve, reject }); this.ws.send(out); });
+  }
+  static pack(parts) {
+    let n = 0; for (const p of parts) n += p.length;
+    const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out;
+  }
+  static u8(x) { return Uint8Array.of(x); }
+  static u16(x) { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, x, true); return b; }
+  static u32(x) { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, x, true); return b; }
+  static u64(x) { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(x), true); return b; }
+  static s(x) { const b = enc.encode(x); return NineP.pack([NineP.u16(b.length), b]); }
+  async version() {
+    const r = await this.rpc(100, NineP.pack([NineP.u32(this.msize), NineP.s("9P2000")]), 0xffff);
+    this.msize = new DataView(r.buffer).getUint32(0, true);
+  }
+  attach(fid) { return this.rpc(104, NineP.pack([NineP.u32(fid), NineP.u32(0xffffffff), NineP.s("browser"), NineP.s("")])); }
+  walk(fid, newfid, path) {
+    const names = path.split("/").filter(Boolean);
+    return this.rpc(110, NineP.pack([NineP.u32(fid), NineP.u32(newfid), NineP.u16(names.length), ...names.map(NineP.s)]));
+  }
+  open(fid, mode) { return this.rpc(112, NineP.pack([NineP.u32(fid), NineP.u8(mode)])); }
+  async read(fid, off, n) {
+    const r = await this.rpc(116, NineP.pack([NineP.u32(fid), NineP.u64(off), NineP.u32(n)]));
+    const count = new DataView(r.buffer).getUint32(0, true);
+    return r.slice(4, 4 + count);
+  }
+  write(fid, off, data) {
+    return this.rpc(118, NineP.pack([NineP.u32(fid), NineP.u64(off), NineP.u32(data.length), data]));
+  }
+}
+
+// ---------------------------------------------------------- the stream
+
+// One line of the ctl grammar: words, key=value attributes, `: style`.
+function tokens(line) {
+  const out = []; let i = 0; let style = null;
+  while (i < line.length) {
+    while (line[i] === " " || line[i] === "\t") i++;
+    if (i >= line.length) break;
+    if (line[i] === ":" && (i + 1 === line.length || line[i + 1] === " ")) { style = line.slice(i + 1).trim(); break; }
+    let s = "", eq = -1, quoted = false;
+    while (i < line.length && line[i] !== " " && line[i] !== "\t") {
+      if (line[i] === "'") {
+        quoted = true; i++;
+        while (i < line.length) {
+          if (line[i] === "'") { if (line[i + 1] === "'") { s += "'"; i += 2; continue; } i++; break; }
+          s += line[i++];
+        }
+      } else {
+        if (line[i] === "=" && eq < 0 && !quoted) eq = s.length;
+        s += line[i++];
+      }
+    }
+    if (eq > 0 && /^[A-Za-z0-9_.-]+$/.test(s.slice(0, eq))) out.push({ key: s.slice(0, eq), value: s.slice(eq + 1), raw: line.slice(0, 0) });
+    else out.push({ word: s });
+  }
+  return { out, style };
+}
+
+class Stream {
+  constructor(onRecord) { this.text = ""; this.onRecord = onRecord; }
+  feed(s) {
+    this.text += s;
+    for (;;) {
+      const nl = this.text.indexOf("\n");
+      if (nl < 0) return;
+      const line = this.text.slice(0, nl);
+      if (!line.trim()) { this.text = this.text.slice(nl + 1); continue; }
+      const { out, style } = tokens(line);
+      const rec = { verb: "", words: [], attrs: {}, style };
+      const heres = [];
+      for (const t of out) {
+        if (t.word !== undefined) { if (!rec.verb) rec.verb = t.word; else rec.words.push(t.word); }
+        else { rec.attrs[t.key] = t.value; if (t.value.startsWith("<<") && line.includes(t.key + "=<<")) heres.push(t.key); }
+      }
+      // Here-values follow the line, in order, each up to its marker.
+      let pos = nl + 1, whole = true;
+      for (const k of heres) {
+        const marker = rec.attrs[k].slice(2); const body = [];
+        for (;;) {
+          const e = this.text.indexOf("\n", pos);
+          if (e < 0) { whole = false; break; }
+          const l = this.text.slice(pos, e); pos = e + 1;
+          if (l === marker) break;
+          body.push(l);
+        }
+        if (!whole) break;
+        rec.attrs[k] = body.join("\n");
+      }
+      if (!whole) return;
+      this.text = this.text.slice(pos);
+      this.onRecord(rec);
+    }
+  }
+}
+
+// ------------------------------------------------------------ the tree
+
+const nodes = new Map();   // "win/W/a/b" -> {type, path, words, attrs, style, kids, open}
+const wins = new Map();    // W -> {name, attrs, state, focus}
+let tokens_css = "";
+let frames = 0;
+
+function parentOf(p) { return p.slice(0, p.lastIndexOf("/")); }
+function nameOf(p) { return p.slice(p.lastIndexOf("/") + 1); }
+function isRoot(p) { return p.split("/").length === 2; }
+function winOf(p) { return p.split("/")[1]; }
+function rel(p) { const parts = p.split("/").slice(2); return parts.length ? parts.join("/") : "."; }
+
+function dropTree(p) {
+  for (const k of [...nodes.keys()]) if (k === p || k.startsWith(p + "/")) nodes.delete(k);
+  const par = nodes.get(parentOf(p)); if (par) par.kids = par.kids.filter((x) => x !== nameOf(p));
+}
+
+function apply(rec) {
+  const v = rec.verb, w = rec.words;
+  switch (v) {
+    case "snap": nodes.clear(); wins.clear(); break;
+    case "window": {
+      const x = wins.get(w[0]) || { name: w[0], attrs: {}, state: "normal" };
+      for (const [k, val] of Object.entries(rec.attrs)) if (k === "state") x.state = val; else x.attrs[k] = val;
+      wins.set(w[0], x); break;
+    }
+    case "window-ctl": {
+      const x = wins.get(w[0]); if (!x) break;
+      if (w[1] === "state") x.state = w[2];
+      else if (w[1] === "set") Object.assign(x.attrs, rec.attrs);
+      else if (w[1] === "destroy") { wins.delete(w[0]); dropTree("win/" + w[0]); }
+      break;
+    }
+    case "new": {
+      const [type, path, ...words] = w;
+      const n = { type, path, words, attrs: { ...rec.attrs }, style: rec.style || "", kids: [], open: false };
+      const old = nodes.get(path); if (old) n.kids = old.kids;
+      nodes.set(path, n);
+      if (!isRoot(path)) { const par = nodes.get(parentOf(path)); if (par && !par.kids.includes(nameOf(path))) par.kids.push(nameOf(path)); }
+      break;
+    }
+    case "set": case "mirror": {
+      const n = nodes.get(w[0]); if (!n) break;
+      // Our own typing coming back: the field being edited already has it.
+      if (v === "mirror" && document.activeElement?.dataset?.path === w[0]) break;
+      if (rec.style !== null || w.length > 1) { if (w.length > 1 || rec.style !== null) n.words = w.slice(1); }
+      if (rec.style !== null) n.style = rec.style;
+      Object.assign(n.attrs, rec.attrs);
+      break;
+    }
+    case "delete":
+      if (isRoot(w[0])) { wins.delete(winOf(w[0])); }
+      dropTree(w[0]); break;
+    case "overlay": { const n = nodes.get(w[1]); if (n) n.open = w[0] === "open"; break; }
+    case "focus": { const x = wins.get(w[0]); if (x) x.focus = w[1]; break; }
+    case "theme": {
+      const lines = (rec.attrs.tokens || "").split("\n");
+      tokens_css = lines.map((l) => { const i = l.indexOf(" "); if (i < 0) return ""; let val = l.slice(i + 1).trim();
+        if (val.startsWith("'")) val = val.slice(1, -1).replace(/''/g, "'"); return `--t-${l.slice(0, i)}: ${val};`; }).join("");
+      break;
+    }
+    case "end": frames++; draw(); break;
+    case "exit": statusEl.textContent = "the app exited" + (w[0] ? ": " + w[0] : ""); break;
+  }
+}
+
+// ------------------------------------------------------------- input
+
+let p9, inputFid;
+const pendingInput = [];
+let writing = false;
+function q(v) { v = String(v); return /^[A-Za-z0-9_.,/@%+-]+$/.test(v) ? v : "'" + v.replace(/'/g, "''") + "'"; }
+function send(line) {
+  pendingInput.push(line + "\n");
+  if (!writing) flush();
+}
+async function flush() {
+  writing = true;
+  while (pendingInput.length) {
+    const chunk = pendingInput.splice(0).join("");
+    try { await p9.write(inputFid, 0, enc.encode(chunk)); } catch (e) { console.warn("input:", e.message); }
+  }
+  writing = false;
+}
+function event(n, name, attrs = {}) {
+  let l = `event ${q(name)} win=${q(winOf(n.path))} node=${q(rel(n.path))}`;
+  for (const [k, v] of Object.entries(attrs)) l += ` ${k}=${q(v)}`;
+  send(l);
+}
+function mirror(n, file, value) {
+  n.attrs[file] = value;
+  send(`mirror win=${q(winOf(n.path))} node=${q(rel(n.path))} file=${q(file)} value=${q(value)}`);
+}
+
+// ------------------------------------------------------------- drawing
+
+const px = (v) => (/^-?[0-9.]+$/.test(v) ? v + "px" : v);
+const tok = (v) => (/^#|^rgb|^hsl/.test(v) ? v : `var(--t-${v}, ${v})`);
+const textSizes = { "text-xs": "11px", "text-sm": "12px", "text-base": "14px", "text-lg": "16px", "text-xl": "18px", "text-2xl": "22px", "text-3xl": "28px" };
+
+function css(style, el) {
+  const s = el.style;
+  for (const t of style.split(/\s+/)) {
+    if (!t || t.includes(":")) continue; // hover:, active:, dark: ...
+    const eq = t.indexOf("="); const k = eq < 0 ? t : t.slice(0, eq), v = eq < 0 ? "" : t.slice(eq + 1);
+    switch (k) {
+      case "flex": if (!v) { s.display = "flex"; } else s.flex = v; break;
+      case "h-flex": s.display = "flex"; s.flexDirection = "row"; break;
+      case "v-flex": s.display = "flex"; s.flexDirection = "column"; break;
+      case "flex-1": s.flex = "1"; break;
+      case "flex-col": s.flexDirection = "column"; break;
+      case "flex-wrap": s.flexWrap = "wrap"; break;
+      case "items-center": s.alignItems = "center"; break;
+      case "items-start": s.alignItems = "flex-start"; break;
+      case "items-end": s.alignItems = "flex-end"; break;
+      case "justify-center": s.justifyContent = "center"; break;
+      case "justify-between": s.justifyContent = "space-between"; break;
+      case "justify-end": s.justifyContent = "flex-end"; break;
+      case "gap": s.gap = px(v); break;
+      case "p": s.padding = px(v); break;
+      case "px": s.paddingLeft = s.paddingRight = px(v); break;
+      case "py": s.paddingTop = s.paddingBottom = px(v); break;
+      case "pt": s.paddingTop = px(v); break;
+      case "pb": s.paddingBottom = px(v); break;
+      case "pl": s.paddingLeft = px(v); break;
+      case "pr": s.paddingRight = px(v); break;
+      case "m": s.margin = px(v); break;
+      case "size-full": s.width = s.height = "100%"; break;
+      case "w-full": s.width = "100%"; break;
+      case "h-full": s.height = "100%"; break;
+      case "size": s.width = s.height = px(v); break;
+      case "w": s.width = px(v); break;
+      case "h": s.height = px(v); break;
+      case "min-w": s.minWidth = px(v); break;
+      case "max-w": s.maxWidth = px(v); break;
+      case "font-semibold": s.fontWeight = "600"; break;
+      case "font-bold": s.fontWeight = "700"; break;
+      case "text-center": s.textAlign = "center"; break;
+      case "text-color": s.color = tok(v); break;
+      case "bg": s.background = tok(v); break;
+      case "rounded-full": s.borderRadius = "9999px"; break;
+      case "rounded": s.borderRadius = v ? px(v) : "6px"; break;
+      case "rounded-lg": s.borderRadius = "10px"; break;
+      case "border-1": case "border": s.border = "1px solid var(--t-border, #ccc)"; break;
+      case "border-t-1": s.borderTop = "1px solid var(--t-border, #ccc)"; break;
+      case "border-b-1": s.borderBottom = "1px solid var(--t-border, #ccc)"; break;
+      case "border-color": s.borderColor = tok(v); break;
+      case "overflow-y-scroll": case "overflow-scroll": s.overflowY = "auto"; break;
+      case "cursor-pointer": s.cursor = "pointer"; break;
+      default: if (textSizes[k]) s.fontSize = textSizes[k];
+    }
+  }
+}
+
+function kidsOf(n) {
+  const order = n.attrs.order;
+  const names = order !== undefined ? order.split(/\s+/).filter(Boolean) : n.kids;
+  return names.map((k) => nodes.get(n.path + "/" + k)).filter(Boolean);
+}
+
+function on(n, ev) { return (n.attrs.on || "").split(/[\s,]+/).includes(ev); }
+
+function el(n) {
+  const a = n.attrs, words = new Set(n.words);
+  let e;
+  switch (n.type) {
+    case "text": e = document.createElement("div"); e.textContent = a.text ?? ""; break;
+    case "button":
+      e = document.createElement("button"); e.textContent = a.label ?? "";
+      e.disabled = words.has("disabled") || a.disabled === "on";
+      for (const w of words) e.classList.add(w);
+      e.onclick = () => event(n, "click");
+      break;
+    case "link":
+      e = document.createElement("a"); e.textContent = a.label ?? a.href ?? ""; e.href = "#";
+      e.onclick = (ev) => { ev.preventDefault(); event(n, "click"); };
+      break;
+    case "input": case "textarea": case "number-input": {
+      e = document.createElement(n.type === "textarea" ? "textarea" : "input");
+      if (words.has("secret")) e.type = "password";
+      e.value = a.value ?? ""; e.placeholder = a.placeholder ?? "";
+      e.oninput = () => { mirror(n, "value", e.value); event(n, "change", words.has("secret") ? {} : { value: e.value }); };
+      e.onkeydown = (ev) => {
+        if (ev.key !== "Enter" || n.type === "textarea") return;
+        ev.preventDefault();
+        let f = nodes.get(parentOf(n.path));
+        while (f && f.type !== "form") f = nodes.get(parentOf(f.path));
+        event(f || n, "submit");
+      };
+      break;
+    }
+    case "checkbox": case "switch": {
+      e = document.createElement("label"); const c = document.createElement("input"); c.type = "checkbox";
+      c.checked = a.value === "on" || a.checked === "on" || words.has("checked");
+      c.onchange = () => { const v = c.checked ? "on" : "off"; mirror(n, "value", v); event(n, "change", { value: v }); };
+      e.append(c, " " + (a.label ?? ""));
+      break;
+    }
+    case "tabs": {
+      e = document.createElement("div"); e.className = "uit-box";
+      const head = document.createElement("div"); head.className = "uit-tabs-head"; e.append(head);
+      const tabs = kidsOf(n); const cur = a.value ?? (tabs[0] && nameOf(tabs[0].path));
+      for (const t of tabs) {
+        const b = document.createElement("button"); b.textContent = t.attrs.label ?? nameOf(t.path);
+        if (nameOf(t.path) === cur) b.classList.add("on");
+        b.onclick = () => { mirror(n, "value", nameOf(t.path)); event(n, "change", { value: nameOf(t.path) }); draw(); };
+        head.append(b);
+      }
+      const t = tabs.find((x) => nameOf(x.path) === cur);
+      if (t) for (const k of kidsOf(t)) e.append(el(k));
+      break;
+    }
+    default: {
+      e = document.createElement("div"); e.className = "uit-box";
+      const label = a.label ?? a.title;
+      if (label && !kidsOf(n).length) e.textContent = label;
+      if (on(n, "click")) e.onclick = (ev) => { ev.stopPropagation(); event(n, "click"); };
+      if (n.type !== "div" && !kidsOf(n).length && !label) { const ph = document.createElement("span"); ph.className = "uit-ph"; ph.textContent = n.type; e.append(ph); }
+    }
+  }
+  e.classList.add("uit-node");
+  e.dataset.path = n.path;
+  css(n.style, e);
+  if (n.type !== "tabs" && !["input", "textarea", "number-input", "checkbox", "switch"].includes(n.type))
+    for (const k of kidsOf(n)) e.append(el(k));
+  return e;
+}
+
+function draw() {
+  // Keep the field being typed in: the rebuild would drop its caret.
+  const act = document.activeElement, keep = act && act.dataset ? act.dataset.path : null;
+  const sel = keep && "selectionStart" in act ? [act.selectionStart, act.selectionEnd] : null;
+  winsEl.textContent = "";
+  document.documentElement.style.cssText = tokens_css;
+  for (const w of wins.values()) {
+    if (w.state === "hidden") continue;
+    const root = nodes.get("win/" + w.name); if (!root) continue;
+    const box = document.createElement("section"); box.className = "uit-win"; box.dataset.win = w.name;
+    const [ww, hh] = (w.attrs.size || "").split(",");
+    if (ww) box.style.width = ww + "px";
+    if (hh) box.style.height = (+hh + 28) + "px";
+    const title = document.createElement("div"); title.className = "uit-title"; title.textContent = w.attrs.title || w.name;
+    const body = document.createElement("div"); body.className = "uit-body";
+    body.append(el(root));
+    box.append(title, body); winsEl.append(box);
+  }
+  if (keep) {
+    const again = winsEl.querySelector(`[data-path="${CSS.escape(keep)}"]`);
+    if (again) { again.focus(); if (sel && "setSelectionRange" in again) try { again.setSelectionRange(...sel); } catch {} }
+  }
+  if (role === "primary") for (const w of wins.values()) if (w.state !== "hidden") send(`frame win=${q(w.name)}`);
+}
+
+// ------------------------------------------------------------- main
+
+async function main() {
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/9p");
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error("websocket")); });
+  ws.onclose = () => { statusEl.textContent = "disconnected"; };
+  p9 = new NineP(ws);
+  await p9.version();
+  await p9.attach(0);
+  await p9.walk(0, 1, "hello"); await p9.open(1, 1);
+  await p9.write(1, 0, enc.encode(`hello name=browser role=${role}\n`));
+  await p9.walk(0, 2, "changes"); await p9.open(2, 0);
+  await p9.walk(0, 3, "input"); await p9.open(3, 1);
+  inputFid = 3;
+  statusEl.textContent = `attached as ${role}`;
+  const stream = new Stream(apply);
+  const utf8 = new TextDecoder();
+  let off = 0;
+  for (;;) {
+    const d = await p9.read(2, off, p9.msize - 24);
+    if (!d.length) { statusEl.textContent = "the app is gone"; break; }
+    off += d.length;
+    stream.feed(utf8.decode(d, { stream: true }));
+  }
+}
+window.__uit = { nodes, wins, get frames() { return frames; } };
+main().catch((e) => { statusEl.textContent = "error: " + e.message; });
+</script>

@@ -1,6 +1,7 @@
 //! uitree-tui: the uitree terminal host.
 //!
 //!     uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
+//!     uitree-tui [-t TITLE] [--log FILE] [--dark] [--colors ...] --remote ADDR [--role primary|mirror|view]
 //!
 //! Starts the core (libuitcore, through uitcore.h), runs PROG in h9 with
 //! $ui mounted, and draws the app's `main` window in the terminal with
@@ -12,6 +13,13 @@
 //! root). --colors is the terminal's color depth (color.zig; default from
 //! $COLORTERM). The host registers GPUI Kit's theme set (core/types/themes),
 //! so an app's `theme/name` works here as on GPUI.
+//!
+//! --remote draws an app running elsewhere instead: it dials the renderer
+//! tree (protocols/render.md) that `uitree-remote -R ADDR`, or a GPUI host
+//! with UITREE_RENDER_LISTEN, serves at ADDR, as a 9P client. The core does
+//! that (uit_render_dial), so the drawing code is the same either way.
+//! --role defaults to primary, which a host that draws itself refuses: use
+//! mirror there.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -59,6 +67,7 @@ const App = struct {
 
 const usage =
     \\usage: uitree-tui [-t TITLE] [--root DIR] [--log FILE] [--dark] [--colors truecolor|256|16] PROG [ARGS...]
+    \\       uitree-tui [-t TITLE] [--log FILE] [--dark] [--colors ...] --remote ADDR [--role primary|mirror|view]
     \\
 ;
 
@@ -72,6 +81,8 @@ pub fn main(init: std.process.Init) !u8 {
     var log_path: []const u8 = "/tmp/uitree-tui.log";
     var dark = false;
     var depth = colormod.detect(init.environ_map.get("COLORTERM"));
+    var remote: ?[]const u8 = null;
+    var role: []const u8 = "primary";
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -84,6 +95,12 @@ pub fn main(init: std.process.Init) !u8 {
         } else if (std.mem.eql(u8, a, "--log") and i + 1 < args.len) {
             i += 1;
             log_path = args[i];
+        } else if (std.mem.eql(u8, a, "--remote") and i + 1 < args.len) {
+            i += 1;
+            remote = args[i];
+        } else if (std.mem.eql(u8, a, "--role") and i + 1 < args.len) {
+            i += 1;
+            role = args[i];
         } else if (std.mem.eql(u8, a, "--dark")) {
             dark = true;
         } else if (std.mem.eql(u8, a, "--colors") and i + 1 < args.len) {
@@ -97,7 +114,7 @@ pub fn main(init: std.process.Init) !u8 {
             return 0;
         } else break;
     }
-    if (i >= args.len) {
+    if (i >= args.len and remote == null) {
         std.debug.print("{s}", .{usage});
         return 2;
     }
@@ -149,7 +166,11 @@ pub fn main(init: std.process.Init) !u8 {
     try vx.setMouseMode(writer, true);
     if (log_fd >= 0) redirectStderr(log_fd);
 
-    k.runMachine(gpa, .{ .argv = argv, .root = root, .out_fd = log_fd, .err_fd = log_fd }) catch |e| {
+    if (remote) |addr| k.renderDial(addr, "uitree-tui", role) catch |e| {
+        exitUi(&vx, writer);
+        std.debug.print("uitree-tui: {s}: {t} {s}\n", .{ addr, e, k.lastError() });
+        return 1;
+    } else k.runMachine(gpa, .{ .argv = argv, .root = root, .out_fd = log_fd, .err_fd = log_fd }) catch |e| {
         exitUi(&vx, writer);
         std.debug.print("uitree-tui: {s}: {t} {s}\n", .{ argv[0], e, k.lastError() });
         return 1;
@@ -241,7 +262,7 @@ pub fn main(init: std.process.Init) !u8 {
 
     exitUi(&vx, writer);
     k.shutdown();
-    if (exit_text.len > 0) std.debug.print("uitree-tui: {s}: {s}\n", .{ argv[0], exit_text });
+    if (exit_text.len > 0) std.debug.print("uitree-tui: {s}: {s}\n", .{ if (remote) |x| x else argv[0], exit_text });
     return status;
 }
 

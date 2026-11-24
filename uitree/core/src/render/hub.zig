@@ -93,7 +93,8 @@ pub const Hub = struct {
     jobs_tail: ?*Job = null,
     subs: std.ArrayList(*Sub) = .empty,
     renderers: std.ArrayList(Renderer) = .empty,
-    next_conn: std.atomic.Value(u64) = .init(1),
+    /// Under `mu` (a 64-bit atomic isn't on wasm32).
+    next_conn: u64 = 1,
     /// The app is gone: streams end, input fails.
     finished: bool = false,
     /// Set from 9P threads when a subscription wants a snapshot.
@@ -169,7 +170,8 @@ pub const Hub = struct {
     }
 
     pub fn listen(h: *Hub, addr: []const u8) ![]const u8 {
-        const l = try transport.listen(h.gpa, addr);
+        // Empty: a fresh unix socket in a private directory, as uit_listen.
+        const l = if (addr.len == 0) try transport.listenPrivate(h.gpa, h.io) else try transport.listen(h.gpa, addr);
         errdefer l.stop();
         h.lock();
         defer h.unlock();
@@ -369,7 +371,15 @@ pub const Hub = struct {
             if (cl.words.len != 1) return err.set("bad syntax: request NAME win= node= id= default=");
             const n = try h.node(a, cl.attr("win"), cl.attr("node"), err);
             const id = cl.attr("id") orelse return err.set("bad syntax: request needs id=");
-            const seq = abi.uit_request(c, n, UitStr.of(cl.words[0]), null, 0, UitStr.of(cl.attr("default") orelse ""));
+            var attrs: std.ArrayList(abi.UitAttr) = .empty;
+            for (cl.attrs) |at| {
+                const own = [_][]const u8{ "win", "node", "id", "default" };
+                const is_own = for (own) |o| {
+                    if (std.mem.eql(u8, at.key, o)) break true;
+                } else false;
+                if (!is_own) try attrs.append(a, .{ .name = UitStr.of(at.key), .value = UitStr.of(at.value) });
+            }
+            const seq = abi.uit_request(c, n, UitStr.of(cl.words[0]), attrs.items.ptr, attrs.items.len, UitStr.of(cl.attr("default") orelse ""));
             if (seq == 0) return err.set(abi.uit_last_error(c).slice());
             try h.enc.requests.put(h.gpa, seq, try h.gpa.dupe(u8, id));
             return;
@@ -488,13 +498,13 @@ fn entryOf(name: []const u8) ?fsmod.Entry {
     for (files, 0..) |f, i| if (std.mem.eql(u8, f, name)) {
         const kind: fsmod.Kind = if (std.mem.eql(u8, f, "changes")) .stream else if (std.mem.eql(u8, f, "asset")) .dir else .file;
         const perm: u32 = if (std.mem.eql(u8, f, "input") or std.mem.eql(u8, f, "hello")) 0o222 else if (kind == .dir) 0o555 else 0o444;
-        return .{ .kind = kind, .qid = 0x7265_6e64_0000_0010 + i, .perm = perm };
+        return .{ .kind = kind, .qid = 0x7265_6e64_0000_0010 + @as(u64, i), .perm = perm };
     };
     return null;
 }
 
 fn assetEntry(i: usize) fsmod.Entry {
-    return .{ .kind = .file, .qid = 0x7265_6e64_0001_0000 + i, .perm = 0o444 };
+    return .{ .kind = .file, .qid = 0x7265_6e64_0001_0000 + @as(u64, i), .perm = 0o444 };
 }
 
 const vt: fsmod.Fs.VTable = .{
@@ -516,9 +526,10 @@ fn self(p: *anyopaque) *Hub {
 
 fn connect(p: *anyopaque) ConnId {
     const h = self(p);
-    const id = h.next_conn.fetchAdd(1, .monotonic);
     h.lock();
     defer h.unlock();
+    const id = h.next_conn;
+    h.next_conn += 1;
     h.renderers.append(h.gpa, .{ .conn = id }) catch {};
     return id;
 }

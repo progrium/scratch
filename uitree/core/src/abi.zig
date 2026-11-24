@@ -249,6 +249,9 @@ pub const Core = struct {
     /// The renderer tree (protocols/render.md), made by the first
     /// uit_render_* call.
     render: ?*render.hub.Hub = null,
+    /// uit_render_dial: this core draws a remote app; its tree is that
+    /// app's, from the stream, and input goes back over 9P.
+    remote: ?*render.dial.Remote = null,
 
     pub fn io(c: *Core) Io {
         if (web.enabled) return web.io();
@@ -348,7 +351,7 @@ export fn uit_abi_version() u32 {
     return abi_version;
 }
 
-export fn uit_create(cfg: ?*const UitConfig, out: ?*?*Core) c_int {
+pub export fn uit_create(cfg: ?*const UitConfig, out: ?*?*Core) c_int {
     const c_cfg = cfg orelse return UIT_EINVAL;
     const o = out orelse return UIT_EINVAL;
     if (c_cfg.abi_version != abi_version) return UIT_EVERSION;
@@ -497,6 +500,23 @@ pub export fn uit_render_listen(c: *Core, addr: UitStr, flags: u32, dial: ?*UitS
     return UIT_OK;
 }
 
+/// Dials a renderer tree another core serves (`unix!PATH`,
+/// `tcp!HOST!PORT`) and says hello as `name` with `role` (primary, mirror
+/// or view): this core's tree becomes that app's, kept by its change
+/// stream in uit_pump, and the input calls go to it. Instead of
+/// uit_run_machine; one per core.
+pub export fn uit_render_dial(c: *Core, addr: UitStr, name: UitStr, role: UitStr) c_int {
+    if (comptime builtin.os.tag == .windows or web.enabled) return UIT_ENOTSUP;
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    if (c.remote != null) return UIT_EINVAL;
+    const rs = if (role.len == 0) "mirror" else role.slice();
+    c.remote = render.dial.Remote.create(c.gpa, c, addr.slice(), if (name.len == 0) "uitcore" else name.slice(), rs) catch |e| {
+        c.err_len = if (std.fmt.bufPrint(&c.err_buf, "dial {s}: {t}", .{ addr.slice(), e })) |m| m.len else |_| 0;
+        return UIT_EIO;
+    };
+    return UIT_OK;
+}
+
 /// Serves the renderer tree on a connected fd.
 pub export fn uit_render_serve_fd(c: *Core, fd: c_int, flags: u32) c_int {
     if (comptime builtin.os.tag == .windows or web.enabled) return UIT_ENOTSUP;
@@ -577,7 +597,11 @@ fn onMachineConn(ctx: *anyopaque, k: ninep.transport.Conn) void {
 
 /// From the machine's thread when the client ends.
 fn onExit(ctx: *anyopaque, status: []const u8) void {
-    const c: *Core = @ptrCast(@alignCast(ctx));
+    setExit(@ptrCast(@alignCast(ctx)), status);
+}
+
+/// The app finished with `status` (empty: success); the next pump says so.
+pub fn setExit(c: *Core, status: []const u8) void {
     c.exit_mu.lockUncancelable(c.io());
     if (c.exit_status) |s| c.gpa.free(s);
     c.exit_status = c.gpa.dupe(u8, status) catch null;
@@ -595,7 +619,7 @@ export fn uit_shutdown(c: *Core) void {
     c.wake();
 }
 
-export fn uit_destroy(c: *Core) void {
+pub export fn uit_destroy(c: *Core) void {
     uit_shutdown(c);
     c.stopping.store(true, .release);
     if (c.timer) |t| t.join();
@@ -603,6 +627,7 @@ export fn uit_destroy(c: *Core) void {
     // Hangs up every connection and waits for them: nothing holds a
     // subscription or a snapshot after this.
     if (c.render) |h| h.destroy();
+    if (remoteOf(c)) |r| r.destroy();
     if (c.host) |h| h.destroy();
     c.queue.deinit();
     if (c.pinned) |p| p.unref(c.gpa);
@@ -630,7 +655,7 @@ fn ptrOf(comptime T: type, s: []const T) ?[*]const T {
     return if (s.len > 0) s.ptr else null;
 }
 
-export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
+pub export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
     if (!c.checkOwner()) return UIT_ETHREAD;
     const o = out orelse return UIT_EINVAL;
     _ = c.reads.reset(.retain_capacity);
@@ -639,6 +664,7 @@ export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
     if (c.gone.load(.acquire) and !t.current().gone) t.appGone();
     // 9P renderers' input first, as a built-in renderer's calls would be.
     if (c.render) |h| h.runInput();
+    if (remoteOf(c)) |r| r.pump();
     _ = c.queue.drain(t);
     t.tick(monoNow(c)) catch {};
     t.publish() catch {};
@@ -1035,6 +1061,22 @@ fn input(c: *Core) ?c_int {
     return null;
 }
 
+/// The remote core this one draws (uit_render_dial); never in the browser
+/// or on Windows, where it can't dial.
+fn remoteOf(c: *Core) ?*render.dial.Remote {
+    if (comptime builtin.os.tag == .windows or web.enabled) return null;
+    return c.remote;
+}
+
+/// An input call queued for a remote core (uit_render_dial).
+fn sent(c: *Core, r: anyerror!void) c_int {
+    r catch |e| {
+        c.err_len = if (std.fmt.bufPrint(&c.err_buf, "render dial: {t}", .{e})) |m| m.len else |_| 0;
+        return if (e == error.OutOfMemory) UIT_ENOMEM else UIT_EINVAL;
+    };
+    return UIT_OK;
+}
+
 fn done(c: *Core, r: anyerror!void) c_int {
     r catch |e| return c.fail(e);
     c.wake();
@@ -1051,6 +1093,7 @@ fn attrsOf(a: Allocator, attrs: ?[*]const UitAttr, n: usize) Allocator.Error![]p
 
 pub export fn uit_emit(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return sent(c, rm.emit(h, name.slice(), if (n > 0) attrs.?[0..n] else &.{}));
     if (h != 0 and c.tree.current().node(h) == null) return UIT_EINVAL;
     const as = attrsOf(c.gpa, attrs, n) catch return UIT_ENOMEM;
     defer c.gpa.free(as);
@@ -1060,6 +1103,10 @@ pub export fn uit_emit(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitA
 
 pub export fn uit_request(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize, default_answer: UitStr) u64 {
     if (input(c) != null) return 0;
+    if (remoteOf(c)) |rm| return rm.request(h, name.slice(), if (n > 0) attrs.?[0..n] else &.{}, default_answer.slice()) catch |e| {
+        _ = c.fail(e);
+        return 0;
+    };
     const as = attrsOf(c.gpa, attrs, n) catch return 0;
     defer c.gpa.free(as);
     const seq = c.tree.request(.{ .name = name.slice(), .node = h, .attrs = as }, default_answer.slice()) catch |e| {
@@ -1072,39 +1119,52 @@ pub export fn uit_request(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const U
 
 pub export fn uit_mirror(c: *Core, h: UitNode, file: UitStr, value: UitStr) c_int {
     if (input(c)) |r| return r;
+    // Drawn at once from the local tree, and sent: the app hears it there.
+    if (remoteOf(c)) |rm| if (sent(c, rm.mirror(h, file.slice(), value.slice())) != UIT_OK) return UIT_EINVAL;
     return done(c, c.tree.mirror(h, file.slice(), value.slice()));
 }
 
 pub export fn uit_bounds(c: *Core, h: UitNode, x: f32, y: f32, w: f32, hh: f32) c_int {
     if (input(c)) |r| return r;
     const b: [4]i64 = .{ @intFromFloat(@round(x)), @intFromFloat(@round(y)), @intFromFloat(@round(w)), @intFromFloat(@round(hh)) };
+    if (remoteOf(c)) |rm| rm.bounds(h, b) catch {};
     c.tree.setBounds(h, b) catch |e| return c.fail(e);
     return UIT_OK;
 }
 
 pub export fn uit_frame_drawn(c: *Core, win: UitStr) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| if (rm.primary) rm.winLine("frame", if (win.len == 0) "main" else win.slice()) catch {};
     return done(c, c.tree.frameDrawn(if (win.len == 0) null else win.slice()));
 }
 
 pub export fn uit_window_closed(c: *Core, win: UitStr) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return sent(c, rm.winLine("closed", win.slice()));
     return done(c, c.tree.windowClosed(win.slice()));
 }
 
 pub export fn uit_key(c: *Core, win: UitStr, keystroke: UitStr, focused: UitNode) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| {
+        const bound = c.tree.keyBound(win.slice(), keystroke.slice(), focused) catch |e| return c.fail(e);
+        if (!bound) return 0;
+        if (sent(c, rm.key(win.slice(), keystroke.slice())) != UIT_OK) return UIT_EIO;
+        return 1;
+    }
     const hit = c.tree.key(win.slice(), keystroke.slice(), focused) catch |e| return c.fail(e);
     return @intFromBool(hit);
 }
 
 pub export fn uit_menu_action(c: *Core, id: UitStr) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return sent(c, rm.menu(id.slice()));
     return done(c, c.tree.menuAction(id.slice()));
 }
 
 pub export fn uit_system_dark(c: *Core, dark: u32) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| rm.appearance(dark != 0) catch {};
     return done(c, c.tree.systemDark(dark != 0));
 }
 
@@ -1135,6 +1195,7 @@ pub const UIT_DRAG_END: u32 = 3;
 /// OVER is the renderer's own business (`drop-over` style).
 pub export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
     if (input(c)) |r| return r;
+    if (remoteOf(c) != null) return UIT_ENOTSUP;
     const m = msg orelse return UIT_EINVAL;
     const as = attrsOf(c.gpa, m.attrs, m.n_attrs) catch return UIT_ENOMEM;
     defer c.gpa.free(as);

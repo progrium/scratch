@@ -318,6 +318,7 @@ unsafe extern "C" {
     pub fn uit_render_listen(c: *mut UitCore, addr: UitStr, flags: u32, dial: *mut UitStr) -> c_int;
     pub fn uit_render_serve_fd(c: *mut UitCore, fd: c_int, flags: u32) -> c_int;
     pub fn uit_render_serve_conn(c: *mut UitCore, conn: *const UitConn, flags: u32) -> c_int;
+    pub fn uit_render_dial(c: *mut UitCore, addr: UitStr, name: UitStr, role: UitStr) -> c_int;
     pub fn uit_node_props(c: *mut UitCore, n: UitNode, out: *mut *const UitStr, len: *mut usize) -> c_int;
 }
 

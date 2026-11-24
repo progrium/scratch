@@ -604,6 +604,12 @@ pub const Tree = struct {
         try t.log.props.append(t.log.arena.allocator(), .{ .node = h, .file = file });
     }
 
+    /// A command for the renderer that no write made: one a remote core
+    /// sent (render/dial.zig).
+    pub fn hostCmd(t: *Tree, c: HostCmd) Error!void {
+        return t.pushCmd(c);
+    }
+
     fn pushCmd(t: *Tree, c: HostCmd) Error!void {
         const a = t.log.arena.allocator();
         var x = c;
@@ -1011,6 +1017,16 @@ pub const Tree = struct {
     /// `focused` (0: none) focused. Sends `action ID PATH via=key win=W`
     /// and returns true if a binding in `keys` matched.
     pub fn key(t: *Tree, win: []const u8, stroke: []const u8, focused: Handle) Error!bool {
+        return t.keyAct(win, stroke, focused, true);
+    }
+
+    /// Whether `stroke` is bound in `win` (key's lookup, without acting
+    /// on it): a renderer drawing a remote app asks before it sends one.
+    pub fn keyBound(t: *Tree, win: []const u8, stroke: []const u8, focused: Handle) Error!bool {
+        return t.keyAct(win, stroke, focused, false);
+    }
+
+    fn keyAct(t: *Tree, win: []const u8, stroke: []const u8, focused: Handle, act: bool) Error!bool {
         const w = t.st.win(win) orelse return t.setErr(.not_found, win);
         var arena: std.heap.ArenaAllocator = .init(t.gpa);
         defer arena.deinit();
@@ -1039,6 +1055,7 @@ pub const Tree = struct {
             }
         }
         const b = best orelse return false;
+        if (!act) return true;
         // A disabled action's binding is taken but sends nothing.
         if (t.disabled.contains(b.action)) return true;
         _ = try t.emit(.{ .name = "action", .node = at, .key = b.action, .via = "key", .kind = .action });

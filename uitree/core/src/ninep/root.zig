@@ -9,6 +9,7 @@ pub const fs = @import("fs.zig");
 pub const server = @import("server.zig");
 pub const transport = @import("transport.zig");
 pub const client = @import("client.zig");
+pub const wire = @import("wire.zig");
 pub const dir = @import("dir.zig");
 pub const memfs = @import("memfs.zig");
 pub const mux = @import("mux.zig");

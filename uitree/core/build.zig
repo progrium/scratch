@@ -112,7 +112,8 @@ pub fn build(b: *std.Build) void {
         }
     }
 
-    // The 9P renderer spike (protocols/render.md): `zig build remote`.
+    // A host with no renderer of its own, for 9P renderers and browsers
+    // (protocols/render.md): `zig build remote`.
     // Not installed by default.
     const remote = b.addExecutable(.{
         .name = "uitree-remote",
@@ -123,7 +124,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "uitcore", .module = core }},
         }),
     });
-    const remote_step = b.step("remote", "Build uitree-remote, the 9P renderer spike");
+    const remote_step = b.step("remote", "Build uitree-remote, a host that only serves renderers");
     const install_remote = b.addInstallArtifact(remote, .{});
     remote_step.dependOn(&install_remote.step);
     // As for uitree-headless: HVF needs the framework and the entitlement.

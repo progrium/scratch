@@ -11,6 +11,7 @@ pub extern fn uit_destroy(c: *Core) void;
 pub extern fn uit_themes(c: *Core, text: S) c_int;
 pub extern fn uit_listen(c: *Core, addr: S, dial: ?*S) c_int;
 pub extern fn uit_render_listen(c: *Core, addr: S, flags: u32, dial: ?*S) c_int;
+pub extern fn uit_render_serve_conn(c: *Core, conn: ?*const abi.UitConn, flags: u32) c_int;
 pub extern fn uit_run_machine(c: *Core, args: ?*const abi.UitMachineArgs) c_int;
 pub extern fn uit_last_error(c: *Core) S;
 pub extern fn uit_pump(c: *Core, out: ?*abi.UitChanges) c_int;

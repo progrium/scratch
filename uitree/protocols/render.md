@@ -1,6 +1,6 @@
 # render: renderers as 9P clients
 
-**Layer:** `render 0.1` (draft, scoping) · **Mount:** `$render`, never in
+**Layer:** `render 0.1` (draft) · **Mount:** `$render`, never in
 the app's namespace · **Required:** no ·
 **Conventions:** [README.md](README.md#shared-conventions)
 
@@ -14,10 +14,13 @@ a WebSocket.
 
 The C ABI stays. GPUI and the terminal keep linking the core, and the
 renderer tree is a thin layer over the same calls: one encoding of each
-pump, fanned out as bytes to whoever is attached. A spike of it is in
-[`core/src/render/`](../core/src/render/) with a toy renderer in Python
-([`renderer/toy-py/render.py`](../renderer/toy-py/render.py)); its
-numbers are in [§ Latency](#latency).
+pump, fanned out as bytes to whoever is attached. It is in the core
+([`core/src/render/`](../core/src/render/)) behind ABI 7's
+`uit_render_listen`, and has three clients: a browser DOM renderer
+(`uitree-remote -W`), the terminal renderer (`uitree-tui --remote`,
+through the core's own `uit_render_dial`), and a toy in Python
+([`renderer/toy-py/render.py`](../renderer/toy-py/render.py)). Numbers are
+in [§ Latency](#latency); what's built is in [§ Status](#status).
 
 ## In one picture
 
@@ -153,24 +156,26 @@ draws.
 | `window NAME prop=value ... state=S` | a window and its props (title, size, min, max, pos, kind, titlebar, resizable, state) | `UIT_CMD_WINDOW`, a window's prop files |
 | `window-ctl NAME VERB ...` | a window verb: show, activate, close, destroy, ... | `UIT_CMD_WINDOW_CTL` |
 | `new TYPE PATH words props : style` | a node, its set props and style; appended to its parent's order | `UitChanges.created` + `uit_prop`, `uit_style` |
-| `set PATH prop=value ... [: style]` | props that changed; `:` replaces the style; `order=` reorders | `UitChanges.props` |
+| `set PATH [words] prop=value ... [: style]` | props that changed; with `:`, the node's words and style as they now are; `order=` reorders | `UitChanges.props` |
+| `mirror PATH prop=value ...` | a renderer's input (typing, a toggle): apply it, but a renderer may skip its own echo | `UitChanges.mirrors` (ABI 7) |
 | `delete PATH` | the node and its subtree; out of its parent's order | `UitChanges.removed` |
 | `overlay open\|close PATH` | an overlay opened or closed | `UIT_CMD_OVERLAY` |
 | `focus WIN PATH` | key focus moved (`-` for none) | `UIT_CMD_FOCUS` |
 | `verb PATH VERB ...` | a component verb: `scroll-to 3`, `select-all` | `UIT_CMD_COMPONENT_VERB` |
-| `theme mode=M tokens=<<END` | the mode and every token's value | `UIT_CMD_THEME`, `uit_token_text` |
-| `keys <<END` | the key bindings, as `$ui/keys` reads | `UIT_CMD_KEYMAP`, `uit_keys` |
-| `menu NAME <<END` / `menu-bar NAME ...` | a menu's lines, the bar's names | `UIT_CMD_MENUS`, `uit_menu` |
+| `theme mode=M name=N tokens=<<END` | the mode, the theme's name (empty: none) and every token's value | `UIT_CMD_THEME`, `uit_token_text` |
+| `keys text=<<END` | the key bindings, as `$ui/keys` reads | `UIT_CMD_KEYMAP`, `uit_keys` |
+| `menu NAME text=<<END` / `menu-bar NAME ...` | a menu's lines, the bar's names | `UIT_CMD_MENUS`, `uit_menu` |
 | `action ID enabled=0\|1 check=-1\|0\|1\|2` | an action's state changed | `UIT_CMD_SET_ACTION` |
 | `asset NAME` | `asset/NAME` changed: read it again | `UIT_CMD_ASSETS` |
-| `clip` | read `clip` and publish it | `UIT_CMD_CLIPBOARD` |
+| `clip text=V` | publish V (also readable as `clip`) | `UIT_CMD_CLIPBOARD` |
+| `dragging ID N` | the renderer's `drag start ... id=ID` is drag N | `uit_drag` |
 | `answer ID VALUE` | the app answered request `ID` | `UIT_CMD_ANSWER` |
 | `redraw WIN` | a batch committed: draw now even if nothing else changed | `UIT_CMD_REDRAW` |
 | `quit` / `exit STATUS` | the app quit / the h9 client exited | `UIT_CMD_QUIT`, `UitChanges.exited` |
 
 A renderer ignores a record it doesn't know, as readers do everywhere in
-the spec. The spike sends `menus` and `keys` as bare invalidations and
-leaves out `asset` bodies and the clipboard; the rest is as in the table.
+the spec. Asset bodies stay out of the stream: `asset NAME` says read
+`asset/NAME`.
 
 ### Encoding rules
 
@@ -194,8 +199,23 @@ leaves out `asset` bodies and the clipboard; the rest is as in the table.
   every parent's whole order on every change, which made a 1,000-row list
   built one write at a time cost 2.7 MB of stream; with deltas it's
   258 KB, linear in the rows.
-- **Within a batch:** `window` lines, then deletes (only the top of each
-  removed subtree), then news (parents first), then sets, then order
+- **A window arrives when it shows.** A window made hidden is not in the
+  stream; the batch where it first shows has its `window` line and then
+  everything it holds, as a snapshot would say it. A window's own files
+  (`state`, `title`, `size`, ...) travel as `window` and `window-ctl`, never
+  as `set` on its root.
+- **A type change is a remake.** `mkdir` then a write to `type` turns a
+  div into something else; the stream says `delete PATH` and `new` lines
+  for the node and its subtree.
+- **An app's batch waits.** Between the app's `begin` and `commit` the
+  stream reads the state from before the batch, as a built-in renderer
+  does; nodes made and removed inside it are held back and go out with the
+  commit's batch. A resync asked for meanwhile waits for the commit too.
+- **Words go with style.** A node's flag and variant words change with its
+  style, so a `set` with `:` carries the words as they now are as well.
+- **Within a batch:** `window` lines (with any newly shown window's
+  content), then deletes (only the top of each removed subtree), then
+  remakes and news (parents first), then sets, then mirrors, then order
   fixes, then the host commands in the order the core issued them.
 
 ## Snapshot and resync
@@ -335,60 +355,71 @@ That is the case resync and order deltas are for.
 
 ## Relation to the C ABI
 
-The renderer tree is built on the C ABI's own calls, and the spike proves
-that: [`render/uit.zig`](../core/src/render/uit.zig) declares the
-`uit_*` exports it calls, and it reaches inside the core only for one
-thing the header lacks, a node's list of set props for `new` lines
-(`Core.state()`, added for the spike). Landing it properly would mean:
+The renderer tree is built on the C ABI's own calls: its input lines are
+the `uit_*` input calls, and the encoder reads what a renderer reads. ABI
+7 ([`uitcore.h`](../core/include/uitcore.h)) adds:
 
-1. **Encode inside `uit_pump`** when anything is attached, so a built-in
-   renderer and 9P renderers share one pump. With nothing attached it
-   costs nothing.
-2. **New exports** (ABI 6): `uit_render_serve_fd(core, fd)` and
-   `uit_render_listen(core, addr, &dial)`, mirroring `uit_serve_fd` and
-   `uit_listen`, plus the channel form beside `uit_web_serve`. A core with
-   no built-in renderer (a `uitree-remote` host, like the spike) pumps on
-   its own owner thread when woken, as `uitree-headless` does.
-3. **One ABI gap filled** for the encoder: a node's set props in order
-   (`uit_node_props`), which a renderer wanting a generic inspector would
-   want too.
+- **Encoding inside `uit_pump`** when anything is attached, so a built-in
+  renderer and 9P renderers share one pump. With nothing attached it
+  costs nothing. 9P renderers' input runs at the start of the pump, as a
+  built-in renderer's calls would.
+- **`uit_render_listen(core, addr, flags, &dial)`**,
+  **`uit_render_serve_fd`** and **`uit_render_serve_conn`**, as
+  `uit_listen`, `uit_serve_fd` and `uit_serve_conn`. `UIT_RENDER_HOST_DRAWS`
+  says the host draws the app itself, so 9P renderers can be mirrors or
+  views but not the primary. GPUI serves it when `UITREE_RENDER_LISTEN`
+  is set.
+- **`uit_render_dial(core, addr, name, role)`**, the other end: instead of
+  running a machine, the core dials a renderer tree, keeps its tree from
+  the stream ([`render/dial.zig`](../core/src/render/dial.zig) over
+  [`render/replica.zig`](../core/src/render/replica.zig)) and sends
+  `uit_emit`, `uit_request`, `uit_mirror`, `uit_bounds`, `uit_frame_drawn`,
+  `uit_window_closed`, `uit_key`, `uit_menu_action` and `uit_system_dark`
+  back as input lines. A host over the C ABI draws a remote app through
+  the calls it already makes: that is all `uitree-tui --remote` is.
+  `uit_drag` isn't carried yet (`UIT_ENOTSUP`).
+- **`UitChanges.mirrors`**: files a renderer changed through `uit_mirror`.
+  They aren't `props` (the renderer that typed has them), but other
+  renderers need them; the stream says them as `mirror` records.
+- **`uit_node_props`**: a node's set props in the order they were set,
+  which the encoder needs for `new` lines and an inspector would want too.
 
-Nothing in `$ui` changes, and no existing renderer changes.
+Nothing in `$ui` changes.
 
-## Prototype plan
+## Status
 
-**Done in the spike** (`zig build remote` in `core/`, then
-`render.py ADDR`):
+Built (`zig build remote` in `core/` for `uitree-remote`):
 
-- `uitree-remote -R ADDR CMD...` runs the app in h9 and serves the
-  renderer tree on ADDR: `version`, `hello`, `renderers`, `changes`,
-  `input`, and `stats` for the numbers above.
-- The encoder: snapshot, batches, order deltas, the theme table, resync
-  past 4 MiB.
-- Input through the inject grammar, `request` and `closed`, and the
-  roles.
-- A toy renderer in Python, standard library only (a 9P2000 client in
-  about eighty lines): it keeps a tree, lays each node out as one row,
-  sends `bounds` and `frame`, and prints the window as text with
-  `--draw`. `--bench N` clicks the counter; `--once` hot-attaches,
-  reports and leaves.
+- **In the core** ([`core/src/render/`](../core/src/render/)): the encoder
+  (`stream.zig`), the tree and its fan-out (`hub.zig`), the replica
+  (`replica.zig`), the dialing side (`dial.zig`).
+- **The conformance check**: `uitree-headless --check-render` encodes
+  every pump of a run, replays the stream into an empty tree, and compares
+  the two as documents (every window's `tree` and `over/`, focus, title,
+  keys, menus, theme) at the end. `tests/conformance/run -r` runs it under
+  all 30 scripts, in CI, and all 30 agree. `$UITREE_RENDER_DUMP=FILE`
+  keeps the stream. [`render/tests.zig`](../core/src/render/tests.zig)
+  pins the stream's spelling, and one test has a core draw another
+  core's app over a real socket.
+- **`uitree-remote`**: a host with no renderer of its own, over uitcore.h
+  only. `-R ADDR` serves the renderer tree; `-W tcp!HOST!PORT` serves a
+  browser renderer at `http://HOST:PORT/`
+  ([`remote/page.html`](../core/src/remote/page.html): a 9P client over a
+  WebSocket at `/9p`, a DOM for the common types and style words, clicks,
+  typing, Enter, toggles and tabs as input), with each WebSocket handed to
+  `uit_render_serve_conn`.
+- **The terminal renderer as a 9P client**: `uitree-tui --remote ADDR
+  [--role R]` draws an app `uitree-remote` (or GPUI with
+  `UITREE_RENDER_LISTEN`) runs.
+- **The toy in Python**: `render.py ADDR [--draw] [--bench N] [--once]`.
 
-**Next, in order:**
+Checked by hand here: the TUI and the browser each drew the counter and
+the to-do example running in `uitree-remote`; keys, clicks and typing
+reached the app (the to-do file had the items).
 
-1. **Land the encoder in the core** behind the new exports above, with
-   unit tests that pump a tree and compare the stream to golden text.
-2. **Finish the records**: menus and keys as here-values, `asset/` and
-   `clip` files, drag.
-3. **A conformance check that needs no renderer**: apply a stream to an
-   empty tree and compare with `$ui`'s `tree` files, for every
-   conformance script. That catches every encoding bug at once.
-4. **A real renderer outside the core**: a browser DOM renderer in
-   TypeScript, over the WebSocket channel PR 21 already has. It is the
-   case the layer exists for, and it lays out with the browser, which
-   tests "layout is the renderer's" for real.
-5. **The terminal renderer as a 9P client** behind a flag, drawing the
-   same apps both ways. Two renderers of one app showing the same thing
-   is the test of several renderers.
+Not yet: drags from a dialing core, GPUI mirroring checked on a display,
+a browser renderer that lays out the way GPUI does, and the browser build
+(PR 21's) dialing a renderer tree from inside the page.
 
 ## Open questions
 
@@ -403,6 +434,12 @@ Nothing in `$ui` changes, and no existing renderer changes.
    leaks who is watching to the app.
 4. **Binary assets on the wire.** 0.1 reads `asset/NAME` on demand. A
    browser renderer might rather have a URL.
+6. **A mirror's own echo.** `mirror` records go to every renderer,
+   including the one that typed. A renderer that applies its own echo
+   while the user keeps typing can lose keystrokes on a slow link. The
+   terminal keeps its own edit buffer for the focused field, and the
+   browser page skips the echo for it. Should the stream
+   leave it out for the sender instead (a per-subscriber filter)?
 5. **Per-renderer window geometry.** A mirror with a smaller screen lays
    out differently but the app sees only the primary's `bounds`. Is that
    right, or should a mirror's window size be visible somewhere?

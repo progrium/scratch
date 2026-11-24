@@ -9,8 +9,8 @@
 //! `new TYPE win/W/a/b ...` is `new TYPE a/b ...` on `win/W/ctl`, `set` and
 //! `delete` the same, `mirror` the tree's own mirror (what uit_mirror does), `window` the root `ctl`'s `window`, `theme`, `keys`
 //! and `menu` their files. What only a renderer acts on (`answer`,
-//! `redraw`, `quit`, `exit`, `clip`, `dragging`, `verb`, `window-ctl`,
-//! `action`) goes
+//! `redraw`, `quit`, `exit`, `dragging`, `verb`, `window-ctl`, `action`)
+//! goes
 //! to the host's `record` callback instead.
 
 const std = @import("std");
@@ -195,6 +195,7 @@ pub const Replica = struct {
             if (c.attr("mode")) |m| try r.write(a, "theme/mode", m);
             return;
         }
+        if (eq(u8, v, "clip")) return r.write(a, "clip", c.attr("text") orelse "");
         if (eq(u8, v, "keys")) return r.write(a, "keys", c.attr("text") orelse "");
         if (eq(u8, v, "menu-bar")) return r.write(a, "menu/bar", try std.mem.join(a, " ", c.words));
         if (eq(u8, v, "menu")) {

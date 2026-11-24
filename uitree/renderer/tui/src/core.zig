@@ -126,6 +126,12 @@ pub const Core = struct {
         return slice(dial);
     }
 
+    /// Draws an app another core runs: dials its renderer tree
+    /// (protocols/render.md) instead of starting a machine.
+    pub fn renderDial(k: Core, addr: []const u8, name: []const u8, role: []const u8) Error!void {
+        try check(c.uit_render_dial(k.p, str(addr), str(name), str(role)));
+    }
+
     /// Starts the app in h9. Copies every string before it returns.
     pub fn runMachine(k: Core, gpa: std.mem.Allocator, args: MachineArgs) Error!void {
         const conv = struct {

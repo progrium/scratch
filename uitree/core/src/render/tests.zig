@@ -199,3 +199,60 @@ test "keys travel as a here-value and a replica reads them back" {
     try tt.expectEqual(@as(usize, 0), rep.errors.items.len);
     try tt.expectEqualStrings(treem.state.Blob.str(f.t.committed().keys), treem.state.Blob.str(rt.current().keys));
 }
+
+test "a core draws another core's app through uit_render_dial" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const cfg: abi.UitConfig = .{ .abi_version = abi.abi_version, .types = .{}, .style_words = .{}, .theme_tokens = .{}, .system_dark = 0, .wake = null, .wake_ctx = null };
+    var ap: ?*abi.Core = null;
+    var rp: ?*abi.Core = null;
+    try tt.expectEqual(abi.UIT_OK, abi.uit_create(&cfg, &ap));
+    const app = ap.?;
+    defer abi.uit_destroy(app);
+    try tt.expectEqual(abi.UIT_OK, abi.uit_create(&cfg, &rp));
+    const rend = rp.?;
+    defer abi.uit_destroy(rend);
+
+    var dial: abi.UitStr = .{};
+    try tt.expectEqual(abi.UIT_OK, abi.uit_render_listen(app, .{}, 0, &dial));
+    // The app's side: a counter, as an app's writes.
+    try app.tree.apply(.{ .write = .{ .session = 1, .path = "win/main/ctl", .data = "set . title=Counter\nnew text n text=0\nnew input in placeholder=Name" } });
+    try tt.expectEqual(abi.UIT_OK, abi.uit_render_dial(rend, dial, abi.UitStr.lit("test"), abi.UitStr.lit("primary")));
+
+    const Both = struct {
+        fn pump(x: *abi.Core, y: *abi.Core) void {
+            var ch: abi.UitChanges = .{};
+            _ = abi.uit_pump(x, &ch);
+            _ = abi.uit_pump(y, &ch);
+            x.io().sleep(.fromMilliseconds(2), .awake) catch {};
+        }
+        fn text(c: *abi.Core, path: []const u8) ?[]const u8 {
+            const st = c.tree.current();
+            const w = st.win("main") orelse return null;
+            var buf: [256]u8 = undefined;
+            var fba: std.heap.FixedBufferAllocator = .init(&buf);
+            const h = treem.path.resolveNode(st, fba.allocator(), w.root, path, null) catch return null;
+            const n = st.node(h) orelse return null;
+            return if (std.mem.eql(u8, path, "n")) n.value("text") else n.value("value");
+        }
+    };
+    var tries: usize = 0;
+    while (Both.text(rend, "n") == null and tries < 2000) : (tries += 1) Both.pump(app, rend);
+    try tt.expectEqualStrings("0", Both.text(rend, "n").?);
+    try tt.expectEqualStrings("Counter", treem.state.Blob.str(rend.tree.current().win("main").?.title));
+
+    // The app writes; the renderer's tree follows.
+    try app.tree.apply(.{ .write = .{ .session = 1, .path = "win/main/ctl", .data = "set n text=1" } });
+    tries = 0;
+    while (!std.mem.eql(u8, Both.text(rend, "n") orelse "", "1") and tries < 2000) : (tries += 1) Both.pump(app, rend);
+    try tt.expectEqualStrings("1", Both.text(rend, "n").?);
+
+    // The renderer types; the app's tree has it, as uit_mirror would.
+    const st = rend.tree.current();
+    var buf: [256]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&buf);
+    const field = try treem.path.resolveNode(st, fba.allocator(), st.win("main").?.root, "in", null);
+    try tt.expectEqual(abi.UIT_OK, abi.uit_mirror(rend, field, abi.UitStr.lit("value"), abi.UitStr.lit("Ada")));
+    tries = 0;
+    while (!std.mem.eql(u8, Both.text(app, "in") orelse "", "Ada") and tries < 2000) : (tries += 1) Both.pump(app, rend);
+    try tt.expectEqualStrings("Ada", Both.text(app, "in").?);
+}

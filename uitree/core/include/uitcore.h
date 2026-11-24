@@ -4,7 +4,8 @@
  * Version 7: version 6 plus the renderer tree (protocols/render.md):
  * uit_render_listen, uit_render_serve_fd and uit_render_serve_conn serve
  * a second 9P tree that renderers in other processes attach to, encoded
- * inside uit_pump; and uit_node_props, a node's set props by name.
+ * inside uit_pump; uit_render_dial, a core that draws a remote app; and
+ * uit_node_props, a node's set props by name.
  * Version 6: version 5 plus uit_serve_conn: a connection the renderer
  * carries itself (UitConn), for a platform with no fds to hand the core.
  * The browser build serves its machine's connections this way.
@@ -494,6 +495,16 @@ int uit_render_serve_fd(UitCore *, int fd, uint32_t flags);
 /* Serves the renderer tree on a connection the host carries, as
  * uit_serve_conn (release is called even on error). */
 int uit_render_serve_conn(UitCore *, const UitConn *conn, uint32_t flags);
+
+/* The other end: dials a renderer tree another core serves and says
+ * hello as `name` with `role` (primary, mirror or view; empty: mirror).
+ * This core's tree becomes that app's, kept by its change stream inside
+ * uit_pump, and uit_emit, uit_request, uit_mirror, uit_bounds,
+ * uit_frame_drawn, uit_window_closed, uit_key, uit_menu_action and
+ * uit_system_dark go to it as `input` lines; uit_drag is UIT_ENOTSUP. A
+ * host draws the remote app as it would a local one. Instead of
+ * uit_run_machine; the stream's end is UitChanges.exited. */
+int uit_render_dial(UitCore *, UitStr addr, UitStr name, UitStr role);
 
 /* The names of the node's set props, in the order they were first set
  * (flag words and files, style and order included when set): what a

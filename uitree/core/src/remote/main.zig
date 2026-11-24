@@ -2,21 +2,24 @@
 //! It runs the app in h9, serves `$ui` to it as usual, and serves the
 //! renderer tree to any renderer that dials ADDR.
 //!
-//!     uitree-remote -R ADDR [-a ADDR] [-r ROOT] [CMD [ARG...]]
+//!     uitree-remote [-R ADDR] [-W ADDR] [-a ADDR] [-r ROOT] [CMD [ARG...]]
 //!
 //! `-a ADDR` also serves `$ui` on ADDR, for an app on the host that dials
-//! it (`$UI_DIAL`) instead of one in h9. It is a host over uitcore.h and
+//! it (`$UI_DIAL`) instead of one in h9. `-W tcp!HOST!PORT` serves a
+//! browser renderer: open http://HOST:PORT/ and the page attaches to the
+//! renderer tree over a WebSocket (ws.zig, page.html). It is a host over uitcore.h and
 //! nothing else: the core encodes inside uit_pump, so all this does is
 //! pump when woken.
 
 const std = @import("std");
 const core = @import("uitcore");
 const uit = @import("uit.zig");
+const ws = @import("ws.zig");
 
 const abi = core.abi;
 const UitStr = abi.UitStr;
 
-const usage = "usage: uitree-remote -R ADDR [-a ADDR] [-r ROOT] [CMD [ARG...]]\n";
+const usage = "usage: uitree-remote [-R ADDR] [-W tcp!HOST!PORT] [-a ADDR] [-r ROOT] [CMD [ARG...]]\n";
 
 const Waker = struct {
     io: std.Io,
@@ -45,17 +48,18 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     var raddr: ?[]const u8 = null;
     var aaddr: ?[]const u8 = null;
+    var waddr: ?[]const u8 = null;
     var root: []const u8 = "";
     if (init.environ_map.get("H9ROOT")) |v| root = v;
     var i: usize = 1;
     while (i + 1 < args.len and args[i].len > 1 and args[i][0] == '-') : (i += 2) {
-        if (std.mem.eql(u8, args[i], "-R")) raddr = args[i + 1] else if (std.mem.eql(u8, args[i], "-a")) aaddr = args[i + 1] else if (std.mem.eql(u8, args[i], "-r")) root = args[i + 1] else {
+        if (std.mem.eql(u8, args[i], "-R")) raddr = args[i + 1] else if (std.mem.eql(u8, args[i], "-a")) aaddr = args[i + 1] else if (std.mem.eql(u8, args[i], "-W")) waddr = args[i + 1] else if (std.mem.eql(u8, args[i], "-r")) root = args[i + 1] else {
             std.debug.print(usage, .{});
             std.process.exit(2);
         }
     }
     const argv = args[i..];
-    if (raddr == null or (argv.len == 0 and aaddr == null)) {
+    if ((raddr == null and waddr == null) or (argv.len == 0 and aaddr == null)) {
         std.debug.print(usage, .{});
         std.process.exit(2);
     }
@@ -78,12 +82,23 @@ pub fn main(init: std.process.Init) !void {
     const c = cp.?;
     _ = uit.uit_themes(c, UitStr.of(core.types.embedded.themes));
 
-    var dial: UitStr = .{};
-    if (uit.uit_render_listen(c, UitStr.of(raddr.?), 0, &dial) != abi.UIT_OK) {
-        std.debug.print("uitree-remote: listen {s}: {s}\n", .{ raddr.?, uit.uit_last_error(c).slice() });
-        return error.Listen;
+    if (raddr) |ra| {
+        var dial: UitStr = .{};
+        if (uit.uit_render_listen(c, UitStr.of(ra), 0, &dial) != abi.UIT_OK) {
+            std.debug.print("uitree-remote: listen {s}: {s}\n", .{ ra, uit.uit_last_error(c).slice() });
+            return error.Listen;
+        }
+        std.debug.print("uitree-remote: renderers dial {s}\n", .{dial.slice()});
     }
-    std.debug.print("uitree-remote: renderers dial {s}\n", .{dial.slice()});
+    var inbox: ws.Inbox = .{ .io = threaded.io(), .wake = Waker.wake, .wake_ctx = &waker };
+    if (waddr) |wa| {
+        const port = ws.listen(wa, &inbox) catch |e| {
+            std.debug.print("uitree-remote: listen {s}: {t}\n", .{ wa, e });
+            return error.Listen;
+        };
+        std.debug.print("uitree-remote: browsers open http://localhost:{d}/\n", .{port});
+    }
+    var conns: std.ArrayList(abi.UitConn) = .empty;
 
     if (aaddr) |aa| {
         var adial: UitStr = .{};
@@ -122,6 +137,10 @@ pub fn main(init: std.process.Init) !void {
     var status: []const u8 = "";
     while (true) {
         waker.wait();
+        // WebSockets the listener took: served on this, the owner, thread.
+        conns.clearRetainingCapacity();
+        inbox.take(&conns);
+        for (conns.items) |*k| _ = uit.uit_render_serve_conn(c, k, 0);
         var ch: abi.UitChanges = .{};
         _ = uit.uit_pump(c, &ch);
         if (ch.exited == 1) {
