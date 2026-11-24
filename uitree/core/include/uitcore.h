@@ -1,6 +1,10 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
+ * Version 8: version 7 plus the shell layer's first files
+ * (protocols/shell.md): UIT_CMD_APP_CTL carries `tray`, `delete
+ * tray/NAME`, `open URL` and `set app` to the renderer, and
+ * uit_tray_action reports a tray menu item (`via=tray`).
  * Version 7: version 6 plus the renderer tree (protocols/render.md):
  * uit_render_listen, uit_render_serve_fd and uit_render_serve_conn serve
  * a second 9P tree that renderers in other processes attach to, encoded
@@ -56,7 +60,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 7u
+#define UIT_ABI_VERSION 8u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -248,7 +252,10 @@ typedef enum {
     UIT_CMD_ANSWER = 12,       /* seq, answer: the client answered request seq */
     UIT_CMD_REDRAW = 13,       /* win: a batch committed; redraw the window */
     UIT_CMD_THEME_LOAD = 14,   /* name = path: load a theme file in the renderer's format */
-    UIT_CMD_ASSETS = 15        /* name: $ui/asset/NAME was written or removed; re-read it with uit_asset */
+    UIT_CMD_ASSETS = 15,       /* name: $ui/asset/NAME was written or removed; re-read it with uit_asset */
+    UIT_CMD_APP_CTL = 16       /* ctl: a shell command (shell.md). `tray NAME prop=value ...` makes or
+                                  changes a tray icon and carries every prop it has; `delete tray/NAME`;
+                                  `open URL`; `set app prop=value ...` with every app prop. Since 8. */
 } UitHostCmdTag;
 
 /* A pre-parsed ctl line, so the renderer never tokenizes. */
@@ -436,6 +443,9 @@ int      uit_window_closed(UitCore *, UitStr win);
 int      uit_key(UitCore *, UitStr win, UitStr keystroke, UitNode focused);
 /* A menu item was chosen: `action ID - via=menu`. */
 int      uit_menu_action(UitCore *, UitStr id);
+/* A tray icon's menu item was chosen: `action ID tray/NAME via=tray`.
+ * UIT_ENOTSUP for a remote app (uit_render_dial). Since version 8. */
+int      uit_tray_action(UitCore *, UitStr tray, UitStr id);
 /* The OS appearance changed: 0 light, 1 dark. */
 int      uit_system_dark(UitCore *, uint32_t dark);
 

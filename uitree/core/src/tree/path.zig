@@ -22,7 +22,7 @@ const Error = proto.Error;
 const Diag = proto.Diag;
 
 /// App-level directories.
-pub const Dir = enum { root, menu, theme, asset, types, style, win, drag, clipdata, file };
+pub const Dir = enum { root, menu, theme, asset, types, style, win, drag, clipdata, file, app, tray };
 
 /// App-level files.
 pub const AppFile = enum {
@@ -68,6 +68,13 @@ pub const Loc = union(enum) {
     type_dir: *const Type,
     /// `types/NAME/spec` or `types/NAME/version`.
     type_file: struct { ty: *const Type, name: []const u8 },
+    /// `app/PROP` (shell.md § The app): `name` is static, one of
+    /// `state.app_props`.
+    app_prop: []const u8,
+    /// `tray/NAME/`, which exists.
+    tray_dir: []const u8,
+    /// `tray/NAME/PROP`: `prop` is static, one of `state.tray_props`.
+    tray_file: struct { name: []const u8, prop: []const u8 },
     /// A window's root, `over/`, or any node.
     node: Handle,
     /// One of a node's files. `name` is static: a catalog prop name or a
@@ -126,13 +133,26 @@ pub fn resolve(st: *const State, cat: *const Catalog, arena: Allocator, path_in:
     if (one) {
         const app: ?AppFile = if (eq(u8, first, "version")) .version else if (eq(u8, first, "ctl")) .ctl else if (eq(u8, first, "events")) .events else if (eq(u8, first, "trace")) .trace else if (eq(u8, first, "keys")) .keys else if (eq(u8, first, "clip")) .clip else null;
         if (app) |a| return .{ .app = a };
-        const dir: ?Dir = if (eq(u8, first, "menu")) .menu else if (eq(u8, first, "theme")) .theme else if (eq(u8, first, "asset")) .asset else if (eq(u8, first, "types")) .types else if (eq(u8, first, "style")) .style else if (eq(u8, first, "drag")) .drag else if (eq(u8, first, "clipdata")) .clipdata else if (eq(u8, first, "file")) .file else null;
+        const dir: ?Dir = if (eq(u8, first, "menu")) .menu else if (eq(u8, first, "theme")) .theme else if (eq(u8, first, "asset")) .asset else if (eq(u8, first, "types")) .types else if (eq(u8, first, "style")) .style else if (eq(u8, first, "drag")) .drag else if (eq(u8, first, "clipdata")) .clipdata else if (eq(u8, first, "file")) .file else if (eq(u8, first, "app")) .app else if (eq(u8, first, "tray")) .tray else null;
         if (dir) |x| return .{ .dir = x };
         return nf(d, arena, path);
     }
     if (eq(u8, first, "menu")) {
         if (std.mem.indexOfScalar(u8, rest, '/') != null) return nf(d, arena, path);
         return .{ .menu = rest };
+    }
+    if (eq(u8, first, "app")) {
+        for (state.app_props) |pr| if (eq(u8, pr, rest)) return .{ .app_prop = pr };
+        return nf(d, arena, path);
+    }
+    if (eq(u8, first, "tray")) {
+        var r = std.mem.splitScalar(u8, rest, '/');
+        const name = r.next().?;
+        if (st.tray(name) == null) return nf(d, arena, path);
+        const f = r.next() orelse return .{ .tray_dir = name };
+        if (r.next() != null) return nf(d, arena, path);
+        for (state.tray_props) |pr| if (eq(u8, pr, f)) return .{ .tray_file = .{ .name = name, .prop = pr } };
+        return nf(d, arena, path);
     }
     if (eq(u8, first, "asset")) {
         if (std.mem.indexOfScalar(u8, rest, '/') != null) return nf(d, arena, path);

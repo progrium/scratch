@@ -1,0 +1,51 @@
+#!/bin/sh
+# topframe: Topframe on uitree. The same flags and directory as Topframe:
+# ~/.topframe (or $TOPFRAME_DIR) is served as the overlay, made and seeded
+# with the demo page on first run.
+#
+# It runs topframe-client, from this script's directory, in uitree with
+# h9's network enabled so the client can serve the page to the web view.
+# $UITREE names the uitree binary (default: uitree on $PATH).
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+version=$(cat "$here/version" 2>/dev/null || echo dev)
+docs=https://github.com/progrium/topframe
+
+usage() {
+	echo "Usage: topframe <flags>"
+	echo "Topframe is a fullscreen webview overlay agent"
+	echo
+	echo "Flags:"
+	echo "  -docs       open documentation in browser"
+	echo "  -help       show help"
+	echo "  -plist      generate launch agent plist"
+	echo "  -version    show version"
+}
+
+opener() {
+	if command -v open >/dev/null 2>&1; then open "$1"; else xdg-open "$1"; fi
+}
+
+dir=${TOPFRAME_DIR:-$HOME/.topframe}
+mkdir -p "$dir"
+[ -e "$dir/index.html" ] || cp "$here/data/index.html" "$dir/index.html"
+if [ ! -e "$dir/stocks" ]; then
+	cp "$here/data/stocks" "$dir/stocks"
+	chmod 644 "$dir/stocks" # to enable, chmod +x stocks
+fi
+
+case "${1:-}" in
+-h|-help|--help) usage; exit 0 ;;
+-v|-version|--version) echo "$version"; exit 0 ;;
+-docs|--docs) opener "$docs"; exit 0 ;;
+-plist|--plist)
+	bin="$here/topframe"
+	sed -e "s|{{.Dir}}|$dir|" -e "s|{{.Bin}}|$bin|" "$here/data/agent.plist"
+	exit 0 ;;
+'') ;;
+*) usage >&2; exit 2 ;;
+esac
+
+uitree=${UITREE:-uitree}
+cd "$here"
+exec "$uitree" -t Topframe --net enable -C "$dir" -e "TOPFRAME_DIR=$dir" ./topframe-client

@@ -431,7 +431,7 @@ test "node files and computed reads" {
     try tt.expectEqual(tree.Kind.events, (try snap.stat(f.a(), b ++ "/events")).kind);
     try tt.expectEqual(tree.Kind.readonly, (try snap.stat(f.a(), b ++ "/bounds")).kind);
     try tt.expectEqual(tree.Kind.dir, (try snap.stat(f.a(), b)).kind);
-    try tt.expectEqualStrings("version ctl events trace keys clip clipdata file menu theme asset types style win", try listNames(&f, ""));
+    try tt.expectEqualStrings("version ctl events trace keys clip clipdata file menu theme asset types style win app", try listNames(&f, ""));
     try tt.expectEqualStrings("type order ctl events tree bounds style tag on context tooltip drop drag-types title bounds inner state focus over ok", try listNames(&f, R));
     try tt.expectEqualStrings("main", try listNames(&f, "win"));
     // 0.2: over/ lists only its overlays.
@@ -1719,4 +1719,58 @@ test "tooltip is a node file on every node" {
     try tt.expectEqual(Code.bad_value, try f.code(R ++ "/over/tip/open-delay", "-5"));
     // A child can't be named for it.
     try tt.expectEqual(Code.bad_value, try f.code(R ++ "/ctl", "new text tooltip text=x"));
+}
+
+test "shell: window platform props, app props, trays and open" {
+    var f: Fx = undefined;
+    try f.app();
+    defer f.deinit();
+    // shell.md § Window props: a window above everything, on every Space,
+    // covering its display, with no shadow (Topframe's overlay).
+    f.t.clearChanges();
+    try f.ok("ctl", "set win/main top=overlay fill=display all-spaces=on shadow=off titlebar=none");
+    try f.ok(R ++ "/ctl", "set . top=on");
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/ctl", "set . top=always"));
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/ctl", "set . fill=screen"));
+    try tt.expectEqual(Code.bad_value, try f.code(R ++ "/ctl", "set . all-spaces=yes"));
+    // The app: bare words are on, every prop is a file.
+    f.t.clearChanges();
+    try f.ok("ctl", "set app agent name=Topframe");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .app_ctl));
+    try f.expectRead("app/agent", "on\n");
+    try f.expectRead("app/name", "Topframe\n");
+    try f.expectRead("app/accessory", "");
+    try tt.expectEqual(Code.not_found, try f.code("ctl", "set app dock=off"));
+    try tt.expectEqual(Code.bad_value, try f.code("ctl", "set app agent=yes"));
+    try tt.expectEqual(Code.bad_value, try f.code("app/agent", "off"));
+    // A tray: made once, changed with set, its props files.
+    try f.ok("menu/tray", "item enabled label=Enabled\nitem interact label=Interactive\nsep\nitem quit label=Quit\n");
+    f.t.clearChanges();
+    try f.ok("ctl", "tray main title=X menu=tray tooltip='Top frame'");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .app_ctl));
+    try f.expectRead("tray/main/title", "X\n");
+    try f.expectRead("tray/main/tooltip", "Top frame\n");
+    try f.expectRead("tray/main/menu", "tray\n");
+    try tt.expectEqualStrings("title tooltip menu icon", try listNames(&f, "tray/main"));
+    try tt.expectEqualStrings("main", try listNames(&f, "tray"));
+    try tt.expectEqual(Code.in_use, try f.code("ctl", "tray main"));
+    try tt.expectEqual(Code.not_found, try f.code("ctl", "tray other badge=1"));
+    try tt.expectEqual(Code.bad_value, try f.code("ctl", "tray 'a b'"));
+    try f.ok("ctl", "set tray/main title=Y");
+    try f.expectRead("tray/main/title", "Y\n");
+    try f.expectRead("tray/main/tooltip", "Top frame\n");
+    try tt.expectEqual(Code.not_found, try f.code("ctl", "set tray/none title=Y"));
+    // Its items arrive as actions from the tray, and set ID check= works on them.
+    try f.ok("ctl", "set interact check=on");
+    const s = try f.subPath("events");
+    defer s.close();
+    try f.t.trayAction("main", "quit");
+    try tt.expectEqualStrings("action quit tray/main via=tray\n", try noSeq(f.a(), try f.drain(s)));
+    try f.ok("ctl", "delete tray/main");
+    try tt.expectEqual(Code.not_found, try f.code("tray/main/title", ""));
+    // open hands a URL to the host.
+    f.t.clearChanges();
+    try f.ok("ctl", "open file:///Users/me/.topframe");
+    try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .app_ctl));
+    try tt.expectEqual(Code.bad_value, try f.code("ctl", "open nowhere"));
 }

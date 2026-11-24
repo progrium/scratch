@@ -22,6 +22,8 @@ pub(crate) enum Input {
     Request { node: Node, name: String, attrs: Vec<(String, String)>, default: String },
     Mirror { node: Node, file: String, value: Vec<u8> },
     MenuAction { id: String },
+    /// A tray icon's menu item, from the platform's thread (platform.rs).
+    TrayAction { tray: String, id: String },
 }
 
 fn refs(a: &[(String, String)]) -> Vec<(&str, &str)> {
@@ -41,6 +43,11 @@ pub(crate) fn drain_input(inner: &Rc<Inner>, batch: Vec<Input>) {
             Input::MenuAction { id } => {
                 if let Ok(core) = inner.core.try_borrow() {
                     core.menu_action(&id);
+                }
+            }
+            Input::TrayAction { tray, id } => {
+                if let Ok(core) = inner.core.try_borrow() {
+                    core.tray_action(&tray, &id);
                 }
             }
             Input::Mirror { node, file, value } => {
@@ -120,6 +127,12 @@ pub(crate) struct Inner {
     pub tips: RefCell<HashMap<Node, Entity<crate::components::overlays::tooltip::TipState>>>,
     /// The windows' rem size, from the `spacing` token (theme.rs).
     pub rem: Cell<f32>,
+    /// `app/agent`: keep running when the last window closes.
+    pub agent: Cell<bool>,
+    /// Each tray's props as the core last sent them, by name.
+    pub tray_props: RefCell<std::collections::BTreeMap<String, Vec<(String, String)>>>,
+    /// The live tray icons (platform/tray.rs).
+    pub trays: RefCell<crate::platform::tray::Trays>,
 }
 
 pub(crate) fn is_dark(a: gpui::WindowAppearance) -> bool {
@@ -381,6 +394,9 @@ pub(crate) fn install_with(opts: Options, waker: Option<uitcore::Waker>, cx: &mu
         frame_tips: Default::default(),
         rem: Cell::new(16.),
         tips: Default::default(),
+        agent: Cell::new(false),
+        tray_props: Default::default(),
+        trays: Default::default(),
     });
     crate::theme::init(&inner, cx);
     crate::actions::init(&inner, cx);
@@ -587,13 +603,15 @@ pub fn run(opts: Options) -> i32 {
         let argv: Vec<&str> = opts.argv.iter().map(String::as_str).collect();
         let dirs: Vec<&str> = opts.dirs.iter().map(String::as_str).collect();
         let env: Vec<&str> = opts.env.iter().map(String::as_str).collect();
+        let h9_flags: Vec<&str> = opts.h9_flags.iter().map(String::as_str).collect();
         let r = inner.core.borrow_mut().run_machine(&uitcore::MachineArgs {
             prog: argv[0],
             argv: &argv,
             root: opts.root.as_deref().unwrap_or(""),
-            cwd: "",
+            cwd: opts.cwd.as_deref().unwrap_or(""),
             dirs: &dirs,
             env: &env,
+            h9_flags: &h9_flags,
         });
         if let Err(e) = r {
             eprintln!("uitree: {}: {e}", argv[0]);
@@ -733,8 +751,8 @@ fn reconcile_windows(inner: &Rc<Inner>, cx: &mut App) {
             let _ = e.handle.update(cx, |_, window, _| window.remove_window());
         }
     }
-    // Closing the last window quits.
-    if inner.windows.borrow().is_empty() && !inner.opts.keep {
+    // Closing the last window quits, unless the app is an agent.
+    if inner.windows.borrow().is_empty() && !inner.opts.keep && !inner.agent.get() {
         quit(inner, cx);
     }
 }
@@ -752,7 +770,10 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
         HostCmd::Window { win } => crate::window::open(inner, &win, cx),
         HostCmd::WindowCtl { win, ctl } => crate::window::ctl(inner, &win, &ctl, cx),
         HostCmd::Quit => quit(inner, cx),
-        HostCmd::Menus | HostCmd::Keymap => crate::actions::set_menus(inner, cx),
+        HostCmd::Menus | HostCmd::Keymap => {
+            crate::actions::set_menus(inner, cx);
+            crate::platform::refresh_trays(inner);
+        }
         HostCmd::Theme => {
             crate::theme::apply(inner, cx);
             for c in inner.cache.borrow_mut().values_mut() {
@@ -773,6 +794,7 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
                 }
             }
             crate::actions::set_menus(inner, cx);
+            crate::platform::refresh_trays(inner);
             notify_all(inner, cx);
         }
         HostCmd::Overlay { win, node, open, .. } => {
@@ -815,8 +837,10 @@ pub(crate) fn host_cmd(inner: &Rc<Inner>, c: HostCmd, cx: &mut App) {
         HostCmd::Redraw { win } => notify_window(inner, &win, cx),
         HostCmd::Assets { name } => {
             inner.assets.borrow_mut().remove(&name);
+            crate::platform::refresh_trays(inner);
             notify_all(inner, cx);
         }
+        HostCmd::AppCtl { ctl } => crate::platform::app_ctl(inner, &ctl, cx),
         HostCmd::Other(_) => {}
     }
 }
@@ -832,7 +856,7 @@ fn answered(inner: &Rc<Inner>, p: Pending, answer: Ctl, cx: &mut App) {
                 if let Some(e) = e {
                     let _ = e.handle.update(cx, |_, window, _| window.remove_window());
                 }
-                if inner.windows.borrow().is_empty() && !inner.opts.keep {
+                if inner.windows.borrow().is_empty() && !inner.opts.keep && !inner.agent.get() {
                     quit(inner, cx);
                 }
             }

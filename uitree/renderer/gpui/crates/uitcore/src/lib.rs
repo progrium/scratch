@@ -223,6 +223,9 @@ pub enum HostCmd {
     ThemeLoad { path: String },
     /// `asset/NAME` was written or removed.
     Assets { name: String },
+    /// A shell command (shell.md): `tray NAME prop=value ...`, `delete
+    /// tray/NAME`, `open URL`, `set app prop=value ...`.
+    AppCtl { ctl: Ctl },
     Other(u32),
 }
 
@@ -291,6 +294,8 @@ pub struct MachineArgs<'a> {
     /// h9 mounts, `SRC[:DST]` (`ALPINE:#L` gives the app a Linux view).
     pub dirs: &'a [&'a str],
     pub env: &'a [&'a str],
+    /// h9 sandbox flags as h9 spells them: `--net=enable`, `--net-allow=PATTERN`.
+    pub h9_flags: &'a [&'a str],
 }
 
 impl Core {
@@ -349,6 +354,7 @@ impl Core {
         let argv: Vec<UitStr> = a.argv.iter().map(|x| s(x)).collect();
         let env: Vec<UitStr> = a.env.iter().map(|x| s(x)).collect();
         let dirs: Vec<UitStr> = a.dirs.iter().map(|x| s(x)).collect();
+        let flags: Vec<UitStr> = a.h9_flags.iter().map(|x| s(x)).collect();
         let m = sys::UitMachineArgs {
             prog: s(a.prog),
             argv: argv.as_ptr(),
@@ -359,8 +365,8 @@ impl Core {
             n_dirs: dirs.len(),
             env: env.as_ptr(),
             n_env: env.len(),
-            h9_flags: std::ptr::null(),
-            n_h9_flags: 0,
+            h9_flags: if flags.is_empty() { std::ptr::null() } else { flags.as_ptr() },
+            n_h9_flags: flags.len(),
             out_fd: -1,
             err_fd: -1,
         };
@@ -401,6 +407,7 @@ impl Core {
                 },
                 sys::UIT_CMD_THEME_LOAD => HostCmd::ThemeLoad { path: text(c.name).into_owned() },
                 sys::UIT_CMD_ASSETS => HostCmd::Assets { name: text(c.name).into_owned() },
+                sys::UIT_CMD_APP_CTL => HostCmd::AppCtl { ctl: Ctl::copy(&c.ctl) },
                 t => HostCmd::Other(t),
             });
         }
@@ -609,6 +616,11 @@ impl Core {
 
     pub fn menu_action(&self, id: &str) {
         unsafe { sys::uit_menu_action(self.raw, s(id)) };
+    }
+
+    /// A tray icon's menu item was chosen: `action ID tray/NAME via=tray`.
+    pub fn tray_action(&self, tray: &str, id: &str) {
+        unsafe { sys::uit_tray_action(self.raw, s(tray), s(id)) };
     }
 
     pub fn system_dark(&self, dark: bool) {

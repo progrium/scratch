@@ -59,6 +59,7 @@ pub mod spec;
 mod actions;
 mod materialize;
 mod passthrough;
+pub(crate) mod platform;
 pub(crate) mod runtime;
 pub mod styling;
 mod theme;
@@ -89,6 +90,11 @@ pub struct Options {
     pub dirs: Vec<String>,
     /// `-e NAME=VALUE`: the app's environment.
     pub env: Vec<String>,
+    /// `-C DIR`: the host directory the app starts in.
+    pub cwd: Option<String>,
+    /// `--net MODE`, `--h9 FLAG`: h9 sandbox flags (`--net=enable` lets the
+    /// app serve on the host's ports).
+    pub h9_flags: Vec<String>,
     /// The program and its arguments.
     pub argv: Vec<String>,
     /// Build an N-node tree and measure, instead of running an app.

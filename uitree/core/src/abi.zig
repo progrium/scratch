@@ -28,7 +28,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 7;
+pub const abi_version: u32 = 8;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -111,6 +111,7 @@ pub const UIT_CMD_ANSWER: u32 = 12;
 pub const UIT_CMD_REDRAW: u32 = 13;
 pub const UIT_CMD_THEME_LOAD: u32 = 14;
 pub const UIT_CMD_ASSETS: u32 = 15;
+pub const UIT_CMD_APP_CTL: u32 = 16;
 
 pub const UitCtl = extern struct {
     verb: UitStr = .{},
@@ -1162,6 +1163,12 @@ pub export fn uit_menu_action(c: *Core, id: UitStr) c_int {
     return done(c, c.tree.menuAction(id.slice()));
 }
 
+pub export fn uit_tray_action(c: *Core, tray: UitStr, id: UitStr) c_int {
+    if (input(c)) |r| return r;
+    if (remoteOf(c) != null) return UIT_ENOTSUP;
+    return done(c, c.tree.trayAction(tray.slice(), id.slice()));
+}
+
 pub export fn uit_system_dark(c: *Core, dark: u32) c_int {
     if (input(c)) |r| return r;
     if (remoteOf(c)) |rm| rm.appearance(dark != 0) catch {};
@@ -1270,6 +1277,7 @@ test "header and abi.zig agree on the version and the constants" {
         .{ "UIT_EINVAL = -1", UIT_EINVAL },           .{ "UIT_ENOTSUP = -7", UIT_ENOTSUP },
         .{ "UIT_ETYPES = -11", UIT_ETYPES },          .{ "UIT_CMD_WINDOW = 1", UIT_CMD_WINDOW },
         .{ "UIT_CMD_THEME_LOAD = 14", UIT_CMD_THEME_LOAD }, .{ "UIT_CMD_ASSETS = 15", UIT_CMD_ASSETS }, .{ "UIT_ARG_TEXT = 6", UIT_ARG_TEXT },
+        .{ "UIT_CMD_APP_CTL = 16", UIT_CMD_APP_CTL },
         .{ "UIT_STATE_GROUP_HOVER = 6", UIT_STATE_GROUP_HOVER },
     };
     inline for (consts) |k| {

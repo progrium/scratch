@@ -12,9 +12,11 @@
 
 const std = @import("std");
 const types = @import("../types/root.zig");
+const proto = @import("../proto/root.zig");
 
 const Allocator = std.mem.Allocator;
 const Type = types.Type;
+const Attr = proto.Attr;
 
 pub const Handle = u32;
 
@@ -228,7 +230,15 @@ pub const WinAsk = enum { inherit, close, none };
 /// outlives every State.
 pub const WinProp = struct { key: []const u8, val: *Blob };
 
-pub const win_props = [_][]const u8{ "title", "size", "min", "max", "pos", "kind", "titlebar", "resizable", "transparent", "click-through" };
+pub const win_props = [_][]const u8{ "title", "size", "min", "max", "pos", "kind", "titlebar", "resizable", "transparent", "click-through", "top", "fill", "all-spaces", "shadow" };
+
+/// The shell's app props (shell.md § The app), each a file in `app/`.
+pub const app_props = [_][]const u8{ "id", "name", "version", "agent", "accessory" };
+
+/// A tray icon's props (shell.md § Tray), each a file in `tray/NAME/`.
+/// `menu` names the `menu/NAME` file that holds its items; `icon` an
+/// `asset/NAME` with its PNG bytes.
+pub const tray_props = [_][]const u8{ "title", "tooltip", "menu", "icon" };
 
 pub const Win = struct {
     rc: std.atomic.Value(u32) = .init(1),
@@ -499,6 +509,12 @@ pub const State = struct {
     /// `menu/NAME`, in creation order.
     menus: std.ArrayList(Named) = .empty,
     assets: std.ArrayList(Named) = .empty,
+    /// `tray/NAME/`, in creation order: `val` is the props as one line of
+    /// `name=value` words (`trayProp` reads one back).
+    trays: std.ArrayList(Named) = .empty,
+    /// `app/`: the app props as one line of `name=value` words.
+    app: ?*Blob = null,
+    app_ver: u32 = 0,
     /// `clip`: the clipboard as text (transfer.md § Clipboard).
     clip: ?*Blob = null,
     clip_ver: u32 = 0,
@@ -550,6 +566,9 @@ pub const State = struct {
         s.menus.deinit(gpa);
         for (s.assets.items) |m| freeNamed(gpa, m);
         s.assets.deinit(gpa);
+        for (s.trays.items) |m| freeNamed(gpa, m);
+        s.trays.deinit(gpa);
+        unrefOpt(s.app, gpa);
         unrefOpt(s.clip, gpa);
         if (s.clipdata) |o| o.unref(gpa);
         for (s.drags.items) |d| d.offer.unref(gpa);
@@ -573,12 +592,14 @@ pub const State = struct {
         c.wins = .empty;
         c.menus = .empty;
         c.assets = .empty;
+        c.trays = .empty;
         c.drags = .empty;
         c.tokens = .empty;
         // Refs first, so a failure below can free the copy like any State.
         _ = refOpt(c.keys);
         _ = refOpt(c.bar);
         _ = refOpt(c.clip);
+        _ = refOpt(c.app);
         if (c.clipdata) |o| _ = o.ref();
         _ = refOpt(c.theme_name);
         errdefer c.freeAll(gpa);
@@ -592,6 +613,8 @@ pub const State = struct {
         for (s.menus.items) |m| c.menus.appendAssumeCapacity(refNamed(m));
         try c.assets.ensureTotalCapacity(gpa, s.assets.items.len);
         for (s.assets.items) |m| c.assets.appendAssumeCapacity(refNamed(m));
+        try c.trays.ensureTotalCapacity(gpa, s.trays.items.len);
+        for (s.trays.items) |m| c.trays.appendAssumeCapacity(refNamed(m));
         try c.drags.ensureTotalCapacity(gpa, s.drags.items.len);
         for (s.drags.items) |d| c.drags.appendAssumeCapacity(.{ .n = d.n, .offer = d.offer.ref(), .ver = d.ver, .source = d.source });
         try c.tokens.ensureTotalCapacity(gpa, s.tokens.items.len);
@@ -639,6 +662,11 @@ pub const State = struct {
 
     pub fn asset(s: *const State, name: []const u8) ?*const Named {
         for (s.assets.items) |*m| if (std.mem.eql(u8, m.name.bytes, name)) return m;
+        return null;
+    }
+
+    pub fn tray(s: *const State, name: []const u8) ?*const Named {
+        for (s.trays.items) |*m| if (std.mem.eql(u8, m.name.bytes, name)) return m;
         return null;
     }
 
@@ -801,6 +829,40 @@ pub fn isReserved(ty: *const Type, name: []const u8, is_root: bool) bool {
     if (is_root and std.mem.eql(u8, name, "over")) return true;
     if (is_root and inList(&window_files, name) and !inList(&shadowable, name)) return true;
     return false;
+}
+
+/// A line of `name=value` words (a tray's or the app's props) with
+/// `attrs` written over it: the new line, and every prop it holds now.
+pub fn mergeProps(arena: Allocator, line: []const u8, attrs: []const Attr) Allocator.Error!struct { line: []const u8, attrs: []const Attr } {
+    var out: std.ArrayList(Attr) = .empty;
+    // The line is one mergeProps wrote, so it always tokenizes.
+    const toks = proto.tokenize.tokenize(arena, line) catch |e| switch (e) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => &.{},
+    };
+    for (toks) |t| if (t.attr()) |at| try out.append(arena, .{ .key = at.key, .value = at.value });
+    for (attrs) |at| {
+        for (out.items) |*o| {
+            if (std.mem.eql(u8, o.key, at.key)) {
+                o.value = at.value;
+                break;
+            }
+        } else try out.append(arena, at);
+    }
+    var aw: std.Io.Writer.Allocating = .init(arena);
+    for (out.items, 0..) |at, i| {
+        if (i > 0) aw.writer.writeByte(' ') catch return error.OutOfMemory;
+        aw.writer.print("{s}=", .{at.key}) catch return error.OutOfMemory;
+        proto.tokenize.quoteValue(&aw.writer, at.value) catch return error.OutOfMemory;
+    }
+    return .{ .line = aw.written(), .attrs = out.items };
+}
+
+/// One prop of a `mergeProps` line, or null.
+pub fn lineProp(arena: Allocator, line: []const u8, key: []const u8) ?[]const u8 {
+    const toks = proto.tokenize.tokenize(arena, line) catch return null;
+    for (toks) |t| if (t.attr()) |at| if (std.mem.eql(u8, at.key, key)) return at.value;
+    return null;
 }
 
 pub fn validName(name: []const u8) bool {

@@ -1,0 +1,23 @@
+#!/bin/rc
+#
+# Topframe Script Demo: stonks
+# A very fancy script that uses the Yahoo Finance API for getting stock data.
+#
+# Topframe lets you run scripts from your overlay page and get the output
+# streamed back to you via server-sent events. Any script in your topframe
+# directory with execute permission (chmod +x) can be called using an
+# EventSource. For example, here's how you would call this script with an
+# argument and parse the JSON output:
+#
+#   let stocks = new EventSource("/stocks?TWLO");
+#   stocks.addEventListener("stdout", (e) => {
+#       let data = JSON.parse(e.data)
+#   });
+#
+# Every line of stdout is a new event. If the script exits, the EventSource
+# closes, but by default will retry every 3 seconds. This gets you free
+# polling. However, it also works as you'd expect with long running scripts.
+#
+# On uitree, scripts run in the app's h9 machine, so this one is rc and
+# uses 9front's hget where Topframe's used sh and curl.
+hget 'https://query1.finance.yahoo.com/v7/finance/quote?symbols='^$1

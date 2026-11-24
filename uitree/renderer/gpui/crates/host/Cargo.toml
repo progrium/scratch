@@ -23,6 +23,9 @@ jiff = "1.0"
 anyhow = "1"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 similar = "2.7"
+# The native window behind GPUI's: `click-through` (passthrough.rs) and
+# the shell layer's window props (src/platform/).
+raw-window-handle = "0.6"
 
 # std::time panics on wasm32-unknown-unknown: Instant and SystemTime from
 # the browser's clock there (uitree/web).
@@ -43,21 +46,25 @@ gpui_web = { package = "gpui-pre-web", version = "=0.3.12", default-features = f
 gpui-component = { workspace = true, features = ["syntect"] }
 gpui-webview = { workspace = true, optional = true }
 wry = { workspace = true, optional = true }
-# `click-through` (passthrough.rs): the native window handle, and each
-# platform's call. All three are already in the tree through gpui.
-raw-window-handle = "0.6"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "shape"] }
 # A transparent `web` node's GTK visual (components/web/native.rs); the
 # version gpui-webview and wry use.
 gtk = { version = "0.18", optional = true }
+
+# Each platform's calls for those, and the tray-icon crate's menu bar
+# extras and notification area icons (src/platform/tray.rs).
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+tray-icon = "0.21"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+tray-icon = "0.21"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [features]
 default = ["webview"]
