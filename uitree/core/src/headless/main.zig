@@ -36,7 +36,7 @@ const Handle = tree.Handle;
 const Err = ninep.fs.Err;
 
 const usage =
-    \\usage: uitree-headless [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... CMD [ARG...]
+    \\usage: uitree-headless [--check-render] [-a ADDR] [-r ROOT] [-d SRC:DST]... [-e NAME=VALUE]... CMD [ARG...]
     \\       uitree-headless -a ADDR
     \\
 ;
@@ -47,6 +47,9 @@ const Options = struct {
     dirs: std.ArrayList(UitStr) = .empty,
     env: std.ArrayList(UitStr) = .empty,
     argv: []const []const u8 = &.{},
+    /// --check-render: replay every pump's change stream into a replica
+    /// and compare at exit (render/check.zig).
+    check_render: bool = false,
 };
 
 fn parseArgs(a: std.mem.Allocator, args: []const []const u8) !Options {
@@ -60,6 +63,10 @@ fn parseArgs(a: std.mem.Allocator, args: []const []const u8) !Options {
         }
         if (s.len < 2 or s[0] != '-') break;
         if (std.mem.eql(u8, s, "-h") or std.mem.eql(u8, s, "--help")) return error.Usage;
+        if (std.mem.eql(u8, s, "--check-render")) {
+            o.check_render = true;
+            continue;
+        }
         if (i + 1 >= args.len) return error.Usage;
         const v = args[i + 1];
         i += 1;
@@ -103,6 +110,7 @@ const Headless = struct {
     status: ?[]const u8 = null,
     status_buf: [256]u8 = undefined,
     t: *Tree = undefined,
+    checker: ?*core.render.check.Checker = null,
 
     fn lock(h: *Headless) void {
         h.mu.lockUncancelable(h.io);
@@ -290,6 +298,10 @@ const Headless = struct {
             }
         }
         h.t.publish() catch {};
+        if (h.checker) |k| {
+            const ch = h.t.changes() catch null;
+            if (ch) |x| k.pump(h.t.committed(), x) catch |e| std.debug.print("render check: pump: {t}\n", .{e});
+        }
         h.t.clearChanges();
         h.finishJobs(jobs);
     }
@@ -324,6 +336,7 @@ pub fn main(init: std.process.Init) !u8 {
         .stderr = &errw.interface,
     }) catch |e| return fail("tree: {t}", .{e});
     h.t = t;
+    if (opts.check_render) h.checker = core.render.check.Checker.create(gpa, io, &cat) catch |e| return fail("check: {t}", .{e});
 
     var q: tree.OpQueue = .init(gpa, io);
     q.wake = Headless.wake;
@@ -386,6 +399,15 @@ pub fn main(init: std.process.Init) !u8 {
     q.close();
     t.appGone();
     h.pump(&q, late, true);
+    if (h.checker) |k| {
+        var buf: [4096]u8 = undefined;
+        var ew = std.Io.File.stderr().writerStreaming(io, &buf);
+        const ok = k.compare(t.committed(), &ew.interface) catch false;
+        if (ok) ew.interface.print("render check: ok, {d} frames, {d} bytes\n", .{ k.rep.frames, k.bytes }) catch {};
+        if (!ok) ew.interface.writeAll("render check: FAIL\n") catch {};
+        ew.interface.flush() catch {};
+        k.destroy();
+    }
     host.destroy();
     if (runner) |r| r.join();
     t.destroy();

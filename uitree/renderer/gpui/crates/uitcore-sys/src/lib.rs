@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 6;
+pub const UIT_ABI_VERSION: u32 = 7;
 
 #[repr(C)]
 pub struct UitCore {
@@ -160,6 +160,9 @@ pub struct UitChanges {
     pub n_cmds: usize,
     pub exited: i32,
     pub exit_status: UitStr,
+    /// ABI 7: files a renderer changed through `uit_mirror`.
+    pub mirrors: *const UitPropChange,
+    pub n_mirrors: usize,
 }
 
 impl Default for UitChanges {
@@ -310,7 +313,16 @@ unsafe extern "C" {
     pub fn uit_menu_action(c: *mut UitCore, id: UitStr) -> c_int;
     pub fn uit_system_dark(c: *mut UitCore, dark: u32) -> c_int;
     pub fn uit_drag(c: *mut UitCore, msg: *const UitDragMsg, drag: *mut u64) -> c_int;
+
+    // The renderer tree (protocols/render.md). Since 7.
+    pub fn uit_render_listen(c: *mut UitCore, addr: UitStr, flags: u32, dial: *mut UitStr) -> c_int;
+    pub fn uit_render_serve_fd(c: *mut UitCore, fd: c_int, flags: u32) -> c_int;
+    pub fn uit_render_serve_conn(c: *mut UitCore, conn: *const UitConn, flags: u32) -> c_int;
+    pub fn uit_node_props(c: *mut UitCore, n: UitNode, out: *mut *const UitStr, len: *mut usize) -> c_int;
 }
+
+/// The host draws the app itself: 9P renderers can be mirrors or views.
+pub const UIT_RENDER_HOST_DRAWS: u32 = 1;
 
 /// In the browser the core is linked in with wasi-libc, whose malloc
 /// takes the memory above the heap base as its own on first use, so it
@@ -396,7 +408,7 @@ mod tests {
         assert_eq!(offset_of!(UitHostCmd, ctl), 48);
         assert_eq!(offset_of!(UitHostCmd, seq), 96);
         assert_eq!(size_of::<UitHostCmd>(), 128);
-        assert_eq!(size_of::<UitChanges>(), 104);
+        assert_eq!(size_of::<UitChanges>(), 120);
         assert_eq!(size_of::<UitStyleArg>(), 32);
         assert_eq!(size_of::<UitStyleWord>(), 56);
         assert_eq!(size_of::<UitLine>(), 24);

@@ -2,11 +2,10 @@
 //! change stream): what a pump changed, as text lines a renderer in any
 //! language applies to its copy of the tree.
 //!
-//! PROTOTYPE. This is the 9P renderer spike: it encodes from the C ABI's
-//! `UitChanges` plus the state pinned at the pump, so it runs on the owner
-//! thread right after `uit_pump`, exactly where a built-in renderer would
-//! read the same nodes in place. One encoding per pump, fanned out as bytes
-//! to every attached renderer.
+//! It encodes from the pump's `UitChanges` plus the state pinned at the
+//! pump, on the owner thread at the end of `uit_pump` (render/hub.zig),
+//! exactly where a built-in renderer reads the same nodes in place. One
+//! encoding per pump, fanned out as bytes to every attached renderer.
 //!
 //!     snap 7
 //!     theme mode=light tokens=<<END ... END
@@ -20,12 +19,10 @@
 //!     end 8
 
 const std = @import("std");
-const core = @import("uitcore");
-const abi = core.abi;
-const uit = @import("uit.zig");
-const proto = core.proto;
-const types = core.types;
-const treem = core.tree;
+const abi = @import("../abi.zig");
+const proto = @import("../proto/root.zig");
+const types = @import("../types/root.zig");
+const treem = @import("../tree/root.zig");
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -34,6 +31,17 @@ const Node = treem.state.Node;
 const Handle = treem.Handle;
 const tokenize = proto.tokenize;
 const ctl = proto.ctl;
+
+/// What the encoder reads: a pinned state and the catalog it was made
+/// with. The core's at the end of uit_pump; any tree's in the checker.
+pub const Source = struct {
+    st: *const State,
+    cat: *const types.Catalog,
+
+    pub fn ofCore(c: *abi.Core) Source {
+        return .{ .st = c.state(), .cat = &c.cat };
+    }
+};
 
 pub const Encoder = struct {
     gpa: Allocator,
@@ -53,8 +61,18 @@ pub const Encoder = struct {
     parents: std.AutoHashMapUnmanaged(Handle, Handle) = .empty,
     /// uit_request seq -> the id= the renderer gave it, for `answer`.
     requests: std.AutoHashMapUnmanaged(u64, []u8) = .empty,
+    /// `drag start ... id=ID` lines since the last batch: the stream
+    /// tells the renderer the drag's number as `dragging ID N`.
+    dragging: std.ArrayList(Dragging) = .empty,
     /// Pump number: every snapshot and batch carries the one it is as of.
     seq: u64 = 0,
+    /// Made or removed inside an app's batch (core.md § Batches): the
+    /// state the stream reads is the one from before the batch until it
+    /// ends, so these wait for it.
+    pend_created: std.ArrayList(Handle) = .empty,
+    pend_removed: std.ArrayList(Handle) = .empty,
+
+    pub const Dragging = struct { id: []u8, n: u64 };
 
     pub fn deinit(e: *Encoder) void {
         var it = e.paths.valueIterator();
@@ -64,6 +82,21 @@ pub const Encoder = struct {
         e.clearOrders();
         e.orders.deinit(e.gpa);
         e.parents.deinit(e.gpa);
+        var rit = e.requests.valueIterator();
+        while (rit.next()) |v| e.gpa.free(v.*);
+        e.requests.deinit(e.gpa);
+        for (e.dragging.items) |d| e.gpa.free(d.id);
+        e.dragging.deinit(e.gpa);
+        e.pend_created.deinit(e.gpa);
+        e.pend_removed.deinit(e.gpa);
+    }
+
+    /// Forgets every path: a snapshot remakes them from the state.
+    fn clearPaths(e: *Encoder) void {
+        var it = e.paths.valueIterator();
+        while (it.next()) |p| e.gpa.free(p.*);
+        e.paths.clearRetainingCapacity();
+        e.handles.clearRetainingCapacity();
     }
 
     fn clearOrders(e: *Encoder) void {
@@ -135,14 +168,22 @@ pub const Encoder = struct {
 
     /// The whole committed tree, for a renderer that just attached or fell
     /// behind: `snap N` ... `end N`. Resets the path maps from the state.
-    pub fn snapshot(e: *Encoder, c: *abi.Core, w: *Writer) !void {
+    pub fn snapshot(e: *Encoder, src: Source, w: *Writer) !void {
         var arena: std.heap.ArenaAllocator = .init(e.gpa);
         defer arena.deinit();
         const a = arena.allocator();
-        const st = c.state();
+        const st = src.st;
         e.clearOrders();
+        e.clearPaths();
         try w.print("snap {d}\n", .{e.seq});
-        try theme(c, w);
+        try theme(src, w);
+        if (treem.state.Blob.str(st.keys).len > 0) try keys(st, w);
+        if (treem.state.Blob.str(st.bar).len > 0 or st.menus.items.len > 0) try menus(st, w);
+        for (st.assets.items) |m| {
+            try w.writeAll("asset ");
+            try tokenize.quoteWord(w, m.name.bytes);
+            try w.writeByte('\n');
+        }
         for (st.wins.items) |win| {
             if (win.hidden) continue;
             try windowLine(st, win, w);
@@ -169,43 +210,128 @@ pub const Encoder = struct {
     /// What one pump changed, or nothing if it changed nothing a renderer
     /// draws. `x.t=` is CLOCK_MONOTONIC at the encode, in ns, for the
     /// spike's latency numbers.
-    pub fn batch(e: *Encoder, c: *abi.Core, ch: *const abi.UitChanges, t_ns: u64, w: *Writer) !bool {
-        const created = many(Handle, ch.created, ch.n_created);
-        const removed = many(Handle, ch.removed, ch.n_removed);
+    pub fn batch(e: *Encoder, src: Source, ch: *const abi.UitChanges, t_ns: u64, w: *Writer) !bool {
+        const new_created = many(Handle, ch.created, ch.n_created);
+        const new_removed = many(Handle, ch.removed, ch.n_removed);
         const props = many(abi.UitPropChange, ch.props, ch.n_props);
         const cmds = many(abi.UitHostCmd, ch.cmds, ch.n_cmds);
-        if (created.len == 0 and removed.len == 0 and props.len == 0 and cmds.len == 0) return false;
+        const mirrors = many(abi.UitPropChange, ch.mirrors, ch.n_mirrors);
+        if (new_created.len == 0 and new_removed.len == 0 and props.len == 0 and cmds.len == 0 and mirrors.len == 0 and e.dragging.items.len == 0) return false;
 
         var arena: std.heap.ArenaAllocator = .init(e.gpa);
         defer arena.deinit();
         const a = arena.allocator();
-        const st = c.state();
+        const st = src.st;
+
+        // What the state doesn't show yet waits; what it shows goes now.
+        var created: std.ArrayList(Handle) = .empty;
+        var removed: std.ArrayList(Handle) = .empty;
+        {
+            var cand_c: std.ArrayList(Handle) = .empty;
+            try cand_c.appendSlice(a, e.pend_created.items);
+            try cand_c.appendSlice(a, new_created);
+            var cand_r: std.ArrayList(Handle) = .empty;
+            try cand_r.appendSlice(a, e.pend_removed.items);
+            try cand_r.appendSlice(a, new_removed);
+            e.pend_created.clearRetainingCapacity();
+            e.pend_removed.clearRetainingCapacity();
+            for (cand_r.items) |h| {
+                if (st.node(h) == null) {
+                    if (std.mem.indexOfScalar(Handle, removed.items, h) == null) try removed.append(a, h);
+                } else if (std.mem.indexOfScalar(Handle, cand_c.items, h) == null) {
+                    // Still there as the stream reads it (a batch is open).
+                    if (e.paths.contains(h)) try e.pend_removed.append(e.gpa, h);
+                }
+            }
+            for (cand_c.items) |h| {
+                if (std.mem.indexOfScalar(Handle, created.items, h) != null) continue;
+                if (e.paths.contains(h)) continue; // already sent: a batch aborted
+                if (st.node(h) != null) {
+                    try created.append(a, h);
+                } else if (std.mem.indexOfScalar(Handle, cand_r.items, h) == null) {
+                    try e.pend_created.append(e.gpa, h);
+                }
+            }
+            std.mem.sort(Handle, created.items, {}, std.sort.asc(Handle));
+        }
 
         try w.print("batch {d} x.t={d}\n", .{ e.seq, t_ns });
 
-        // Windows first: a node line names its window.
+        // Windows first: a node line names its window. A window reaches
+        // the stream when it first shows, with all it holds by then, as a
+        // snapshot would say it; until then its nodes aren't sent.
+        var made: std.AutoHashMapUnmanaged(Handle, void) = .empty;
+        var reorder: std.AutoArrayHashMapUnmanaged(Handle, void) = .empty;
+        var wins: std.AutoArrayHashMapUnmanaged(*treem.state.Win, void) = .empty;
+        for (created.items) |h| if (st.winOfRoot(h)) |win| if (!win.hidden) try wins.put(a, win, {});
         for (cmds) |hc| if (hc.tag == abi.UIT_CMD_WINDOW) {
-            if (st.win(hc.win.slice())) |win| try windowLine(st, win, w);
+            if (st.win(hc.win.slice())) |win| try wins.put(a, win, {});
         };
+        for (wins.keys()) |win| {
+            try windowLine(st, win, w);
+            if (e.paths.contains(win.root)) continue;
+            var all: std.ArrayList(Handle) = .empty;
+            try st.subtree(a, win.root, &all);
+            for (all.items) |h| {
+                const n = st.node(h) orelse continue;
+                if (n.kind == .over) continue;
+                const path = try fullPath(a, st, h);
+                try e.remember(h, path);
+                try nodeLine(a, n, path, w);
+                try e.appended(h, n.parent);
+                try made.put(a, h, {});
+                try reorder.put(a, h, {});
+            }
+        }
 
         // Deletes: only the top of each removed subtree.
         var gone: std.AutoHashMapUnmanaged(Handle, void) = .empty;
-        for (removed) |h| try gone.put(a, h, {});
-        for (removed) |h| {
+        for (removed.items) |h| try gone.put(a, h, {});
+        for (removed.items) |h| {
             const p = e.paths.get(h) orelse continue;
             if (!underRemoved(e, &gone, h, p)) try w.print("delete {s}\n", .{p});
         }
-        for (removed) |h| {
+        for (removed.items) |h| {
             e.dropped(h);
             e.forget(h);
         }
 
         // News, parents first (the order the tree made them in).
-        var made: std.AutoHashMapUnmanaged(Handle, void) = .empty;
-        var reorder: std.AutoArrayHashMapUnmanaged(Handle, void) = .empty;
-        for (created) |h| {
+        // A node whose type changed (`mkdir` then a write to `type`) is
+        // remade: a renderer can't turn a div into a text in place.
+        for (props) |pc| {
+            if (!std.mem.eql(u8, pc.file.slice(), "type")) continue;
+            if (made.contains(pc.node)) continue;
+            const n = st.node(pc.node) orelse continue;
+            if (!e.paths.contains(n.root)) continue; // window not sent yet
+            if (e.paths.get(pc.node)) |p| {
+                try w.print("delete {s}\n", .{p});
+                e.dropped(pc.node);
+                e.forget(pc.node);
+            }
+            var sub: std.ArrayList(Handle) = .empty;
+            try st.subtree(a, pc.node, &sub);
+            for (sub.items) |x| {
+                const xn = st.node(x) orelse continue;
+                if (xn.kind == .over) continue;
+                if (x != pc.node) {
+                    e.dropped(x);
+                    e.forget(x);
+                }
+                const path = try fullPath(a, st, x);
+                try e.remember(x, path);
+                try nodeLine(a, xn, path, w);
+                try e.appended(x, xn.parent);
+                try made.put(a, x, {});
+                try reorder.put(a, xn.parent, {});
+            }
+        }
+        for (created.items) |h| {
+            if (made.contains(h)) continue;
             const n = st.node(h) orelse continue;
             if (n.kind == .over) continue;
+            if (!e.paths.contains(n.root) and h != n.root) continue; // window not sent yet
+            if (h == n.root and (st.winOfRoot(h) orelse continue).hidden) continue;
             const path = try fullPath(a, st, h);
             try e.remember(h, path);
             try nodeLine(a, n, path, w);
@@ -219,6 +345,9 @@ pub const Encoder = struct {
         for (props) |pc| {
             if (made.contains(pc.node)) continue;
             const f = pc.file.slice();
+            if (std.mem.eql(u8, f, "type")) continue;
+            if (isOverlayOpen(st, pc.node, f)) continue;
+            if (isWindowFile(st, pc.node, f)) continue;
             if (std.mem.eql(u8, f, "order")) {
                 try reorder.put(a, pc.node, {});
                 continue;
@@ -233,13 +362,18 @@ pub const Encoder = struct {
             const path = e.paths.get(h) orelse continue;
             try w.writeAll("set ");
             try tokenize.quoteWord(w, path);
+            for (files.items) |f| if (std.mem.eql(u8, f, "style")) for (n.words.items) |x| {
+                try w.writeByte(' ');
+                try tokenize.quoteWord(w, x.name);
+            };
             var style: ?[]const u8 = null;
             for (files.items) |f| {
                 if (std.mem.eql(u8, f, "style")) {
+                    // Words and the style text change together: say both.
                     style = n.value("style");
                     continue;
                 }
-                try bodies.attr(a, w, f, try propValue(a, c, st, n, f));
+                try bodies.attr(a, w, f, try propValue(a, st, n, f));
             }
             if (style) |s| {
                 try w.writeAll(" :");
@@ -251,20 +385,47 @@ pub const Encoder = struct {
             try bodies.flush(w);
             try w.writeByte('\n');
         }
+        // What a renderer typed: `mirror`, not `set`, so the one that
+        // typed it can tell its own echo from the app's write.
+        var mirrored: std.AutoArrayHashMapUnmanaged(Handle, std.ArrayList([]const u8)) = .empty;
+        for (mirrors) |pc| {
+            if (made.contains(pc.node)) continue;
+            const gop = try mirrored.getOrPut(a, pc.node);
+            if (!gop.found_existing) gop.value_ptr.* = .empty;
+            try gop.value_ptr.append(a, pc.file.slice());
+        }
+        for (mirrored.keys(), mirrored.values()) |h, files| {
+            const n = st.node(h) orelse continue;
+            const path = e.paths.get(h) orelse continue;
+            try w.writeAll("mirror ");
+            try tokenize.quoteWord(w, path);
+            for (files.items) |f| try bodies.attr(a, w, f, try propValue(a, st, n, f));
+            try bodies.flush(w);
+            try w.writeByte('\n');
+        }
+
         // Orders last, once every new and delete is in: only where the
         // tree's isn't what those imply. A removed child's parent comes
         // through as an `order` prop change.
-        for (created) |h| try reorder.put(a, h, {});
+        for (created.items) |h| try reorder.put(a, h, {});
         for (reorder.keys()) |h| try e.fixOrder(a, st, h, w);
 
         // Host commands, in order.
-        for (cmds) |hc| try e.cmdLine(c, st, &hc, w);
+        for (cmds) |hc| try e.cmdLine(src, &hc, w);
+        for (e.dragging.items) |d| {
+            try w.writeAll("dragging ");
+            try tokenize.quoteWord(w, d.id);
+            try w.print(" {d}\n", .{d.n});
+            e.gpa.free(d.id);
+        }
+        e.dragging.clearRetainingCapacity();
 
         try w.print("end {d}\n", .{e.seq});
         return true;
     }
 
-    fn cmdLine(e: *Encoder, c: *abi.Core, st: *const State, hc: *const abi.UitHostCmd, w: *Writer) !void {
+    fn cmdLine(e: *Encoder, src: Source, hc: *const abi.UitHostCmd, w: *Writer) !void {
+        const st = src.st;
         const win = hc.win.slice();
         switch (hc.tag) {
             abi.UIT_CMD_WINDOW => {}, // above
@@ -274,13 +435,19 @@ pub const Encoder = struct {
                 try w.writeByte('\n');
             },
             abi.UIT_CMD_QUIT => try w.writeAll("quit\n"),
-            abi.UIT_CMD_MENUS => try w.writeAll("menus\n"),
-            abi.UIT_CMD_KEYMAP => try w.writeAll("keys\n"),
-            abi.UIT_CMD_THEME => try theme(c, w),
+            abi.UIT_CMD_MENUS => try menus(st, w),
+            abi.UIT_CMD_KEYMAP => try keys(st, w),
+            abi.UIT_CMD_THEME => try theme(src, w),
             abi.UIT_CMD_SET_ACTION => try w.print("action {s} enabled={d} check={d}\n", .{ hc.name.slice(), hc.flag, hc.flag2 }),
             abi.UIT_CMD_OVERLAY => try w.print("overlay {s} {s}\n", .{ if (hc.flag == 1) "open" else "close", e.paths.get(hc.node) orelse "-" }),
             abi.UIT_CMD_FOCUS => try w.print("focus {s} {s}\n", .{ win, e.paths.get(hc.node) orelse "-" }),
-            abi.UIT_CMD_CLIPBOARD => try w.writeAll("clip\n"),
+            abi.UIT_CMD_CLIPBOARD => {
+                try w.writeAll("clip");
+                var bodies: Bodies = .{};
+                try bodies.attr(undefined, w, "text", hc.answer.slice());
+                try bodies.flush(w);
+                try w.writeByte('\n');
+            },
             abi.UIT_CMD_COMPONENT_VERB => {
                 try w.print("verb {s} ", .{e.paths.get(hc.node) orelse "-"});
                 try ctlWords(w, &hc.ctl);
@@ -309,7 +476,6 @@ pub const Encoder = struct {
             },
             else => {},
         }
-        _ = st;
     }
 };
 
@@ -375,12 +541,9 @@ const Bodies = struct {
 };
 
 /// A file's value as uit_prop reads it, empty when unset.
-fn propValue(a: Allocator, c: *abi.Core, st: *const State, n: *const Node, f: []const u8) ![]const u8 {
+fn propValue(a: Allocator, st: *const State, n: *const Node, f: []const u8) ![]const u8 {
     if (std.mem.eql(u8, f, "order")) return orderText(a, st, n);
-    var out: abi.UitStr = .{};
-    const r = uit.uit_prop(c, n.id, abi.UitStr.of(f), &out);
-    if (r != 1) return "";
-    return a.dupe(u8, out.slice());
+    return abi.propOf(st, a, n, f) orelse "";
 }
 
 fn orderText(a: Allocator, st: *const State, n: *const Node) ![]const u8 {
@@ -408,6 +571,13 @@ fn windowLine(st: *const State, win: *const treem.state.Win, w: *Writer) !void {
     _ = st;
 }
 
+/// A window's own file on its root: `window` and `window-ctl` say it.
+fn isWindowFile(st: *const State, h: Handle, f: []const u8) bool {
+    if (st.winOfRoot(h) == null) return false;
+    if (std.mem.eql(u8, f, "state") or std.mem.eql(u8, f, "focus")) return true;
+    return treem.state.inList(&treem.state.win_props, f);
+}
+
 fn isFlag(ty: *const types.Type, name: []const u8) bool {
     const x = ty.word(name) orelse return false;
     return x.kind == .flag;
@@ -433,6 +603,8 @@ fn nodeLine(a: Allocator, n: *const Node, path: []const u8, w: *Writer) !void {
             continue;
         }
         if (std.mem.eql(u8, f.name, "order")) continue;
+        // An overlay's `open` travels as `overlay open|close`.
+        if (n.ty.tier == .overlay and std.mem.eql(u8, f.name, "open")) continue;
         if (treem.state.commonName(f.name) != null) {
             if (v.len > 0) try items.append(a, .{ .first = f.first, .key = f.name, .val = v });
             continue;
@@ -467,21 +639,59 @@ fn nodeLine(a: Allocator, n: *const Node, path: []const u8, w: *Writer) !void {
 /// in effect, as theme/tokens reads. Styles stay as written and the
 /// renderer resolves names through this table, so a theme switch is one
 /// record instead of every node's style again.
-fn theme(c: *abi.Core, w: *Writer) !void {
-    var aw: Writer.Allocating = .init(c.gpa);
+fn theme(src: Source, w: *Writer) !void {
+    var aw: Writer.Allocating = .init(std.heap.c_allocator);
     defer aw.deinit();
-    for (c.cat.theme_tokens) |t| try tokenLine(c, &aw.writer, t.name);
-    for (types.style.value_tokens) |t| try tokenLine(c, &aw.writer, t.name);
+    for (src.cat.theme_tokens) |t| try tokenLine(src, &aw.writer, t.name);
+    for (types.style.value_tokens) |t| try tokenLine(src, &aw.writer, t.name);
     const body = std.mem.trimEnd(u8, aw.written(), "\n");
-    try w.print("theme mode={s} tokens=<<END", .{if (uit.uit_theme_dark(c) == 1) "dark" else "light"});
+    try w.print("theme mode={s}", .{if (src.st.dark()) "dark" else "light"});
+    const name = treem.state.Blob.str(src.st.theme_name);
+    try w.writeAll(" name=");
+    try tokenize.quoteValue(w, name);
+    try w.writeAll(" tokens=<<END");
     try ctl.writeBody(w, body, "END");
     try w.writeByte('\n');
 }
 
-fn tokenLine(c: *abi.Core, w: *Writer, name: []const u8) !void {
-    var out: abi.UitStr = .{};
-    if (uit.uit_token_text(c, abi.UitStr.of(name), &out) != 1) return;
+fn tokenLine(src: Source, w: *Writer, name: []const u8) !void {
+    const v = abi.tokenOf(src.st, src.cat, name) orelse return;
     try w.print("{s} ", .{name});
-    try tokenize.quote(w, out.slice());
+    try tokenize.quote(w, v);
     try w.writeByte('\n');
+}
+
+/// `keys text=<<END`: the key bindings, as `$ui/keys` reads.
+fn keys(st: *const State, w: *Writer) !void {
+    try w.writeAll("keys");
+    var bodies: Bodies = .{};
+    try bodies.attr(undefined, w, "text", treem.state.Blob.str(st.keys));
+    try bodies.flush(w);
+    try w.writeByte('\n');
+}
+
+/// `menu-bar NAME...`, then `menu NAME text=<<END` for every menu, as
+/// `$ui/menu/` reads. A menu change resends them all: menus are small.
+fn menus(st: *const State, w: *Writer) !void {
+    try w.writeAll("menu-bar");
+    var it = std.mem.tokenizeAny(u8, treem.state.Blob.str(st.bar), " \t\r\n");
+    while (it.next()) |name| {
+        try w.writeByte(' ');
+        try tokenize.quoteWord(w, name);
+    }
+    try w.writeByte('\n');
+    for (st.menus.items) |m| {
+        try w.writeAll("menu ");
+        try tokenize.quoteWord(w, m.name.bytes);
+        var bodies: Bodies = .{};
+        try bodies.attr(undefined, w, "text", m.val.bytes);
+        try bodies.flush(w);
+        try w.writeByte('\n');
+    }
+}
+
+fn isOverlayOpen(st: *const State, h: Handle, f: []const u8) bool {
+    if (!std.mem.eql(u8, f, "open")) return false;
+    const n = st.node(h) orelse return false;
+    return n.ty.tier == .overlay;
 }

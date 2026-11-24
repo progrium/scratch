@@ -145,6 +145,9 @@ pub const Changes = struct {
     removed: []const Handle = &.{},
     props: []const PropChange = &.{},
     cmds: []const HostCmd = &.{},
+    /// Files a renderer changed (`mirror`): not in `props`, since the
+    /// renderer that sent them has them, but other renderers don't.
+    mirrors: []const PropChange = &.{},
 };
 
 /// An event from the UI, or an echo. See `Tree.emit`.
@@ -210,6 +213,7 @@ const Log = struct {
     removed: std.ArrayList(Handle) = .empty,
     props: std.ArrayList(PropChange) = .empty,
     cmds: std.ArrayList(HostCmd) = .empty,
+    mirrors: std.ArrayList(PropChange) = .empty,
     /// Created and removed in the same pump: neither.
     view_created: std.ArrayList(Handle) = .empty,
     view_removed: std.ArrayList(Handle) = .empty,
@@ -556,7 +560,10 @@ pub const Tree = struct {
         for (l.dirty.items) |w| if (t.st.win(w) != null) try dirty.append(a, w);
         var props: std.ArrayList(PropChange) = .empty;
         for (l.props.items) |p| if (t.st.node(p.node) != null) try props.append(a, p);
+        var mirrors: std.ArrayList(PropChange) = .empty;
+        for (l.mirrors.items) |p| if (t.st.node(p.node) != null) try mirrors.append(a, p);
         return .{
+            .mirrors = mirrors.items,
             .dirty = dirty.items,
             .created = l.view_created.items,
             .removed = l.view_removed.items,
@@ -588,8 +595,11 @@ pub const Tree = struct {
     }
 
     fn addProp(t: *Tree, h: Handle, file: []const u8) Error!void {
-        // The renderer's own mirrors aren't reported back to it.
-        if (t.mirroring) return;
+        // The renderer's own mirrors aren't reported back to it as props.
+        if (t.mirroring) {
+            for (t.log.mirrors.items) |p| if (p.node == h and std.mem.eql(u8, p.file, file)) return;
+            return t.log.mirrors.append(t.log.arena.allocator(), .{ .node = h, .file = file });
+        }
         for (t.log.props.items) |p| if (p.node == h and std.mem.eql(u8, p.file, file)) return;
         try t.log.props.append(t.log.arena.allocator(), .{ .node = h, .file = file });
     }

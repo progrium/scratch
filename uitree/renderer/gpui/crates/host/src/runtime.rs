@@ -541,6 +541,14 @@ pub fn run(opts: Options) -> i32 {
         if let Some(n) = std::env::var("UITREE_CLICK_BENCH").ok().and_then(|v| v.parse().ok()) {
             crate::latency::start(&inner, n, cx);
         }
+        // UITREE_RENDER_LISTEN=ADDR: other renderers (protocols/render.md)
+        // can dial ADDR and mirror this window.
+        if let Ok(addr) = std::env::var("UITREE_RENDER_LISTEN") {
+            match inner.core.borrow_mut().render_listen(&addr) {
+                Ok(d) => eprintln!("uitree: renderers dial {d}"),
+                Err(e) => eprintln!("uitree: UITREE_RENDER_LISTEN: {e}"),
+            }
+        }
         // UITREE_HOST_APP: a client on the host that dials the core.
         if let Ok(app) = std::env::var("UITREE_HOST_APP") {
             let dial = inner.core.borrow_mut().listen();

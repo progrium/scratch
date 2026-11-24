@@ -1,7 +1,7 @@
 #!/bin/sh
 # run: the uitree conformance suite for spec draft 0.2 (interface I5).
 #
-#	tests/conformance/run [-u] [-t secs] [NAME...]
+#	tests/conformance/run [-u] [-r] [-t secs] [NAME...]
 #
 # Runs each NN-name.rc as `$UITREE_HEADLESS rc ./NN-name.rc` in this
 # directory, appends an `exit=N` line to its standard output, removes seq=
@@ -14,6 +14,10 @@
 #
 #	-u   rewrite the goldens from this run instead of comparing; review the diff
 #	-t   per-test timeout in seconds (default 60; 24-limits takes about 40 in h9)
+#	-r   also check the renderer tree (protocols/render.md): run the host
+#	     with --check-render, which encodes every pump as a change stream,
+#	     replays it into an empty tree and compares the two at the end; a
+#	     test passes only if they agree
 #
 # UITREE_HEADLESS defaults to ../../core/zig-out/bin/uitree-headless, from
 # this directory. Exit status 0 when every test that ran passed. Actual
@@ -24,9 +28,11 @@ cd "$here"
 
 update=0
 secs=60
-while getopts ut: o; do
+render=
+while getopts urt: o; do
 	case $o in
 	u) update=1 ;;
+	r) render=--check-render ;;
 	t) secs=$OPTARG ;;
 	*) sed -n '4p' "$0" >&2; exit 2 ;;
 	esac
@@ -62,9 +68,9 @@ for t; do
 		continue
 	fi
 	if [ -n "$timeout_cmd" ]; then
-		"$timeout_cmd" "$secs" "$host" rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
+		"$timeout_cmd" "$secs" "$host" $render rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
 	else
-		"$host" rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
+		"$host" $render rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
 	fi
 	echo "exit=$?" >>"out/$t.out"
 
@@ -84,6 +90,10 @@ for t; do
 	ok=1
 	if ! strip "out/$t.out" | diff -u "$t.out" - >"out/$t.diff"; then ok=0; fi
 	if [ -f "$t.err" ] && ! loud "out/$t.stderr" | diff -u "$t.err" - >>"out/$t.diff"; then ok=0; fi
+	if [ -n "$render" ] && ! grep -q '^render check: ok' "out/$t.stderr"; then
+		ok=0
+		sed -n '/^replica writes refused\|differs$\|^render check/,$p' "out/$t.stderr" | grep -v '^uitree: ' >>"out/$t.diff"
+	fi
 	if [ $ok -eq 1 ]; then
 		echo "pass $t"
 		pass=$((pass + 1))

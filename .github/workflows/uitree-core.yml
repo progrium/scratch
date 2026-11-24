@@ -67,7 +67,7 @@ jobs:
           rm -f .local/9front/*.iso
       - name: conformance
         working-directory: uitree/tests/conformance
-        run: ./run -t 120
+        run: ./run -r -t 120
       - name: example clients (tree-building phase)
         working-directory: uitree/tests/conformance
         run: ./run-examples

@@ -1,6 +1,10 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
+ * Version 7: version 6 plus the renderer tree (protocols/render.md):
+ * uit_render_listen, uit_render_serve_fd and uit_render_serve_conn serve
+ * a second 9P tree that renderers in other processes attach to, encoded
+ * inside uit_pump; and uit_node_props, a node's set props by name.
  * Version 6: version 5 plus uit_serve_conn: a connection the renderer
  * carries itself (UitConn), for a platform with no fds to hand the core.
  * The browser build serves its machine's connections this way.
@@ -51,7 +55,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 6u
+#define UIT_ABI_VERSION 7u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -277,6 +281,9 @@ typedef struct {
     const UitHostCmd *cmds;  size_t n_cmds;       /* in order */
     int32_t exited;          /* 1: the h9 client finished this pump */
     UitStr exit_status;      /* its exits string; empty is success */
+    /* ABI 7: files a renderer changed through uit_mirror. Not in props;
+       a host with one renderer can ignore them. */
+    const UitPropChange *mirrors; size_t n_mirrors;
 } UitChanges;
 
 /* Applies every queued op, publishes the 9P snapshot, acks writers and
@@ -465,6 +472,33 @@ typedef struct {
  *   sends `dragend` (with the target's op=) and drops drag/N.
  * OVER is the renderer's own business (the drop-over style). */
 int uit_drag(UitCore *, const UitDragMsg *, uint64_t *drag);
+
+/* ---- The renderer tree (protocols/render.md). Since 7. -------------
+ *
+ * A second 9P tree beside $ui, for renderers in other processes or on
+ * other machines: `changes` streams a snapshot and then one batch per
+ * uit_pump, `input` takes their clicks, keys and layout. The core encodes
+ * inside uit_pump, so a host must keep pumping when woken even if it draws
+ * nothing itself. Never in the app's namespace: serve it on its own
+ * listener. Owner thread. */
+
+/* The host draws the app itself (a built-in renderer): it is the primary,
+ * and a 9P renderer can be a mirror or a view. Without it the first
+ * `hello role=primary` takes the role. Flags accumulate across calls. */
+#define UIT_RENDER_HOST_DRAWS 1u
+
+/* Listens on `addr` as uit_listen does; *dial borrowed until uit_destroy. */
+int uit_render_listen(UitCore *, UitStr addr, uint32_t flags, UitStr *dial);
+/* Serves the renderer tree on a connected fd. */
+int uit_render_serve_fd(UitCore *, int fd, uint32_t flags);
+/* Serves the renderer tree on a connection the host carries, as
+ * uit_serve_conn (release is called even on error). */
+int uit_render_serve_conn(UitCore *, const UitConn *conn, uint32_t flags);
+
+/* The names of the node's set props, in the order they were first set
+ * (flag words and files, style and order included when set): what a
+ * document prints for it. Borrowed until the next pump. */
+int uit_node_props(UitCore *, UitNode, const UitStr **out, size_t *n);
 
 #ifdef __cplusplus
 }

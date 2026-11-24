@@ -334,6 +334,15 @@ impl Core {
         Ok(text(d).into_owned())
     }
 
+    /// Serves the renderer tree (protocols/render.md) on `addr` (empty:
+    /// a fresh private unix socket); returns its dial string. This host
+    /// draws, so renderers that dial it are mirrors or views.
+    pub fn render_listen(&mut self, addr: &str) -> Result<String, Error> {
+        let mut d = UitStr::EMPTY;
+        self.check(unsafe { sys::uit_render_listen(self.raw, s(addr), sys::UIT_RENDER_HOST_DRAWS, &mut d) })?;
+        Ok(text(d).into_owned())
+    }
+
     pub fn run_machine(&mut self, a: &MachineArgs) -> Result<(), Error> {
         let argv: Vec<UitStr> = a.argv.iter().map(|x| s(x)).collect();
         let env: Vec<UitStr> = a.env.iter().map(|x| s(x)).collect();

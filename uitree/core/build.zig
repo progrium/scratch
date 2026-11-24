@@ -117,7 +117,7 @@ pub fn build(b: *std.Build) void {
     const remote = b.addExecutable(.{
         .name = "uitree-remote",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/render/main.zig"),
+            .root_source_file = b.path("src/remote/main.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{.{ .name = "uitcore", .module = core }},

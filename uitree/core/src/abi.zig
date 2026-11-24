@@ -22,12 +22,13 @@ const machine = @import("machine/root.zig");
 const machine_web = @import("machine/web.zig");
 const ninep = @import("ninep/root.zig");
 const web = @import("web.zig");
+const render = @import("render/root.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 6;
+pub const abi_version: u32 = 7;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -144,6 +145,10 @@ pub const UitChanges = extern struct {
     n_cmds: usize = 0,
     exited: i32 = 0,
     exit_status: UitStr = .{},
+    /// ABI 7: files a renderer changed through uit_mirror. Not in
+    /// `props`; a host with one renderer can ignore them.
+    mirrors: ?[*]const UitPropChange = null,
+    n_mirrors: usize = 0,
 };
 
 pub const UIT_ARG_NONE: u32 = 0;
@@ -241,6 +246,9 @@ pub const Core = struct {
     timer: ?web.Thread = null,
     timers_due: std.atomic.Value(bool) = .init(false),
     stopping: std.atomic.Value(bool) = .init(false),
+    /// The renderer tree (protocols/render.md), made by the first
+    /// uit_render_* call.
+    render: ?*render.hub.Hub = null,
 
     pub fn io(c: *Core) Io {
         if (web.enabled) return web.io();
@@ -308,8 +316,8 @@ pub const Core = struct {
         return c.pinned orelse c.tree.committed();
     }
 
-    /// The state the last pump pinned. Owner thread. For the renderer
-    /// tree spike (render/), which encodes from it right after a pump.
+    /// The state the last pump pinned. Owner thread. The renderer tree
+    /// (render/) encodes from it at the end of a pump.
     pub fn state(c: *Core) *const treem.state.State {
         return c.st();
     }
@@ -461,6 +469,84 @@ export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
     return UIT_OK;
 }
 
+// ---------------------------------------------------------------------
+// The renderer tree (protocols/render.md). Since 7.
+
+fn renderHub(c: *Core, flags: u32) ?*render.hub.Hub {
+    if (c.render) |h| {
+        h.flags |= flags;
+        return h;
+    }
+    c.render = render.hub.Hub.create(c, flags) catch return null;
+    return c.render;
+}
+
+/// Serves the renderer tree on `addr` (as uit_listen: `unix!PATH`,
+/// `tcp!HOST!PORT`); its dial string in `*dial`, valid until uit_destroy.
+/// `flags`: UIT_RENDER_HOST_DRAWS when this host draws the app itself, so
+/// a 9P renderer can be a mirror or a view but not the primary.
+pub export fn uit_render_listen(c: *Core, addr: UitStr, flags: u32, dial: ?*UitStr) c_int {
+    if (comptime builtin.os.tag == .windows or web.enabled) return UIT_ENOTSUP;
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    const h = renderHub(c, flags) orelse return UIT_ENOMEM;
+    const ds = h.listen(addr.slice()) catch |e| {
+        c.err_len = if (std.fmt.bufPrint(&c.err_buf, "listen: {t}", .{e})) |m| m.len else |_| 0;
+        return UIT_EIO;
+    };
+    if (dial) |d| d.* = UitStr.of(ds);
+    return UIT_OK;
+}
+
+/// Serves the renderer tree on a connected fd.
+pub export fn uit_render_serve_fd(c: *Core, fd: c_int, flags: u32) c_int {
+    if (comptime builtin.os.tag == .windows or web.enabled) return UIT_ENOTSUP;
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    const h = renderHub(c, flags) orelse return UIT_ENOMEM;
+    h.serve(ninep.transport.fromFd(fd)) catch return UIT_EIO;
+    return UIT_OK;
+}
+
+/// Serves the renderer tree on a connection the host carries (the
+/// browser's channels, as uit_serve_conn).
+pub export fn uit_render_serve_conn(c: *Core, conn: ?*const UitConn, flags: u32) c_int {
+    const cb = (conn orelse return UIT_EINVAL).*;
+    const h = renderHub(c, flags) orelse {
+        if (cb.release) |f| f(cb.ctx);
+        return UIT_ENOMEM;
+    };
+    const k = ninep.transport.fromUitConn(c.gpa, cb) catch |e| return switch (e) {
+        error.Invalid => UIT_EINVAL,
+        error.OutOfMemory => UIT_ENOMEM,
+    };
+    h.serve(k) catch return UIT_EIO;
+    return UIT_OK;
+}
+
+/// The names of node `h`'s set props, in the order they were first set:
+/// flag words and files, `style` and `order` included when set. What a
+/// document prints for the node, by name. Borrowed until the next pump.
+pub export fn uit_node_props(c: *Core, h: UitNode, out: ?*?[*]const UitStr, n: ?*usize) c_int {
+    const nd = c.node(h) orelse return UIT_ENOTFOUND;
+    const a = c.reads.allocator();
+    const Item = struct { first: u32, name: []const u8 };
+    var items: std.ArrayList(Item) = .empty;
+    for (nd.words.items) |w| items.append(a, .{ .first = w.first, .name = w.name }) catch return UIT_ENOMEM;
+    for (nd.files.items) |f| {
+        if (nd.hasWord(f.name)) continue;
+        items.append(a, .{ .first = f.first, .name = f.name }) catch return UIT_ENOMEM;
+    }
+    std.mem.sort(Item, items.items, {}, struct {
+        fn lt(_: void, x: Item, y: Item) bool {
+            return x.first < y.first;
+        }
+    }.lt);
+    const names = a.alloc(UitStr, items.items.len) catch return UIT_ENOMEM;
+    for (items.items, names) |x, *y| y.* = UitStr.of(x.name);
+    if (out) |o| o.* = ptrOf(UitStr, names);
+    if (n) |x| x.* = names.len;
+    return UIT_OK;
+}
+
 /// Registers the named themes this renderer draws (`themes` text, the
 /// format of core/types/themes), replacing any registered before.
 /// `theme/name` then takes their names and family names, and
@@ -505,6 +591,7 @@ export fn uit_shutdown(c: *Core) void {
     c.queue.close();
     c.tree.bus.shutDown();
     if (c.runner) |r| r.hangup();
+    if (c.render) |h| h.end();
     c.wake();
 }
 
@@ -515,6 +602,7 @@ export fn uit_destroy(c: *Core) void {
     if (c.runner) |r| r.join();
     // Hangs up every connection and waits for them: nothing holds a
     // subscription or a snapshot after this.
+    if (c.render) |h| h.destroy();
     if (c.host) |h| h.destroy();
     c.queue.deinit();
     if (c.pinned) |p| p.unref(c.gpa);
@@ -527,7 +615,7 @@ export fn uit_destroy(c: *Core) void {
     c.gpa.destroy(c);
 }
 
-export fn uit_last_error(c: *Core) UitStr {
+pub export fn uit_last_error(c: *Core) UitStr {
     return UitStr.of(c.err_buf[0..c.err_len]);
 }
 
@@ -549,6 +637,8 @@ export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
     c.styles.clearRetainingCapacity();
     const t = c.tree;
     if (c.gone.load(.acquire) and !t.current().gone) t.appGone();
+    // 9P renderers' input first, as a built-in renderer's calls would be.
+    if (c.render) |h| h.runInput();
     _ = c.queue.drain(t);
     t.tick(monoNow(c)) catch {};
     t.publish() catch {};
@@ -567,12 +657,13 @@ export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
     t.clearChanges();
     if (r != UIT_OK) return r;
     c.exit_mu.lockUncancelable(c.io());
-    defer c.exit_mu.unlock(c.io());
     if (c.exited) {
         c.exited = false;
         o.exited = 1;
         o.exit_status = UitStr.of(c.reads.allocator().dupe(u8, c.exit_status orelse "") catch "");
     }
+    c.exit_mu.unlock(c.io());
+    if (c.render) |h| h.afterPump(o);
     return UIT_OK;
 }
 
@@ -587,7 +678,8 @@ fn fillChanges(c: *Core, o: *UitChanges) c_int {
     return UIT_OK;
 }
 
-fn fill(a: Allocator, ch: treem.Changes, o: *UitChanges) Allocator.Error!void {
+/// The tree's changes as the C ABI reports them, allocated in `a`.
+pub fn fill(a: Allocator, ch: treem.Changes, o: *UitChanges) Allocator.Error!void {
     const dirty = try a.alloc(UitStr, ch.dirty.len);
     for (ch.dirty, dirty) |d, *x| x.* = try dupStr(a, d);
     const created = try a.dupe(UitNode, ch.created);
@@ -628,6 +720,10 @@ fn fill(a: Allocator, ch: treem.Changes, o: *UitChanges) Allocator.Error!void {
     o.n_props = props.len;
     o.cmds = ptrOf(UitHostCmd, cmds);
     o.n_cmds = cmds.len;
+    const mirrors = try a.alloc(UitPropChange, ch.mirrors.len);
+    for (ch.mirrors, mirrors) |p, *x| x.* = .{ .node = p.node, .file = try dupStr(a, p.file) };
+    o.mirrors = ptrOf(UitPropChange, mirrors);
+    o.n_mirrors = mirrors.len;
 }
 
 // ---------------------------------------------------------------------
@@ -675,13 +771,17 @@ export fn uit_window_of(c: *Core, h: UitNode) UitStr {
     return UitStr.of(w.nameStr());
 }
 
-export fn uit_prop(c: *Core, h: UitNode, file: UitStr, out: ?*UitStr) c_int {
+pub export fn uit_prop(c: *Core, h: UitNode, file: UitStr, out: ?*UitStr) c_int {
     const n = c.node(h) orelse return UIT_EINVAL;
-    const name = file.slice();
-    const v: ?[]const u8 = n.stored(name) orelse wordProp(n, name) orelse winProp(c, n, name);
-    const val = v orelse return 0;
+    const val = propOf(c.st(), c.reads.allocator(), n, file.slice()) orelse return 0;
     if (out) |o| o.* = UitStr.of(val);
     return 1;
+}
+
+/// A prop file's value as uit_prop reads it, or null when unset. `a`
+/// holds what has to be made (a window's focus path).
+pub fn propOf(st_: *const treem.state.State, a: Allocator, n: *const treem.state.Node, name: []const u8) ?[]const u8 {
+    return n.stored(name) orelse wordProp(n, name) orelse winProp(st_, a, n, name);
 }
 
 /// `variant` and `size`: the node's bare word of that kind (`primary`).
@@ -693,13 +793,13 @@ fn wordProp(n: *const treem.state.Node, name: []const u8) ?[]const u8 {
 
 /// A window's props read through its root (`title`, `size`, `state`,
 /// `focus`), unless the root has its own file of that name.
-fn winProp(c: *Core, n: *const treem.state.Node, name: []const u8) ?[]const u8 {
+fn winProp(s: *const treem.state.State, a: Allocator, n: *const treem.state.Node, name: []const u8) ?[]const u8 {
     if (n.parent != 0) return null;
-    const w = c.st().winOfRoot(n.id) orelse return null;
+    const w = s.winOfRoot(n.id) orelse return null;
     if (std.mem.eql(u8, name, "state")) return @tagName(w.shownState());
     if (std.mem.eql(u8, name, "focus")) {
         if (w.focus == 0) return null;
-        return c.st().relPathAlloc(c.reads.allocator(), w.focus) catch null;
+        return s.relPathAlloc(a, w.focus) catch null;
     }
     return w.prop(name);
 }
@@ -728,9 +828,13 @@ fn parseColor(s: []const u8) ?u32 {
 /// A theme token's value for the mode in effect: the app's `theme/tokens`
 /// first, then the named theme's palette, then the catalog's.
 fn tokenText(c: *Core, name: []const u8) ?[]const u8 {
-    const s = c.st();
+    return tokenOf(c.st(), &c.cat, name);
+}
+
+/// A token's value as uit_token_text reads it, for state `s`.
+pub fn tokenOf(s: *const treem.state.State, cat: *const types.Catalog, name: []const u8) ?[]const u8 {
     if (s.token(name)) |v| return v;
-    for (c.cat.theme_tokens) |t| if (std.mem.eql(u8, t.name, name)) return s.tokenValue(t);
+    for (cat.theme_tokens) |t| if (std.mem.eql(u8, t.name, name)) return s.tokenValue(t);
     if (types.style.valueToken(name)) |v| return s.valueTokenValue(v);
     return null;
 }
@@ -896,13 +1000,13 @@ pub const UIT_MENU_ITEM: u32 = 0;
 pub const UIT_MENU_SEP: u32 = 1;
 pub const UIT_MENU_SUB: u32 = 2;
 
-export fn uit_asset(c: *Core, name: UitStr, out: ?*UitStr) c_int {
+pub export fn uit_asset(c: *Core, name: UitStr, out: ?*UitStr) c_int {
     const m = c.st().asset(name.slice()) orelse return 0;
     if (out) |o| o.* = UitStr.of(m.val.bytes);
     return 1;
 }
 
-export fn uit_theme_dark(c: *Core) u32 {
+pub export fn uit_theme_dark(c: *Core) u32 {
     return @intFromBool(c.st().dark());
 }
 
@@ -915,7 +1019,7 @@ export fn uit_token(c: *Core, name: UitStr, rgba: ?*u32) c_int {
 /// Any token's value for the current mode as text, as `theme/tokens` reads
 /// it: a color (`#0b5cff`) or a look token (`radius 6`, `font-family
 /// system`, `shadow off`). Borrowed until the next pump. Since 5.
-export fn uit_token_text(c: *Core, name: UitStr, out: ?*UitStr) c_int {
+pub export fn uit_token_text(c: *Core, name: UitStr, out: ?*UitStr) c_int {
     const v = tokenText(c, name.slice()) orelse return 0;
     if (out) |o| o.* = UitStr.of(v);
     return 1;
@@ -945,7 +1049,7 @@ fn attrsOf(a: Allocator, attrs: ?[*]const UitAttr, n: usize) Allocator.Error![]p
     return out;
 }
 
-export fn uit_emit(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize) c_int {
+pub export fn uit_emit(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize) c_int {
     if (input(c)) |r| return r;
     if (h != 0 and c.tree.current().node(h) == null) return UIT_EINVAL;
     const as = attrsOf(c.gpa, attrs, n) catch return UIT_ENOMEM;
@@ -954,7 +1058,7 @@ export fn uit_emit(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr,
     return UIT_OK;
 }
 
-export fn uit_request(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize, default_answer: UitStr) u64 {
+pub export fn uit_request(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAttr, n: usize, default_answer: UitStr) u64 {
     if (input(c) != null) return 0;
     const as = attrsOf(c.gpa, attrs, n) catch return 0;
     defer c.gpa.free(as);
@@ -966,40 +1070,40 @@ export fn uit_request(c: *Core, h: UitNode, name: UitStr, attrs: ?[*]const UitAt
     return seq;
 }
 
-export fn uit_mirror(c: *Core, h: UitNode, file: UitStr, value: UitStr) c_int {
+pub export fn uit_mirror(c: *Core, h: UitNode, file: UitStr, value: UitStr) c_int {
     if (input(c)) |r| return r;
     return done(c, c.tree.mirror(h, file.slice(), value.slice()));
 }
 
-export fn uit_bounds(c: *Core, h: UitNode, x: f32, y: f32, w: f32, hh: f32) c_int {
+pub export fn uit_bounds(c: *Core, h: UitNode, x: f32, y: f32, w: f32, hh: f32) c_int {
     if (input(c)) |r| return r;
     const b: [4]i64 = .{ @intFromFloat(@round(x)), @intFromFloat(@round(y)), @intFromFloat(@round(w)), @intFromFloat(@round(hh)) };
     c.tree.setBounds(h, b) catch |e| return c.fail(e);
     return UIT_OK;
 }
 
-export fn uit_frame_drawn(c: *Core, win: UitStr) c_int {
+pub export fn uit_frame_drawn(c: *Core, win: UitStr) c_int {
     if (input(c)) |r| return r;
     return done(c, c.tree.frameDrawn(if (win.len == 0) null else win.slice()));
 }
 
-export fn uit_window_closed(c: *Core, win: UitStr) c_int {
+pub export fn uit_window_closed(c: *Core, win: UitStr) c_int {
     if (input(c)) |r| return r;
     return done(c, c.tree.windowClosed(win.slice()));
 }
 
-export fn uit_key(c: *Core, win: UitStr, keystroke: UitStr, focused: UitNode) c_int {
+pub export fn uit_key(c: *Core, win: UitStr, keystroke: UitStr, focused: UitNode) c_int {
     if (input(c)) |r| return r;
     const hit = c.tree.key(win.slice(), keystroke.slice(), focused) catch |e| return c.fail(e);
     return @intFromBool(hit);
 }
 
-export fn uit_menu_action(c: *Core, id: UitStr) c_int {
+pub export fn uit_menu_action(c: *Core, id: UitStr) c_int {
     if (input(c)) |r| return r;
     return done(c, c.tree.menuAction(id.slice()));
 }
 
-export fn uit_system_dark(c: *Core, dark: u32) c_int {
+pub export fn uit_system_dark(c: *Core, dark: u32) c_int {
     if (input(c)) |r| return r;
     return done(c, c.tree.systemDark(dark != 0));
 }
@@ -1029,7 +1133,7 @@ pub const UIT_DRAG_END: u32 = 3;
 /// `dragend` (with the `op=` its target accepted) and drops `drag/N`.
 ///
 /// OVER is the renderer's own business (`drop-over` style).
-export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
+pub export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
     if (input(c)) |r| return r;
     const m = msg orelse return UIT_EINVAL;
     const as = attrsOf(c.gpa, m.attrs, m.n_attrs) catch return UIT_ENOMEM;
@@ -1288,7 +1392,7 @@ test "extern layouts match the header's (64-bit)" {
     // checks the same numbers on the Rust side.
     const want = .{
         .{ UitStr, 16 },        .{ UitAttr, 32 },      .{ UitConfig, 80 },      .{ UitMachineArgs, 120 },
-        .{ UitPropChange, 24 }, .{ UitCtl, 48 },       .{ UitHostCmd, 128 },    .{ UitChanges, 104 },
+        .{ UitPropChange, 24 }, .{ UitCtl, 48 },       .{ UitHostCmd, 128 },    .{ UitChanges, 120 },
         .{ UitStyleArg, 32 },   .{ UitStyleWord, 56 }, .{ UitLine, 24 },        .{ UitKeyBinding, 56 },
         .{ UitMenuItem, 112 },  .{ UitDragMsg, 48 },    .{ UitConn, 40 },
     };
