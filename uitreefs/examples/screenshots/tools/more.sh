@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage: more.sh EXAMPLE  (sed-counter ps-stamps cobol-payroll jq-ttt lua-mixer node-jsonview
-# python-expenses ruby-regex, or all)
-# The sed, PostScript, COBOL, jq, Lua, Node, Python and Ruby examples, run in uitreefs under Xvfb and
+# python-expenses ruby-regex forth-rpn scheme-deriv, or all)
+# The sed, PostScript, COBOL, jq, Lua, Node, Python, Ruby, Forth and Scheme examples, run in uitreefs under Xvfb and
 # driven with xdotool, like inter.sh. sed is 9front's, inside h9; the rest
 # are Linux programs, run by h9 on the Alpine root
 # that linuxroot.sh makes ($H9LINUX).
@@ -91,6 +91,42 @@ python-expenses)
 	recstop python-expenses
 	shot python-expenses-added 0
 	rm -f expenses.txt;;
+forth-rpn)
+	cd $UITREEFS_DIR/examples/forth
+	run rpn -t RPN --dir $H9LINUX:'#L' gforth rpn.fs
+	shot forth-rpn 0
+	recstart forth-rpn
+	key() { click $((64 + $1 * 103)) $((395 + $2 * 38)); sleep 1.2; }
+	click 200 308; typ "6 7 *"; xdotool key Return; sleep 1.5
+	typ ": sq dup * ;"; xdotool key Return; sleep 1.5
+	key 0 3; key 1 3; click 115 585; sleep 1.2
+	click 33 661; sleep 1.5; key 3 4
+	key 0 0; key 3 2; sleep .5
+	click 92 351; sleep 2
+	click 200 308; typ ": upto 0 do i . loop ;"; xdotool key Return; sleep 1.2
+	typ "C upto"; xdotool key Return; sleep 2
+	shot forth-rpn-hex 0
+	click 41 351; sleep 1.5
+	key 1 0; key 1 0; key 1 0; sleep 2
+	recstop forth-rpn
+	shot forth-rpn-error 0;;
+scheme-deriv)
+	cd $UITREEFS_DIR/examples/scheme
+	run deriv -t Derivatives --dir $H9LINUX:'#L' chibi-scheme deriv.scm; sleep 10
+	shot scheme-deriv 0
+	recstart scheme-deriv
+	hover() { xdotool mousemove $((X+$1)) $((Y+$2)); sleep ${3:-.15}; }
+	for x in $(seq 260 20 900); do hover $x 420; done; sleep 1
+	click 100 128; sleep 2.5
+	for x in $(seq 900 -24 280); do hover $x 420; done; sleep 1
+	click 100 264; sleep 2.5
+	for x in $(seq 280 24 900); do hover $x 420; done; sleep 1
+	click 585 61; xdotool key ctrl+a; typ "(/ (^ x 2) (+ 1 (^ x 2)))"; xdotool key Return; sleep 2.5
+	for x in $(seq 260 20 900); do hover $x 420; done; hover 690 420 2
+	recstop scheme-deriv
+	shot scheme-deriv-tangent 0
+	click 585 61; xdotool key ctrl+a; typ "(* x (frob x))"; xdotool key Return; sleep 2
+	shot scheme-deriv-error 0;;
 ruby-regex)
 	cd $UITREEFS_DIR/examples/ruby
 	run regex -t Regex --dir $H9LINUX:'#L' ruby regex.rb
@@ -104,4 +140,4 @@ esac
 killall_g
 grep -v "^exit=143" $CAPTMP/${n:-$1}.log | tail -5
 }
-if [ "$1" = all ]; then for e in sed-counter ps-stamps cobol-payroll jq-ttt lua-mixer node-jsonview python-expenses ruby-regex; do one $e; done; else one "$1"; fi
+if [ "$1" = all ]; then for e in sed-counter ps-stamps cobol-payroll jq-ttt lua-mixer node-jsonview python-expenses ruby-regex forth-rpn scheme-deriv; do one $e; done; else one "$1"; fi

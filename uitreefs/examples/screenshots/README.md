@@ -11,10 +11,11 @@ says how the macOS host looks.
 
 [tools/all.sh](tools/all.sh) remakes the rc, Go, C and awk captures;
 `tools/inter.sh calc` remakes one. Start `Xvfb :99 -screen 0 1440x900x24`
-first. The sed, PostScript, COBOL, jq, Lua, Node, Python and Ruby captures
-are [tools/more.sh](tools/more.sh) (`more.sh all`, or one by name); all but
-sed run Linux programs in h9 on an Alpine tree that
-[tools/linuxroot.sh](tools/linuxroot.sh) makes.
+first. The sed, PostScript, COBOL, jq, Lua, Node, Python, Ruby, Forth and
+Scheme captures are [tools/more.sh](tools/more.sh) (`more.sh all`, or one by
+name); all but sed run Linux programs in h9 on an Alpine tree that
+[tools/linuxroot.sh](tools/linuxroot.sh) makes, with gforth built into it by
+[tools/gforth.sh](tools/gforth.sh).
 
 ## What ran
 
@@ -42,6 +43,8 @@ sed run Linux programs in h9 on an Alpine tree that
 | [ps/stamps.ps](../ps/stamps.ps) | Ghostscript 10.08 on Alpine, in h9: trees at two details, a snowflake, a spirograph, glyphs, undo | [ps-stamps.png](ps-stamps.png), [ps-stamps.gif](ps-stamps.gif) |
 | [cobol/payroll.cob](../cobol/payroll.cob) | GnuCOBOL 3.2 on Alpine, built and run in h9: field errors, then three employees paid | [cobol-payroll.png](cobol-payroll.png), [cobol-payroll.gif](cobol-payroll.gif) |
 | [jq/ttt.jq](../jq/ttt.jq) | jq 1.8 on Alpine, in h9: a draw, then jq wins | [jq-ttt-draw.png](jq-ttt-draw.png), [jq-ttt.png](jq-ttt.png), [jq-ttt.gif](jq-ttt.gif) |
+| [forth/rpn.fs](../forth/rpn.fs) | gforth 0.7.3 on Alpine, in h9: 6 7 * is 42, a new `sq` key, HEX, a loop that prints, then a stack underflow | [forth-rpn.png](forth-rpn.png), [forth-rpn-hex.png](forth-rpn-hex.png), [forth-rpn-error.png](forth-rpn-error.png), [forth-rpn.gif](forth-rpn.gif) |
+| [scheme/deriv.scm](../scheme/deriv.scm) | chibi-scheme 0.12 on Alpine, in h9: four functions differentiated and plotted, the tangent following the pointer, an unknown operator refused | [scheme-deriv.png](scheme-deriv.png), [scheme-deriv-tangent.png](scheme-deriv-tangent.png), [scheme-deriv-error.png](scheme-deriv-error.png), [scheme-deriv.gif](scheme-deriv.gif) |
 | [lua/mixer.lua](../lua/mixer.lua) | Lua 5.4 on Alpine, in h9: sliders, a typed hex color, Random, a palette of saved swatches | [lua-mixer.png](lua-mixer.png), [lua-mixer-palette.png](lua-mixer-palette.png), [lua-mixer.gif](lua-mixer.gif) |
 | [node/jsonview.js](../node/jsonview.js) | Node 26 on Alpine, in h9: picking values, filtering the tree | [node-jsonview.png](node-jsonview.png), [node-jsonview-filter.png](node-jsonview-filter.png), [node-jsonview.gif](node-jsonview.gif) |
 | [python/expenses.py](../python/expenses.py) | CPython 3.14 on Alpine, in h9: five expenses in four categories, table, chart and totals in step | [python-expenses.png](python-expenses.png), [python-expenses-added.png](python-expenses-added.png), [python-expenses.gif](python-expenses.gif) |

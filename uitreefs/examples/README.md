@@ -40,6 +40,8 @@ make the captures in [screenshots/](screenshots/).
 | [ps/stamps.ps](ps/stamps.ps) | PostScript (Ghostscript) | Stamp fractal trees, Koch snowflakes, spirographs and font glyphs onto a canvas | — | `file` operator for every write, PostScript paths and `charpath` turned into canvas paths with `pathforall` | M4 |
 | [cobol/payroll.cob](cobol/payroll.cob) | COBOL (GnuCOBOL) | Weekly payroll: pay stub, register, overtime | a classic COBOL job | `SELECT ... ASSIGN` to run-time paths, the events file read as records, field errors, here-values, one ctl write per run | M3 |
 | [jq/ttt.jq](jq/ttt.jq) | jq | Tic-tac-toe against an unbeatable jq | — | jq as a reducer (`foreach` over event lines), minimax, absolute layout computed in jq, one ctl write per frame | M3 |
+| [forth/rpn.fs](forth/rpn.fs) | Forth (gforth) | RPN calculator whose stack is Forth's own data stack | HP's RPN calculators | keys whose tags are Forth source run with `evaluate`, `catch` for errors, `outfile-id` for output, a button-group that follows `BASE`, a key made with `new` for each word you define, the stack view as one `tree` document | M3 |
+| [scheme/deriv.scm](scheme/deriv.scm) | Scheme (chibi-scheme) | Symbolic derivatives with a plot and a tangent that follows the pointer | SICP § 2.3.2 | `read` on the input's value, field errors, list `select`, a canvas drawn once per function, coalesced `move` events answered by moving items by id on the canvas `ctl` | M4 |
 
 The GPUI Kit recreations (gallery, stocks, dock, paint) follow the
 structure of GPUI Kit's story app and GPUI's examples from memory; they are
@@ -59,15 +61,17 @@ examples/sh/progress.sh 'Sleeping' sh -c 'for i in 1 2 3 4 5; do echo step $i; s
 cd examples/sed && uitreefs -t Counter sed -nuf counter.sed /mnt/ui/events
 ```
 
-### Linux clients: Lua, Node, Python, Ruby, PostScript, COBOL and jq
+### Linux clients: Lua, Node, Python, Ruby, PostScript, COBOL, jq, Forth and Scheme
 
 h9 runs Linux binaries in the same machine as 9front's. `--dir ALPINE:#L`
 puts an Alpine tree under the Linux view, where the Plan 9 namespace is
 under `/9`, and uitreefs sets `$ui` to `/9/mnt/ui` for it. Every client
 goes through `$ui`, so the same code runs in either view.
 [screenshots/tools/linuxroot.sh](screenshots/tools/linuxroot.sh) makes that
-tree with `apk.static` from Alpine edge: ghostscript, gnucobol, jq, lua5.4,
-nodejs, python3 and ruby.
+tree with `apk.static` from Alpine edge: chibi-scheme, ghostscript, gnucobol,
+jq, lua5.4, nodejs, python3 and ruby. Alpine has no gforth, so
+[screenshots/tools/gforth.sh](screenshots/tools/gforth.sh) builds gforth
+0.7.3 into the same tree with its own gcc.
 
 ```sh
 L=third_party/hyper9/.local/linux/edge-tools   # from screenshots/tools/linuxroot.sh
@@ -79,6 +83,8 @@ cd examples/ps && uitreefs -t Stamps --dir $L:'#L' sh -c 'exec gs -q -dNODISPLAY
 cd examples/cobol && uitreefs --headless --dir $L:'#L' cobc -x payroll.cob   # cobc and gcc, in h9
 uitreefs -t Payroll --dir $L:'#L' ./payroll
 cd examples/jq && uitreefs -t Tic-tac-toe --dir $L:'#L' sh -c 'jq -nRj --unbuffered -f ttt.jq <$ui/events >$ui/win/main/ctl'
+cd examples/forth && uitreefs -t RPN --dir $L:'#L' gforth rpn.fs
+cd examples/scheme && uitreefs -t Derivatives --dir $L:'#L' chibi-scheme deriv.scm
 ```
 
 The Lua, Node, Python and Ruby clients use only their standard libraries.
@@ -99,6 +105,13 @@ possible. Each file's header says what the shell does, and why.
 - **COBOL** opens everything itself. Data files take Plan 9 words as well
   as tabs, so its `LINE SEQUENTIAL` records hold no tabs and GnuCOBOL's
   validation needs no switch.
+- **Forth** (gforth) opens `events` with `open-file` and writes every ctl
+  itself. The client keeps nothing on the data stack between events, so
+  the stack the user sees is the real one: a key is a word passed to
+  `evaluate`, and the stack view is `depth` and `pick`.
+- **Scheme** (chibi) uses R7RS small's file ports and nothing else. The
+  input's text goes through `read`, so the expression is a list from the
+  start, and differentiating, simplifying and printing are walks over it.
 - **jq** can't open files, so a shell line wires events in and the window's
   ctl out. jq can only write that one ctl, so it lays the board out with
   absolute positions it computes.

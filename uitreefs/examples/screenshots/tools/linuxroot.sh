@@ -1,6 +1,7 @@
 #!/bin/bash
 # linuxroot.sh [DIR]: make the Alpine root the Linux examples run on:
-# PostScript, COBOL, jq, Lua, Node, Python and Ruby. This has
+# PostScript, COBOL, jq, Lua, Node, Python, Ruby and Scheme (gforth.sh adds
+# Forth, which Alpine does not package). This has
 # ghostscript, gnucobol (with gcc and musl-dev for cobc),
 # jq and GNU sed, from Alpine edge (gnucobol is only in edge/testing).
 # Uses apk.static on the host, so it needs no Alpine and no root inside h9.
@@ -14,6 +15,6 @@ curl -sL $E/main/x86_64/apk-tools-static-$v.apk | tar xz -C $T 2>/dev/null
 mkdir -p "$DIR"
 $T/sbin/apk.static --root "$DIR" --initdb --allow-untrusted --no-cache \
 	-X $E/main -X $E/community -X $E/testing \
-	add alpine-base ghostscript jq gnucobol gcc musl-dev sed lua5.4 nodejs python3 ruby
+	add alpine-base ghostscript jq gnucobol gcc musl-dev sed lua5.4 nodejs python3 ruby chibi-scheme
 rm -rf $T
 echo "$DIR"
