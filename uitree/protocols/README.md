@@ -6,17 +6,16 @@ This directory specifies the uitree file protocol: how a program builds,
 runs and observes a graphical user interface by reading and writing files
 served over 9P. The spec is meant to have more than one host:
 
-- **uitreefs** ([`../../uitreefs`](../../uitreefs)), a GPUI Kit host for
-  macOS, Linux and Windows. Its use is an Electron alternative: an app is
-  a client in any language plus a host that provides the components.
+- **uitree** ([`..`](..)), a Zig core with GPUI, terminal and browser
+  renderers. Its use is an Electron alternative: an app is a client in
+  any language plus a host that provides the components.
 - **9/UX** ([progrium/9ux](https://github.com/progrium/9ux)), a
   Macintosh-style desktop for 9front, where libux would be the host and
   rio, uxd and clipd serve the session-wide layers.
 
 Neither host is the reference. Where this spec and a host differ, the
-host has a bug or the spec has an open question. uitreefs's
-[DESIGN.md](../../uitreefs/DESIGN.md) is the closest existing
-implementation, and most of the grammar comes from it.
+host has a bug or the spec has an open question. Most of the grammar comes from uitree's
+predecessor, uitreefs ([DESIGN.md](https://github.com/progrium/scratch/blob/562f8b757a3558900b14f21c515f878af0167ada/uitreefs/DESIGN.md)).
 
 ## Layers
 
@@ -131,7 +130,7 @@ a fake per protocol. Neither exists yet.
 
 ## Prior art and sources
 
-- uitreefs [DESIGN.md](../../uitreefs/DESIGN.md), v0.2: the core grammar
+- uitreefs [DESIGN.md](https://github.com/progrium/scratch/blob/562f8b757a3558900b14f21c515f878af0167ada/uitreefs/DESIGN.md), v0.2: the core grammar
   and the component catalog.
 - 9/UX's [protocol conventions](https://github.com/progrium/9ux/blob/main/docs/protocols/README.md),
   [ux.md](https://github.com/progrium/9ux/blob/main/docs/protocols/ux.md)

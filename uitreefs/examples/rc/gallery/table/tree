@@ -1,2 +1,0 @@
-scroll story  : flex_1 p=24
-  table t  stripe  sortable  sorted  resizable  selectable=row  : h=360

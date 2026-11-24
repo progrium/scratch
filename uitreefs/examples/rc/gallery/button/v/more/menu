@@ -1,4 +1,0 @@
-item copy label=Copy key=cmd-c
-item paste label=Paste key=cmd-v
-sep
-item del label=Delete

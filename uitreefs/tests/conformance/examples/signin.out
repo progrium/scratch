@@ -1,17 +1,0 @@
--- window main ? M        gm¾ó)Ûµ´                  type root root root@ M        1}jGn©Üq´                   order root root root> M         D' Ò>0´          /        ctl root root rootA M         *qo½ß`}$                   events root root rootA M        ú9™†É´Ÿ$                  bounds root root root= M        R§ƒˆèm5å$                  id root root root? M        ƒBmgóLÌŠ´                   tree root root root@ M        À ÈËÆb´                  style root root root> M        µ >À4eœ´                   tag root root root= M        Ú‹qˆè“ å´                   on root root rootB M        :^¦^ï´                   context root root rootB M        ÞXj5·>´                   tooltip root root root? M        ¦`¶Û{<Oô´                   drop root root rootD M        ˆ¦½ÙÐ4vê´                   drag-type root root root? M        ˆ­?»ó‹´                  text root root root@ M        V&¤ql~_f´                   flags root root root
-div root  : v_flex size_full p=24 gap=16 bg=background
-  text title  text='Sign in'  : text_xl font_semibold
-  form f  tag=login
-    field user  required  label=Email
-      input in  placeholder=you@example.com
-    field pass  required  label=Password
-      input in  secret
-    field go
-      button submit  label='Sign in'  : primary w_full
-  link help  label='Forgot password?'  href=https://example.com/reset
--- overlay main/hi
-dialog hi  keyboard  overlay_closable  title=Welcome  width=320
-  div footer  : h_flex justify_end
-    button ok  label=Continue  tag=ok  : primary
--- keys
--- stderr
