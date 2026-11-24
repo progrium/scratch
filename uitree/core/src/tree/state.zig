@@ -228,7 +228,7 @@ pub const WinAsk = enum { inherit, close, none };
 /// outlives every State.
 pub const WinProp = struct { key: []const u8, val: *Blob };
 
-pub const win_props = [_][]const u8{ "title", "size", "min", "max", "pos", "kind", "titlebar", "resizable" };
+pub const win_props = [_][]const u8{ "title", "size", "min", "max", "pos", "kind", "titlebar", "resizable", "transparent", "click-through" };
 
 pub const Win = struct {
     rc: std.atomic.Value(u32) = .init(1),

@@ -34,6 +34,18 @@ web-time = "1.1"
 # (uitree/web/README.md): code shows as plain text there.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 gpui-component = { workspace = true, features = ["syntect"] }
+# `click-through` (passthrough.rs): the native window handle, and each
+# platform's call. All three are already in the tree through gpui.
+raw-window-handle = "0.6"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+x11rb = { version = "0.13.1", features = ["allow-unsafe-code", "shape"] }
 
 [features]
 # Exposes `host::testing` (the TestAppContext harness) to other crates.
