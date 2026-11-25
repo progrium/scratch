@@ -1,0 +1,13 @@
+-- window main Terminal
+div root  : v-flex size-full bg=background
+  div bar  tag=run  : h-flex items-center gap=6 px=12 py=6 border-b-1 border-color=border
+    text title  text=sh  : flex-1 text-sm font-semibold
+    text size  text=80x24  : text-xs text-color=muted-foreground font-family=monospace
+    button htop  ghost  xs  label=htop
+    button nvim  ghost  xs  label=nvim
+    button restart  ghost  xs  label=Restart  tag=restart
+  div body  : flex-1 v-flex p=6 bg=background
+    terminal sh  pty=on  : flex-1
+-- menu/bar
+-- keys
+-- stderr

@@ -1,0 +1,87 @@
+#!/bin/rc
+# terminal.rc: a shell in a terminal node, in pty mode. The host opens a
+# pseudoterminal pair in the app's machine and holds its master; the app
+# starts Alpine's sh on the slave as a session leader, so the shell, htop
+# and Neovim see a real terminal: isatty, the line discipline (Ctrl-C is
+# SIGINT), and the node's grid as their window size, with SIGWINCH when it
+# changes.
+#
+#	uitree -t Terminal -d $LINUXROOT:#L rc terminal.rc
+#
+# $LINUXROOT is the Alpine tree ../../../../tools/linuxroot makes (it has
+# htop and Neovim). The app is rc in the Plan 9 view; the programs are Linux
+# ones from #L.
+#
+# Shows: pty=on and the tty file, a Linux program started on the slave
+# with setsid -c, the hangup event when the shell exits (the app starts a
+# new one), the title event and file (Neovim sets it), the resize event,
+# paste to type a command for the user, pty=off and on to restart.
+# Needs: the terminal node, pty mode (components.md § terminal)
+. ./lib.rc
+m=$ui/win/main
+t=$m/body/sh
+
+echo 'set . title=Terminal size=900,560 pos=center' >$m/ctl
+cat >$m/tree <<'END'
+div root  : v-flex size-full bg=background
+  div bar  tag=run  : h-flex items-center gap=6 px=12 py=6 border-b-1 border-color=border
+    text title  text=sh  : flex-1 text-sm font-semibold
+    text size  : text-xs text-color=muted-foreground font-family=monospace
+    button htop  label=htop  ghost xs
+    button nvim  label=nvim  ghost xs
+    button restart  label=Restart  ghost xs  tag=restart
+  div body  : flex-1 v-flex p=6 bg=background
+    terminal sh  pty=on  : flex-1
+END
+echo body/sh >$m/focus
+
+# start: Alpine's login sh on the slave, as a session leader with the slave
+# as its controlling terminal (setsid -c), in the background.
+fn start {
+	tty=`{cat $t/tty}
+	'#L/bin/sh' -c 'cd /root; exec setsid -c env -i HOME=/root TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin PS1=''\[\e[1;32m\]\u@uitree\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '' sh <'^$tty^' >'^$tty^' 2>&1' </dev/null &
+}
+
+# type CMD: CMD and Enter, as if typed: paste sends the text to the
+# program through the master, newlines as CR.
+fn type {
+	echo 'paste text=<<E
+'^$"*^'
+
+E' >$t/ctl
+	echo body/sh >$m/focus
+}
+
+# size: the grid in the bar, as cols x rows.
+fn size {
+	echo 'set bar/size text='^`{cat $t/cols}^x^`{cat $t/rows} >$m/ctl
+}
+
+# The events file is open before the shell starts and the first layout,
+# so no hangup or resize is missed.
+{ start; size; while(ev=`{read}){
+	switch($ev(1)^:^$ev(2)^:^$ev(3)){
+	case click:run:bar/htop
+		type htop
+	case click:run:bar/nvim
+		type nvim /etc/motd
+	case click:restart:*
+		# pty=off closes the master, so the shell gets SIGHUP; a new
+		# pair, a clear screen, a new shell.
+		echo 'set body/sh pty=off' >$m/ctl
+		echo reset >$t/ctl
+		echo 'set body/sh pty=on' >$m/ctl
+		start
+		echo body/sh >$m/focus
+	case hangup:*
+		# The shell exited (exit, Ctrl-D): say so, start another.
+		awk 'BEGIN { printf "write text=<<E\n\r\n\033[2m[sh exited; a new one]\033[0m\r\n\nE\n" }' >$t/ctl
+		start
+	case title:*
+		tl=`{sed 's/''/''''/g' $t/title}
+		if(~ $#tl 0) tl=sh
+		echo 'set bar/title text='''^$"tl^'''' >$m/ctl
+	case resize:*
+		size
+	}
+} } <$ui/events

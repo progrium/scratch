@@ -217,4 +217,21 @@ cases.push(
     },
     renderers: gpui,
   },
+  {
+    app: 'repl', name: 'terminal node: keys in, cells out (stream mode)',
+    async run(t) {
+      const screen = async () => (await t.ui.read('win/main/body/sh/screen'));
+      await t.ready('body/sh');
+      await t.until('prompt', async () => / ~?[^ ]*; *$/m.test(await screen()));
+      await t.click('body/sh');
+      await t.retry('calc', async () => { await t.type('calc 6*7'); await t.press('Enter'); },
+        async () => /^42$/m.test(await screen()));
+      await t.press('ArrowUp');
+      await t.until('history', async () => /calc 6\*7\n?$/.test((await screen()).trimEnd()));
+      await t.press('Control+u');
+      await t.type('colors');
+      await t.press('Enter');
+      await t.until('colors', async () => /bold faint italic/.test(await screen()));
+    },
+  },
 );

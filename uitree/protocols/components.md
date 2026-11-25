@@ -302,6 +302,15 @@ The rest is the same in both modes:
 - When the program asked for focus reports, it hears when a window's
   focus comes to the node or leaves it.
 
+Two of uitree's example apps show the modes end to end:
+[rc/terminal.rc](../tests/conformance/examples/rc/terminal.rc) runs
+Alpine's sh in pty mode (htop and Neovim run in it), and
+[go/repl](../tests/conformance/examples/go/repl) is a shell in Go in
+stream mode, which does its own echo and line editing since stream mode
+has no line discipline. A pty-mode app that is rc in the Plan 9 view
+starts its Linux program from `#L`, so it runs with a Linux tree there
+(`uitree -d $LINUXROOT:#L -e ui=/mnt/ui /9/bin/rc terminal.rc`).
+
 **`web`** (`web`). A web view as a node, so a window can mix native nodes
 and a page. `window main url=...` in the [shell layer](shell.md) is
 shorthand for a window whose only child is a `web` node.

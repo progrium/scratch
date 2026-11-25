@@ -8,7 +8,9 @@
 # growing for seconds: run-examples checks only
 # that the tree builds with nothing refused), go (build the Go program
 # first, with GOOS=plan9), net (needs outbound network, which h9 doesn't
-# give an app: it runs, but has nothing to show).
+# give an app: it runs, but has nothing to show), linux (a Plan 9 command
+# that starts Linux programs from #L: run with $LINUXROOT there, and
+# skipped without it).
 hello|rc|Hello|plan9||rc hello.rc
 counter|rc|Counter|plan9||rc counter.rc
 confirm|rc|Confirm|plan9||rc confirm.rc Delete?
@@ -23,9 +25,11 @@ dock|rc|Workspace|plan9|nogolden|rc dock.rc
 chat|rc|Chat|plan9||rc chat.rc
 notes|rc|Notes|plan9||rc notes.rc
 paint|rc|Paint|plan9||rc paint.rc
+terminal|rc|Terminal|plan9|linux|rc terminal.rc
 csvview|awk|planets.csv|plan9||awk -f csvview.awk planets.csv
 go-greet|go/greet|Greeter|plan9|go|./greet
 go-clock|go/clock|Clock|plan9|go,nogolden|./clock
+go-repl|go/repl|repl|plan9|go|./repl
 c-life|c|Life|plan9|nogolden|rc -c 'mk install >/dev/null && exec ./life'
 sed-counter|sed|Counter|plan9||sed -nuf counter.sed /mnt/ui/events
 jq-ttt|jq|Tic-tac-toe|linux||exec jq -nRj --unbuffered -f ttt.jq <$ui/events >$ui/win/main/ctl

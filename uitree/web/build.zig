@@ -48,6 +48,8 @@ const apps = [_]App{
     .{ .name = "files", .files = &.{ "rc/files.rc", "rc/lib.rc" } },
     .{ .name = "csvview", .files = &.{ "awk/csvview.awk", "awk/planets.csv" } },
     .{ .name = "tour", .files = &.{ "@tour/tour.rc", "@tour/notes.md", "@tour/pic.png", "rc/lib.rc" } },
+    // The page shows main.go; the program itself is built below.
+    .{ .name = "repl", .files = &.{"go/repl/main.go"} },
 };
 
 pub fn build(b: *std.Build) void {
@@ -144,6 +146,20 @@ pub fn build(b: *std.Build) void {
         const src = if (std.mem.startsWith(u8, f, "@")) b.path(f[1..]) else dir(b, b.fmt("../tests/conformance/examples/{s}", .{f}));
         install.dependOn(&b.addInstallFileWithDir(src, .prefix, b.fmt("apps/{s}/{s}", .{ a.name, std.fs.path.basename(f) })).step);
     };
+    // repl, the terminal node's stream-mode demo (examples/go/repl), is a
+    // Go program: built for the 386 CPU h9 emulates in the browser.
+    // -Drepl=false skips it, for a machine without go.
+    if (b.option(bool, "repl", "Build the Go repl example (needs go; default true)") orelse true) {
+        const go = b.addSystemCommand(&.{ "go", "build", "-trimpath", "-o" });
+        go.setCwd(dir(b, "../tests/conformance/examples/go/repl"));
+        go.setEnvironmentVariable("GOOS", "plan9");
+        go.setEnvironmentVariable("GOARCH", "386");
+        go.setEnvironmentVariable("CGO_ENABLED", "0");
+        const exe = go.addOutputFileArg("repl");
+        go.addArg(".");
+        go.has_side_effects = true;
+        install.dependOn(&b.addInstallFileWithDir(exe, .prefix, "apps/repl/repl").step);
+    }
 
     // sw.js with the build's hash, and the .gz and .br copies.
     const finish = b.addSystemCommand(&.{ "sh", b.pathFromRoot("finish.sh"), b.install_prefix });

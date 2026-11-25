@@ -1,0 +1,100 @@
+#!/bin/bash
+# shoot-terminal: the terminal node's demos in the GPUI renderer under
+# Xvfb, driven with xdotool, as screenshots and a GIF.
+#
+#	tools/shoot-terminal [OUTDIR] [terminal|repl]
+#
+# terminal is examples/rc/terminal.rc: Alpine's sh in pty mode, running
+# ls, htop and Neovim (needs $LINUXROOT from ../../tools/linuxroot).
+# repl is examples/go/repl: a shell in Go in stream mode (needs go).
+# Needs Xvfb, xdotool, ImageMagick, a built target/release/uitree and
+# $H9ROOT, as tools/shoot-examples does. OUTDIR defaults to
+# examples-shots/; each demo writes NAME*.png and NAME.gif there.
+set -eu
+here=$(cd "$(dirname "$0")/.." && pwd)
+bin=$here/target/release/uitree
+ex=$here/../../tests/conformance/examples
+out=${1:-$here/examples-shots}
+which=${2:-terminal repl}
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+[ -x "$bin" ] || { echo "shoot-terminal: no $bin (cargo build --release -p uitree)" >&2; exit 2; }
+: "${H9ROOT:?shoot-terminal: set H9ROOT to a 9front root}"
+disp=:${DISPLAY_NUM:-79}
+export DISPLAY=$disp
+
+Xvfb "$disp" -screen 0 1280x800x24 >/dev/null 2>&1 &
+xvfb=$!
+pid=
+trap '[ -n "$pid" ] && kill $pid 2>/dev/null; kill $xvfb 2>/dev/null' EXIT INT TERM
+sleep 1
+
+frames=
+n=0
+frame() { # [png name]: a GIF frame, and a named PNG if given
+	sleep 0.8
+	if ! kill -0 "$pid" 2>/dev/null; then
+		echo "shoot-terminal: $name exited before frame $n (see $out/$name.log)" >&2
+		tail -n 20 "$out/$name.log" >&2
+		exit 1
+	fi
+	import -window root "$frames/raw.png"
+	convert "$frames/raw.png" -bordercolor black -border 1 -trim +repage "$frames/f$(printf %03d $n).png"
+	[ -n "${1:-}" ] && cp "$frames/f$(printf %03d $n).png" "$out/$1.png"
+	n=$((n + 1))
+}
+gif() { convert -delay 90 -loop 0 "$frames"/f*.png -layers Optimize "$out/$1.gif"; rm -rf "$frames"; }
+type() { xdotool type --delay 40 "$1"; sleep 0.5; }
+keys() { xdotool key --delay 80 "$@"; sleep 0.6; }
+focus() { # click the middle of the window, where the terminal is
+	w=$(xdotool search --sync --onlyvisible --pid "$pid" | head -1)
+	xdotool windowactivate --sync "$w" 2>/dev/null || true
+	eval "$(xdotool getwindowgeometry --shell "$w")"
+	xdotool mousemove $((X + WIDTH / 2)) $((Y + HEIGHT / 2)) click 1
+	sleep 0.5
+}
+start() { # dir prog...: the app, in dir
+	frames=$(mktemp -d)
+	n=0
+	local d=$1
+	shift
+	(cd "$d" && exec "$bin" -k "$@") >"$out/${name}.log" 2>&1 &
+	pid=$!
+	sleep 8
+	focus
+}
+stop() { kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; pid=; }
+
+for name in $which; do
+	case $name in
+	terminal)
+		: "${LINUXROOT:?shoot-terminal: set LINUXROOT (../../tools/linuxroot)}"
+		start "$ex/rc" -t Terminal -d "$LINUXROOT:#L" -e ui=/mnt/ui /9/bin/rc terminal.rc
+		frame terminal
+		type 'ls --color=always -l /etc | head -12'; keys Return; frame terminal-ls
+		type 'htop'; keys Return; sleep 3; frame; sleep 2; frame terminal-htop
+		keys F5; sleep 2; frame; keys q; frame
+		type 'nvim /etc/motd'; keys Return; sleep 3; frame terminal-nvim
+		keys G o; type 'Typed in Neovim, in a uitree terminal node.'; frame
+		keys Escape; type ':set number'; keys Return; type ':split'; keys Return; frame terminal-nvim-edit
+		type ':qa!'; keys Return; frame
+		type 'stty size; tty'; keys Return; frame terminal-stty
+		gif terminal
+		stop
+		;;
+	repl)
+		(cd "$ex/go/repl" && GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o repl .)
+		start "$ex/go/repl" -t repl ./repl
+		frame repl
+		type 'ls /bin'; keys Return; frame repl-ls
+		type 'colors'; keys Return; frame repl-colors
+		type 'calc (1+2)*14'; keys Return; frame
+		keys Up; frame; keys BackSpace BackSpace; type '100'; frame
+		keys Return; frame repl-history
+		gif repl
+		stop
+		;;
+	*) echo "shoot-terminal: no demo $name" >&2; exit 2 ;;
+	esac
+	echo "shot $name: $out/$name.gif"
+done
