@@ -23,6 +23,12 @@
 //! - **Mouse.** Presses, releases and moves over the grid go to
 //!   `uit_term_mouse` by cell; the wheel to `uit_term_scroll` in lines.
 //!   The core decides whether they reach the program or select.
+//! - **Copy and paste.** The copy keystroke (cmd-c on macOS, ctrl-shift-c)
+//!   goes to the core through `uit_key` like any other: with text selected
+//!   it puts the selection on the clipboard, which comes back as the
+//!   clipboard host command. Paste (cmd-v, ctrl-shift-v, shift-insert) is
+//!   this renderer's: it reads the platform clipboard and sends the text
+//!   with `uit_term_paste`, which brackets it when the program asked.
 //!
 //! The painter ([`element`]) is a hand port of gpui-ghostty's
 //! `TerminalTextElement` (Apache-2.0, github.com/Xuanwo/gpui-ghostty,
@@ -57,7 +63,7 @@ pub fn register(reg: &mut ComponentRegistry) {
 /// `Root` (which takes tab and shift-tab for focus moves).
 const KEY_CONTEXT: &str = "UitreeTerminal";
 
-actions!(uitree_terminal, [SendTab, SendBackTab]);
+actions!(uitree_terminal, [SendTab, SendBackTab, Paste]);
 
 fn ensure_key_bindings(cx: &mut App) {
     struct Bound;
@@ -69,6 +75,9 @@ fn ensure_key_bindings(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", SendTab, Some(KEY_CONTEXT)),
         KeyBinding::new("shift-tab", SendBackTab, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-v", Paste, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-v", Paste, Some(KEY_CONTEXT)),
+        KeyBinding::new("shift-insert", Paste, Some(KEY_CONTEXT)),
     ]);
 }
 
@@ -136,6 +145,19 @@ impl TermState {
         self.with_core(|c| {
             if let Err(e) = c.term_text(n, text) {
                 note_unsupported("term_text", &e);
+            }
+        });
+    }
+
+    /// A paste from the platform clipboard.
+    pub(crate) fn paste(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let n = self.node;
+        self.with_core(|c| {
+            if let Err(e) = c.term_paste(n, text) {
+                note_unsupported("term_paste", &e);
             }
         });
     }
@@ -339,12 +361,17 @@ impl Component for Terminal {
         };
         let e1 = ent.clone();
         let e2 = ent.clone();
+        let e3 = ent.clone();
 
         let inner = element::TerminalElement::new(ent, focus.clone());
         el.track_focus(&focus)
             .key_context(KEY_CONTEXT)
             .on_action(move |_: &SendTab, _, cx| e1.read(cx).send_key("tab"))
             .on_action(move |_: &SendBackTab, _, cx| e2.read(cx).send_key("shift-tab"))
+            .on_action(move |_: &Paste, _, cx| {
+                let text = cx.read_from_clipboard().and_then(|i| i.text()).unwrap_or_default();
+                e3.read(cx).paste(&text);
+            })
             .on_key_down(on_key)
             .on_mouse_down(MouseButton::Left, on_down.clone())
             .on_mouse_down(MouseButton::Middle, on_down.clone())

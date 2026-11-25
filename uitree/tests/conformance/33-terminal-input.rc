@@ -1,0 +1,99 @@
+#!/bin/rc
+# 33-terminal-input: components.md § terminal, the input on top of the
+# screen (T7). Without a mouse mode a drag selects and `selection` serves
+# the text, the copy keystroke puts it on the clipboard and the wheel
+# moves the view; under one, clicks and the wheel are reported to the
+# program. A paste is bracketed when the program asked, OSC 52 copies,
+# and focus is reported when asked. Pointer input arrives as render.md's
+# `term-*` lines on /debug/inject, as a renderer's uit_term_* calls send
+# it. Bytes for the program are shown with ESC as ^[, ended by a ctrl-j.
+# needs: T7
+. ./lib.rc
+if(! test -d $k/types/terminal) {
+	echo skip: no terminal type
+	exit
+}
+mainwin
+r=$k/win/main
+t=$r/sh
+wq $r/ctl new terminal sh
+awk 'BEGIN { printf "one two three\r\nfour\r\n" }' >$t/out
+
+fn mouse {
+	inj term-mouse win'='main node'='sh $*
+}
+fn line {
+	inj key win'='main stroke'='ctrl-j node'='sh
+	awk '{ gsub(/\033/, "^["); gsub(/\r/, "^M"); print; exit }' <[0=3]
+}
+
+echo '# a drag selects cells; selection serves the text'
+mouse action'='press button'='left col'='4 row'='0
+mouse action'='move button'='left col'='3 row'='1
+mouse action'='release button'='left col'='3 row'='1
+val $t/selection
+echo '# a double press selects a word'
+mouse action'='press button'='left col'='9 row'='0 clicks'='2
+mouse action'='release button'='left col'='9 row'='0 clicks'='2
+val $t/selection
+echo '# the copy keystroke puts the selection on the clipboard'
+{
+	inj key win'='main stroke'='ctrl-shift-c node'='sh
+	val $k/clip
+	evs
+} <[3]$k/events
+echo '# a single click clears the selection'
+mouse action'='press button'='left col'='0 row'='0
+mouse action'='release button'='left col'='0 row'='0
+val $t/selection
+
+echo '# the wheel scrolls back into history, and output snaps back'
+awk 'BEGIN { for(i = 0; i < 30; i++) printf "line %d\r\n", i }' >$t/out
+inj term-scroll win'='main node'='sh lines'='-25
+sed -n '1p' $t/screen
+awk 'BEGIN { printf "more" }' >>$t/out
+sed -n '1p' $t/screen
+
+echo '# under a mouse mode, clicks and the wheel go to the program'
+awk 'BEGIN { printf "\033[?1000;1006h" }' >>$t/out
+{
+	mouse action'='press button'='left col'='2 row'='3 mods'='ctrl
+	mouse action'='release button'='left col'='2 row'='3
+	inj term-scroll win'='main node'='sh lines'='-1
+	line
+} <[3]$t/keys
+val $t/selection
+awk 'BEGIN { printf "\033[?1000l" }' >>$t/out
+
+echo '# a paste: bracketed once the program asks'
+{
+	inj term-paste win'='main node'='sh text'='hello
+	line
+	awk 'BEGIN { printf "\033[?2004h" }' >>$t/out
+	cat $t/screen >/dev/null
+	inj term-paste win'='main node'='sh text'='hello
+	w $t/ctl paste again
+	line
+} <[3]$t/keys
+
+echo '# focus reports once the program asks'
+{
+	awk 'BEGIN { printf "\033[?1004h" }' >>$t/out
+	cat $t/screen >/dev/null
+	wq $r/focus sh
+	wq $r/focus ''
+	line
+} <[3]$t/keys
+
+echo '# OSC 52 copies, as a write to clip does; reads are refused'
+{
+	awk 'BEGIN { printf "\033]52;c;ZnJvbSB0aGUgcHJvZ3JhbQ==\007\033]52;c;?\007" }' >>$t/out
+	cat $t/screen >/dev/null
+	val $k/clip
+	evs
+} <[3]$k/events
+
+echo '# term-* lines name a terminal'
+wq $r/ctl new button b
+w $inject term-scroll win'='main node'='b lines'='1
+w $inject term-warp win'='main node'='sh

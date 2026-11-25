@@ -444,6 +444,7 @@ unsafe extern "C" {
     pub fn uit_term_mouse(c: *mut UitCore, n: UitNode, m: *const UitTermMouse) -> c_int;
     pub fn uit_term_scroll(c: *mut UitCore, n: UitNode, lines: i32) -> c_int;
     pub fn uit_term_text(c: *mut UitCore, n: UitNode, text: UitStr) -> c_int;
+    pub fn uit_term_paste(c: *mut UitCore, n: UitNode, text: UitStr) -> c_int;
 }
 
 /// In the browser the core is linked in with wasi-libc, whose malloc

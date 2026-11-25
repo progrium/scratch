@@ -1530,22 +1530,28 @@ pub export fn uit_term_mouse(c: *Core, h: UitNode, m: ?*const UitTermMouse) c_in
     if (input(c)) |r| return r;
     const mm = m orelse return UIT_EINVAL;
     if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .mouse = .{ .win = "", .node = "", .m = mm.* } });
+    const em = termMouseOf(mm.*) orelse return UIT_EINVAL;
+    const took = c.tree.termMouse(h, em) catch |e| return c.fail(e);
+    c.wake();
+    return @intFromBool(took);
+}
+
+/// A UitTermMouse as the engine takes it; null for an unknown action or
+/// button.
+pub fn termMouseOf(mm: UitTermMouse) ?engine.Mouse {
     const clamp = struct {
         fn f(v: u32) u16 {
             return @intCast(@min(v, std.math.maxInt(u16)));
         }
     }.f;
-    const em: engine.Mouse = .{
-        .action = std.enums.fromInt(engine.MouseAction, mm.action) orelse return UIT_EINVAL,
-        .button = std.enums.fromInt(engine.MouseButton, mm.button) orelse return UIT_EINVAL,
+    return .{
+        .action = std.enums.fromInt(engine.MouseAction, mm.action) orelse return null,
+        .button = std.enums.fromInt(engine.MouseButton, mm.button) orelse return null,
         .col = clamp(mm.col),
         .row = clamp(mm.row),
         .mods = @bitCast(@as(u8, @truncate(mm.mods & 0xf))),
         .clicks = @intCast(@min(@max(mm.clicks, 1), 3)),
     };
-    const took = c.tree.termMouse(h, em) catch |e| return c.fail(e);
-    c.wake();
-    return @intFromBool(took);
 }
 
 pub export fn uit_term_scroll(c: *Core, h: UitNode, lines: i32) c_int {
@@ -1560,6 +1566,12 @@ pub export fn uit_term_text(c: *Core, h: UitNode, text: UitStr) c_int {
     if (input(c)) |r| return r;
     if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .text = .{ .win = "", .node = "", .text = text.slice() } });
     return done(c, c.tree.termText(h, text.slice()));
+}
+
+pub export fn uit_term_paste(c: *Core, h: UitNode, text: UitStr) c_int {
+    if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .paste = .{ .win = "", .node = "", .text = text.slice() } });
+    return done(c, c.tree.termPaste(h, text.slice()));
 }
 
 // ---------------------------------------------------------------------
@@ -1701,6 +1713,109 @@ test "terminal calls: cells, input and changes (ABI 9)" {
     try tt.expectEqual(@as(usize, 0), try r.read(&buf));
     try tt.expectError(error.Gone, t.write("x"));
     try tt.expectEqual(UIT_EINVAL, uit_term_cursor(core, sh, &cur));
+}
+
+test "terminal input (T7): mouse modes, paste, copy, OSC 52, focus reports" {
+    const tt = std.testing;
+    const core = try testCore();
+    defer uit_destroy(core);
+    try write(core, "win/main/ctl", "new terminal sh");
+    const root = uit_window_root(core, UitStr.lit("main"));
+    var kids: ?[*]const UitNode = null;
+    _ = uit_children(core, root, &kids);
+    const sh = kids.?[0];
+    const t = core.tree.terms.get(sh).?;
+    defer t.unref();
+    const r = try t.openKeys();
+    defer r.close();
+    var buf: [256]u8 = undefined;
+    var ch: UitChanges = .{};
+    var arena: std.heap.ArenaAllocator = .init(tt.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // The program turns on button tracking with SGR reports, bracketed
+    // paste and focus reports.
+    try t.write("one two three\r\n\x1b[?1002;1006;2004;1004h");
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+
+    // Under a mouse mode a press goes to the program, not the selection.
+    var m: UitTermMouse = .{ .action = UIT_TERM_PRESS, .button = UIT_TERM_BUTTON_LEFT, .col = 4, .row = 0, .mods = UIT_TERM_MOD_CTRL };
+    try tt.expectEqual(@as(c_int, 1), uit_term_mouse(core, sh, &m));
+    m = .{ .action = UIT_TERM_MOVE, .button = UIT_TERM_BUTTON_LEFT, .col = 6, .row = 0 };
+    try tt.expectEqual(@as(c_int, 1), uit_term_mouse(core, sh, &m));
+    m = .{ .action = UIT_TERM_RELEASE, .button = UIT_TERM_BUTTON_LEFT, .col = 6, .row = 0 };
+    try tt.expectEqual(@as(c_int, 1), uit_term_mouse(core, sh, &m));
+    // A plain move under 1002 is taken but not reported.
+    m = .{ .action = UIT_TERM_MOVE, .col = 7, .row = 0 };
+    try tt.expectEqual(@as(c_int, 1), uit_term_mouse(core, sh, &m));
+    // The wheel too, at the pointer's last cell.
+    try tt.expectEqual(@as(c_int, 1), uit_term_scroll(core, sh, -1));
+    var n = try r.read(&buf);
+    try tt.expectEqualStrings("\x1b[<16;5;1M\x1b[<32;7;1M\x1b[<0;7;1m\x1b[<64;8;1M", buf[0..n]);
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqualStrings("", (try t.readFile(a, "selection")).?);
+
+    // A paste from the renderer is bracketed.
+    try tt.expectEqual(UIT_OK, uit_term_paste(core, sh, UitStr.lit("ls\nwc")));
+    n = try r.read(&buf);
+    try tt.expectEqualStrings("\x1b[200~ls\nwc\x1b[201~", buf[0..n]);
+    // The `paste` verb is the same.
+    try write(core, "win/main/sh/ctl", "paste hi");
+    n = try r.read(&buf);
+    try tt.expectEqualStrings("\x1b[200~hi\x1b[201~", buf[0..n]);
+
+    // Focus reports: the window's focus coming to the node and leaving.
+    try write(core, "win/main/focus", "sh");
+    n = try r.read(&buf);
+    try tt.expectEqualStrings("\x1b[I", buf[0..n]);
+    try write(core, "win/main/focus", "");
+    n = try r.read(&buf);
+    try tt.expectEqualStrings("\x1b[O", buf[0..n]);
+
+    // OSC 52 puts the text on the clipboard, as a `clip` write would:
+    // the clipboard host command, and a trace line naming the terminal.
+    try t.write("\x1b]52;c;Y29waWVk\x07");
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqualStrings("copied", treem.state.Blob.str(core.st().clip));
+    var saw = false;
+    if (ch.cmds) |cs| for (cs[0..ch.n_cmds]) |hc| {
+        saw = saw or hc.tag == UIT_CMD_CLIPBOARD;
+    };
+    try tt.expect(saw);
+    // Reads, the primary selection and bad base64 are refused.
+    try t.write("\x1b]52;c;?\x07\x1b]52;p;eA==\x07\x1b]52;c;!!\x07");
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqualStrings("copied", treem.state.Blob.str(core.st().clip));
+
+    // With mouse tracking off, a drag selects and the copy keystroke puts
+    // the selection on the clipboard instead of reaching the program.
+    try t.write("\x1b[?1002l");
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    m = .{ .action = UIT_TERM_PRESS, .button = UIT_TERM_BUTTON_LEFT, .col = 4, .row = 0, .clicks = 2 };
+    try tt.expectEqual(@as(c_int, 0), uit_term_mouse(core, sh, &m));
+    m.action = UIT_TERM_RELEASE;
+    try tt.expectEqual(@as(c_int, 0), uit_term_mouse(core, sh, &m));
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqualStrings("two", (try t.readFile(a, "selection")).?);
+    try tt.expectEqual(@as(c_int, 1), uit_key(core, UitStr.lit("main"), UitStr.lit("ctrl-shift-c"), sh));
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqualStrings("two", treem.state.Blob.str(core.st().clip));
+    // ctrl-c is still the program's interrupt.
+    try tt.expectEqual(@as(c_int, 1), uit_key(core, UitStr.lit("main"), UitStr.lit("ctrl-c"), sh));
+    n = try r.read(&buf);
+    try tt.expectEqualStrings("\x03", buf[0..n]);
+
+    // Scrollback: the wheel moves the view without a mouse mode, and new
+    // output snaps it back to the bottom.
+    try t.write("\r\n" ** 30 ++ "end");
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqual(@as(c_int, 0), uit_term_scroll(core, sh, -5));
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expect(std.mem.indexOf(u8, (try t.readFile(a, "screen")).?, "end") == null);
+    try t.write("!");
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expect(std.mem.indexOf(u8, (try t.readFile(a, "screen")).?, "end!") != null);
 }
 
 fn testCore() !*Core {

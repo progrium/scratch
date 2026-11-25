@@ -334,7 +334,7 @@ test "terminal records: term, term-styles, term-rows" {
     try tt.expectError(error.BadSyntax, term.parseStyleLine("#fff - -"));
 }
 
-test "terminal input lines: term-resize, term-mouse, term-scroll, term-text" {
+test "terminal input lines: term-resize, term-mouse, term-scroll, term-text, term-paste" {
     var aw: std.Io.Writer.Allocating = .init(tt.allocator);
     defer aw.deinit();
     const w = &aw.writer;
@@ -345,6 +345,7 @@ test "terminal input lines: term-resize, term-mouse, term-scroll, term-text" {
         .{ .scroll = .{ .win = "main", .node = "sh", .lines = -3 } },
         .{ .text = .{ .win = "main", .node = "sh", .text = "日本語" } },
         .{ .text = .{ .win = "main", .node = "sh", .text = "two\nlines" } },
+        .{ .paste = .{ .win = "main", .node = "sh", .text = "ls -l" } },
     };
     for (ins) |in| try term.writeInput(w, in);
     try tt.expectEqualStrings(
@@ -357,6 +358,7 @@ test "terminal input lines: term-resize, term-mouse, term-scroll, term-text" {
         \\two
         \\lines
         \\END
+        \\term-paste win=main node=sh text='ls -l'
         \\
     , aw.written());
 
@@ -372,6 +374,7 @@ test "terminal input lines: term-resize, term-mouse, term-scroll, term-text" {
             .mouse => |m| try tt.expectEqual(m.m, got.mouse.m),
             .scroll => |s| try tt.expectEqual(s.lines, got.scroll.lines),
             .text => |t| try tt.expectEqualStrings(t.text, got.text.text),
+            .paste => |t| try tt.expectEqualStrings(t.text, got.paste.text),
         }
     }
     try tt.expectEqual(@as(?term.Input, null), try term.parseInput(try ctl.parse(arena.allocator(), "key win=main stroke=a")));

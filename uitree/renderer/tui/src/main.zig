@@ -43,6 +43,9 @@ const Event = union(enum) {
     winsize: vaxis.Winsize,
     focus_in,
     focus_out,
+    /// A bracketed paste: its keys arrive between these.
+    paste_start,
+    paste_end,
     /// The core queued ops: pump.
     wake,
     /// A `tooltip` file's delay ran out (Ui.tipDue).
@@ -180,6 +183,8 @@ pub fn main(init: std.process.Init) !u8 {
     if (signal_resize) try loop.installResizeHandler();
     defer if (signal_resize) loop.uninstallResizeHandler();
     try vx.setMouseMode(writer, true);
+    // Pastes arrive bracketed, so a terminal node gets them whole.
+    try vx.setBracketedPaste(writer, true);
     if (log_fd >= 0) redirectStderr(log_fd);
 
     if (remote) |addr| k.renderDial(addr, "uitree-tui", role) catch |e| {
@@ -195,6 +200,9 @@ pub fn main(init: std.process.Init) !u8 {
     var grid: ?gridmod.Grid = null;
     defer if (grid) |*g| g.deinit(gpa);
     var clicks: Clicks = .{};
+    // The text of a bracketed paste in progress, null outside one.
+    var pasting: ?std.ArrayList(u8) = null;
+    defer if (pasting) |*b| b.deinit(gpa);
     var status: u8 = 0;
     var exit_text: []const u8 = "";
     var exit_buf: [256]u8 = undefined;
@@ -216,7 +224,16 @@ pub fn main(init: std.process.Init) !u8 {
                         .{ 0, 0 };
                     redraw = true;
                 },
-                .key_press => |key| switch (ui.onKey(translateKey(key))) {
+                .paste_start => pasting = .empty,
+                .paste_end => if (pasting) |*b| {
+                    ui.onPaste(b.items);
+                    b.deinit(gpa);
+                    pasting = null;
+                    redraw = true;
+                },
+                .key_press => |key| if (pasting) |*b| {
+                    pasteKey(gpa, b, key);
+                } else switch (ui.onKey(translateKey(key))) {
                     .quit => {
                         k.windowClosed("main");
                         break :main;
@@ -247,6 +264,10 @@ pub fn main(init: std.process.Init) !u8 {
                             ui.shown = true;
                         },
                         @import("c").UIT_CMD_QUIT => break :main,
+                        // The app's clipboard (a `clip` write, a terminal's
+                        // copy or OSC 52) goes to the outer terminal's, as
+                        // OSC 52.
+                        @import("c").UIT_CMD_CLIPBOARD => vx.copyToSystemClipboard(writer, core.slice(cmd.answer), gpa) catch |e| std.log.warn("clipboard: {t}", .{e}),
                         @import("c").UIT_CMD_FOCUS => if (cmd.node != 0) ui.focus(cmd.node),
                         else => {},
                     };
@@ -402,6 +423,25 @@ fn translateMouse(m: vaxis.Mouse) ?uimod.Ui.Mouse {
 }
 
 var key_name_buf: [8]u8 = undefined;
+
+/// One key of a bracketed paste, as the text it stands for.
+fn pasteKey(gpa: std.mem.Allocator, b: *std.ArrayList(u8), k: vaxis.Key) void {
+    const K = vaxis.Key;
+    if (k.text) |t| {
+        b.appendSlice(gpa, t) catch {};
+        return;
+    }
+    const cp: u21 = switch (k.codepoint) {
+        K.enter => '\n',
+        K.tab => '\t',
+        K.space => ' ',
+        else => k.codepoint,
+    };
+    if (cp > 0x10ffff or (cp < 0x20 and cp != '\n' and cp != '\t')) return;
+    var buf: [4]u8 = undefined;
+    const n = std.unicode.utf8Encode(cp, &buf) catch return;
+    b.appendSlice(gpa, buf[0..n]) catch {};
+}
 
 fn translateKey(k: vaxis.Key) uimod.Ui.Key {
     const K = vaxis.Key;

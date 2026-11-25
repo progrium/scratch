@@ -5,8 +5,13 @@
 //! LF, BS, tab stops every 8 columns, BEL and autowrap, keeps history for
 //! scrollback and selection, and has one style, the default. Escape
 //! sequences (CSI, OSC, two-byte ESC) are skipped whole, so colored output
-//! reads as its text. No modes: keys are plain bytes (xterm's for the named
-//! keys), there is no mouse reporting, and paste is never bracketed.
+//! reads as its text. Keys are plain bytes (xterm's for the named keys).
+//!
+//! A few modes are kept so the core's input paths (T7) can be tested
+//! without libghostty-vt: DECSET mouse tracking (1000, 1002, 1003, with
+//! 1006 for SGR reports), alternate scroll (1007, though there is no
+//! alternate screen), focus reports (1004) and bracketed paste (2004).
+//! OSC 52 clipboard writes are reported; reads (`?`) are refused.
 //!
 //! Owner: T1 wrote it; the engine backends (T2) may extend it.
 
@@ -57,6 +62,28 @@ pub const Plain = struct {
     sel: ?struct { a: Abs, b: Abs } = null,
     bell: u32 = 0,
 
+    /// A CSI's parameter bytes, for DECSET and DECRST; longer ones are
+    /// skipped.
+    csi: [32]u8 = undefined,
+    csi_len: u8 = 0,
+    /// An OSC's body, up to `osc_cap`.
+    osc: std.ArrayList(u8) = .empty,
+    osc_over: bool = false,
+    md: Md = .{},
+    /// OSC 52 writes since the last takeEvents: targets and decoded text.
+    clips: std.ArrayList(struct { target: u8, start: u32, len: u32 }) = .empty,
+    clip_buf: std.ArrayList(u8) = .empty,
+
+    const osc_cap = 1 << 20;
+
+    const Md = struct {
+        mouse: enum { off, normal, button, any } = .off,
+        sgr: bool = false,
+        alt_scroll: bool = false,
+        focus: bool = false,
+        paste: bool = false,
+    };
+
     const Abs = struct { line: u64, col: u16 };
 
     pub fn init(gpa: Allocator, opts: engine.Opts) Error!Plain {
@@ -73,6 +100,9 @@ pub const Plain = struct {
     pub fn deinit(p: *Plain) void {
         p.clearHistory();
         p.hist.deinit(p.gpa);
+        p.osc.deinit(p.gpa);
+        p.clips.deinit(p.gpa);
+        p.clip_buf.deinit(p.gpa);
         p.gpa.free(p.screen);
         p.gpa.free(p.dirty_rows);
         p.* = undefined;
@@ -102,14 +132,30 @@ pub const Plain = struct {
                     ']' => .osc,
                     else => .ground,
                 };
+                p.csi_len = 0;
+                p.osc.clearRetainingCapacity();
+                p.osc_over = false;
                 return;
             },
             .csi => {
-                if (b >= 0x40 and b <= 0x7e) p.parse = .ground;
+                if (b >= 0x40 and b <= 0x7e) {
+                    p.parse = .ground;
+                    p.csiDone(b);
+                } else if (p.csi_len < p.csi.len) {
+                    p.csi[p.csi_len] = b;
+                    p.csi_len += 1;
+                } else p.csi_len = p.csi.len; // too long: ignored at the end
                 return;
             },
             .osc => {
-                if (b == 0x07) p.parse = .ground else if (b == 0x1b) p.parse = .osc_esc;
+                if (b == 0x07 or b == 0x1b) {
+                    p.parse = if (b == 0x07) .ground else .osc_esc;
+                    try p.oscDone();
+                } else if (!p.osc_over) {
+                    if (p.osc.items.len >= osc_cap) {
+                        p.osc_over = true;
+                    } else try p.osc.append(p.gpa, b);
+                }
                 return;
             },
             .osc_esc => {
@@ -156,6 +202,55 @@ pub const Plain = struct {
                 p.utf8_need = @intCast(n);
             },
         }
+    }
+
+    /// DECSET and DECRST of the modes kept (above); every other CSI is
+    /// skipped.
+    fn csiDone(p: *Plain, final: u8) void {
+        if (final != 'h' and final != 'l') return;
+        if (p.csi_len == 0 or p.csi_len >= p.csi.len or p.csi[0] != '?') return;
+        const on = final == 'h';
+        var it = std.mem.splitScalar(u8, p.csi[1..p.csi_len], ';');
+        while (it.next()) |f| {
+            const n = std.fmt.parseInt(u16, f, 10) catch continue;
+            switch (n) {
+                1000 => p.md.mouse = if (on) .normal else .off,
+                1002 => p.md.mouse = if (on) .button else .off,
+                1003 => p.md.mouse = if (on) .any else .off,
+                1006 => p.md.sgr = on,
+                1007 => p.md.alt_scroll = on,
+                1004 => p.md.focus = on,
+                2004 => p.md.paste = on,
+                else => {},
+            }
+        }
+    }
+
+    /// OSC 52 (`52;TARGETS;BASE64`): a clipboard write. Other OSCs are
+    /// skipped.
+    fn oscDone(p: *Plain) Error!void {
+        defer p.osc.clearRetainingCapacity();
+        if (p.osc_over) return;
+        const body = p.osc.items;
+        if (!std.mem.startsWith(u8, body, "52;")) return;
+        const rest = body[3..];
+        const semi = std.mem.indexOfScalar(u8, rest, ';') orelse return;
+        const targets = rest[0..semi];
+        const data = rest[semi + 1 ..];
+        if (std.mem.eql(u8, data, "?")) return;
+        const dec = std.base64.standard.Decoder;
+        const n = dec.calcSizeForSlice(data) catch return;
+        const start = p.clip_buf.items.len;
+        try p.clip_buf.resize(p.gpa, start + n);
+        dec.decode(p.clip_buf.items[start..], data) catch {
+            p.clip_buf.shrinkRetainingCapacity(start);
+            return;
+        };
+        try p.clips.append(p.gpa, .{
+            .target = if (targets.len > 0) targets[0] else 's',
+            .start = @intCast(start),
+            .len = @intCast(n),
+        });
     }
 
     fn print(p: *Plain, cp: u21) Error!void {
@@ -278,6 +373,9 @@ pub const Plain = struct {
         p.parse = .ground;
         p.utf8_need = 0;
         p.sel = null;
+        p.md = .{};
+        p.csi_len = 0;
+        p.osc.clearRetainingCapacity();
         p.dirty_all = true;
     }
 
@@ -339,8 +437,13 @@ pub const Plain = struct {
         return .{ .x = p.x, .y = @intCast(vy) };
     }
 
-    pub fn modes(_: *Plain) engine.Modes {
-        return .{};
+    pub fn modes(p: *Plain) engine.Modes {
+        return .{
+            .mouse = p.md.mouse != .off,
+            .alt_scroll = p.md.alt_scroll,
+            .bracketed_paste = p.md.paste,
+            .focus_reports = p.md.focus,
+        };
     }
 
     // ------------------------------------------------------------ input
@@ -416,12 +519,59 @@ pub const Plain = struct {
         try w.writeAll(text);
     }
 
-    pub fn encodeMouse(_: *Plain, _: engine.Mouse, _: *Writer) Writer.Error!bool {
-        return false;
+    /// xterm's reports: SGR (`ESC [ < B ; X ; Y M`) under 1006, else the
+    /// X10 bytes. A move is reported only with a button held (1002) or
+    /// always (1003); under 1000 it is taken but sends nothing.
+    pub fn encodeMouse(p: *Plain, m: engine.Mouse, w: *Writer) Writer.Error!bool {
+        const mode = p.md.mouse;
+        if (mode == .off) return false;
+        const wheel = m.button == .wheel_up or m.button == .wheel_down;
+        switch (m.action) {
+            .move => switch (mode) {
+                .off, .normal => return true,
+                .button => if (m.button == .none) return true,
+                .any => {},
+            },
+            .release => if (wheel) return true,
+            .press => {},
+        }
+        var cb: u32 = switch (m.button) {
+            .left => 0,
+            .middle => 1,
+            .right => 2,
+            .none => 3,
+            .wheel_up => 64,
+            .wheel_down => 65,
+        };
+        if (m.action == .release and !p.md.sgr) cb = 3;
+        if (m.action == .move) cb += 32;
+        if (m.mods.shift) cb += 4;
+        if (m.mods.alt) cb += 8;
+        if (m.mods.ctrl) cb += 16;
+        const x = @as(u32, m.col) + 1;
+        const y = @as(u32, m.row) + 1;
+        if (p.md.sgr) {
+            try w.print("\x1b[<{d};{d};{d}{c}", .{ cb, x, y, @as(u8, if (m.action == .release) 'm' else 'M') });
+        } else {
+            try w.writeAll("\x1b[M");
+            for ([_]u32{ cb, x, y }) |v| try w.writeByte(@intCast(@min(v + 32, 255)));
+        }
+        return true;
     }
 
-    /// Newlines become CR, as a terminal sends Enter.
-    pub fn encodePaste(_: *Plain, text: []const u8, w: *Writer) Writer.Error!void {
+    /// Bracketed under 2004, as is, with any end marker in the text taken
+    /// out; otherwise newlines become CR, as a terminal sends Enter.
+    pub fn encodePaste(p: *Plain, text: []const u8, w: *Writer) Writer.Error!void {
+        if (p.md.paste) {
+            try w.writeAll("\x1b[200~");
+            var rest = text;
+            while (std.mem.indexOf(u8, rest, "\x1b[201~")) |i| {
+                try w.writeAll(rest[0..i]);
+                rest = rest[i + 6 ..];
+            }
+            try w.writeAll(rest);
+            return w.writeAll("\x1b[201~");
+        }
         var i: usize = 0;
         while (i < text.len) : (i += 1) {
             if (text[i] == '\r' and i + 1 < text.len and text[i + 1] == '\n') continue;
@@ -429,7 +579,9 @@ pub const Plain = struct {
         }
     }
 
-    pub fn encodeFocus(_: *Plain, _: bool, _: *Writer) Writer.Error!void {}
+    pub fn encodeFocus(p: *Plain, in: bool, w: *Writer) Writer.Error!void {
+        if (p.md.focus) try w.writeAll(if (in) "\x1b[I" else "\x1b[O");
+    }
 
     // ------------------------------------------------------------ view
 
@@ -512,6 +664,12 @@ pub const Plain = struct {
         out.clear();
         out.bell = p.bell;
         p.bell = 0;
+        for (p.clips.items) |c| {
+            const span = try out.put(p.gpa, p.clip_buf.items[c.start..][0..c.len]);
+            try out.clips.append(p.gpa, .{ .target = c.target, .data = span });
+        }
+        p.clips.clearRetainingCapacity();
+        p.clip_buf.clearRetainingCapacity();
     }
 };
 

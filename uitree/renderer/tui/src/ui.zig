@@ -2935,6 +2935,31 @@ pub const Ui = struct {
 
     pub const KeyResult = enum { handled, unhandled, quit };
 
+    /// A bracketed paste from the outer terminal. A focused terminal node
+    /// gets it whole through uit_term_paste (bracketed again for its
+    /// program when it asked); anything else gets it as typed keys, one
+    /// character at a time, newlines as Enter.
+    pub fn onPaste(ui: *Ui, text: []const u8) void {
+        const term = ui.focused != 0 and Kind.of(ui.src.typeOf(ui.focused)) == .terminal;
+        if (term and ui.popup == null) {
+            ui.src.termPaste(ui.focused, text);
+            return;
+        }
+        var i: usize = 0;
+        while (i < text.len) {
+            const n = std.unicode.utf8ByteSequenceLength(text[i]) catch 1;
+            const ch = text[i..@min(i + n, text.len)];
+            i += ch.len;
+            const k: Key = switch (ch[0]) {
+                '\r', '\n' => .{ .name = "enter" },
+                '\t' => .{ .name = "tab" },
+                0...8, 0x0b, 0x0c, 0x0e...0x1f, 0x7f => continue,
+                else => .{ .name = ch, .text = ch },
+            };
+            _ = ui.onKey(k);
+        }
+    }
+
     pub fn onKey(ui: *Ui, k: Key) KeyResult {
         const plain = !k.ctrl and !k.alt and !k.super;
         // A focused terminal's program gets Ctrl-C (and Tab and Escape);
@@ -4212,4 +4237,22 @@ test "a focused terminal gets keys through uit_key, the mouse and the wheel" {
     _ = ui.onMouse(.{ .x = 2, .y = 1, .kind = .release });
     try testing.expect(ui.focused != ui.lookup("sh").?);
     try testing.expectEqual(Ui.KeyResult.quit, ui.onKey(.{ .name = "c", .ctrl = true }));
+}
+
+test "a paste goes to a focused terminal whole" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try termSplit(arena.allocator());
+    try f.term("sh", "$ ", &.{}, 2, 0, 30, 7);
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    var g: Grid = undefined;
+    try render(f, 40, 8, &ui, &g);
+    defer g.deinit(testing.allocator);
+    _ = ui.onMouse(.{ .x = 15, .y = 3, .kind = .press });
+    _ = ui.onMouse(.{ .x = 15, .y = 3, .kind = .release });
+    try testing.expectEqual(ui.lookup("sh").?, ui.focused);
+    f.log.clearRetainingCapacity();
+    ui.onPaste("ls -l");
+    try testing.expectEqualStrings("term-paste sh ls -l\n", f.log.items);
 }

@@ -105,6 +105,9 @@ pub const Term = struct {
     drag_unit: @FieldType(@FieldType(engine.Selection, "range"), "unit") = .cells,
     /// The pointer's last cell, for wheel reports.
     pointer: engine.Point = .{ .col = 0, .row = 0 },
+    /// Whether a window's focus was on the node at the last pump, for
+    /// focus reports (DECSET 1004).
+    focused: bool = false,
     /// Pty mode's pair, while `pty` is on and the machine gave one.
     pty: ?PtyConn = null,
 
@@ -580,6 +583,19 @@ pub const Terms = struct {
             }
             if (t.events.cwd) |s| t.setText(&t.cwd, t.events.str(s));
             if (t.takeHangup()) try ctx.termEvent(t.h, "hangup", &.{});
+            // OSC 52: the program copies. The tree puts it on the
+            // clipboard as it would a client's `clip` write.
+            for (t.events.clips.items) |cl| try ctx.termClip(t.h, cl.target, t.events.str(cl.data));
+            // Focus reports: the program hears when a window's focus
+            // comes to or leaves the node (it asked with DECSET 1004).
+            const f = ctx.termFocused(t.h);
+            if (f != t.focused) {
+                t.focused = f;
+                var aw: Writer.Allocating = .init(ts.gpa);
+                defer aw.deinit();
+                t.eng.encodeFocus(f, &aw.writer) catch return error.OutOfMemory;
+                t.sendKeys(aw.written());
+            }
             // One `bell` event per pump: a program ringing in a loop
             // shouldn't flood the event stream.
             if (t.events.bell > 0) try ctx.termEvent(t.h, "bell", &.{});
@@ -627,12 +643,7 @@ pub const Terms = struct {
                 // Fed, but not yet refreshed: the pump catches the cache up.
                 _ = target;
             },
-            .paste => |s| {
-                var aw: Writer.Allocating = .init(ts.gpa);
-                defer aw.deinit();
-                t.eng.encodePaste(s, &aw.writer) catch return error.OutOfMemory;
-                t.sendKeys(aw.written());
-            },
+            .paste => |s| try ts.pasteTo(t, s),
             .reset => {
                 t.eng.reset();
                 t.setText(&t.title, "");
@@ -655,6 +666,31 @@ pub const Terms = struct {
         // Typing snaps the view back to the live screen.
         t.eng.scroll(.bottom);
         return true;
+    }
+
+    /// Owner: a paste from the user (the renderer's clipboard), as the
+    /// `paste` verb sends it: bracketed when the program asked.
+    pub fn paste(ts: *Terms, h: Handle, s: []const u8) Allocator.Error!void {
+        const t = ts.owned(h) orelse return;
+        try ts.pasteTo(t, s);
+        t.bump();
+    }
+
+    fn pasteTo(ts: *Terms, t: *Term, s: []const u8) Allocator.Error!void {
+        var aw: Writer.Allocating = .init(ts.gpa);
+        defer aw.deinit();
+        t.eng.encodePaste(s, &aw.writer) catch return error.OutOfMemory;
+        t.sendKeys(aw.written());
+        // Like typing, a paste snaps the view back to the live screen.
+        t.eng.scroll(.bottom);
+    }
+
+    /// Owner: the selection's text, in `a`; empty with none.
+    pub fn selectionText(ts: *Terms, a: Allocator, h: Handle) Allocator.Error![]const u8 {
+        const t = ts.owned(h) orelse return "";
+        var aw: Writer.Allocating = .init(a);
+        t.eng.selectionText(&aw.writer) catch return error.OutOfMemory;
+        return aw.written();
     }
 
     /// Owner: committed text (IME, a typed character).

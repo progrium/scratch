@@ -3,9 +3,9 @@
  *
  * Version 9: version 8 plus terminal nodes (components.md § terminal):
  * uit_term_rows, uit_term_styles and uit_term_cursor read a terminal's
- * cells; uit_term_resize, uit_term_mouse, uit_term_scroll and
- * uit_term_text send its input; UitChanges.terms says which terminals
- * changed in a pump. uit_key goes to a focused terminal.
+ * cells; uit_term_resize, uit_term_mouse, uit_term_scroll,
+ * uit_term_text and uit_term_paste send its input; UitChanges.terms says
+ * which terminals changed in a pump. uit_key goes to a focused terminal.
  * Version 8: version 7 plus the shell layer's first files
  * (protocols/shell.md): UIT_CMD_APP_CTL carries `tray`, `delete
  * tray/NAME`, `open URL` and `set app` to the renderer, and
@@ -685,6 +685,15 @@ int uit_term_scroll(UitCore *, UitNode, int32_t lines);
  * produced that the renderer would rather send as text. Encoded as typed
  * (never bracketed; `paste` on the node's ctl is for pastes). */
 int uit_term_text(UitCore *, UitNode, UitStr text);
+
+/* The user pasted (the renderer's paste keystroke, from its clipboard):
+ * sent as the node's `paste` verb sends it, in bracketed-paste markers
+ * when the program asked for them, and the view snaps to the bottom.
+ * Copying needs no call: with text selected, the copy keystroke (cmd-c
+ * where cmd is super, ctrl-shift-c everywhere) through uit_key puts the
+ * selection on the clipboard, which reaches the renderer as
+ * UIT_CMD_CLIPBOARD. */
+int uit_term_paste(UitCore *, UitNode, UitStr text);
 
 #ifdef __cplusplus
 }

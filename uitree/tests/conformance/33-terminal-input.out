@@ -1,0 +1,31 @@
+# a drag selects cells; selection serves the text
+two three
+four|
+# a double press selects a word
+three|
+# the copy keystroke puts the selection on the clipboard
+three|
+resync - -
+clip - - gen=N
+# a single click clears the selection
+|
+# the wheel scrolls back into history, and output snaps back
+one two three
+line 7
+# under a mouse mode, clicks and the wheel go to the program
+^[[<16;3;4M^[[<0;3;4m^[[<64;3;4M
+|
+# a paste: bracketed once the program asks
+hello
+ok
+^[[200~hello^[[201~^[[200~again^[[201~
+# focus reports once the program asks
+^[[I^[[O
+# OSC 52 copies, as a write to clip does; reads are refused
+from the program|
+resync - -
+clip - - gen=N
+# term-* lines name a terminal
+bad value
+unknown command
+exit=0

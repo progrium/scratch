@@ -19,13 +19,14 @@
 //!     Y [COL:STYLE:WIDTH[:sel] TEXT]...
 //!     END
 //!
-//! Input lines, as uit_term_resize, uit_term_mouse, uit_term_scroll and
-//! uit_term_text (`term-resize` is primary-only):
+//! Input lines, as uit_term_resize, uit_term_mouse, uit_term_scroll,
+//! uit_term_text and uit_term_paste (`term-resize` is primary-only):
 //!
 //!     term-resize win=W node=PATH cols=C rows=R cw=PX ch=PX
 //!     term-mouse win=W node=PATH action=press|release|move button=none|left|middle|right col=C row=R [mods=shift,alt,ctrl,super] [clicks=N]
 //!     term-scroll win=W node=PATH lines=N
 //!     term-text win=W node=PATH text=V
+//!     term-paste win=W node=PATH text=V
 
 const std = @import("std");
 const abi = @import("../abi.zig");
@@ -192,6 +193,7 @@ pub const Input = union(enum) {
     mouse: struct { win: []const u8, node: []const u8, m: abi.UitTermMouse },
     scroll: struct { win: []const u8, node: []const u8, lines: i32 },
     text: struct { win: []const u8, node: []const u8, text: []const u8 },
+    paste: struct { win: []const u8, node: []const u8, text: []const u8 },
 };
 
 fn writeTarget(w: *Writer, verb: []const u8, win: []const u8, node: []const u8) Writer.Error!void {
@@ -234,8 +236,8 @@ pub fn writeInput(w: *Writer, in: Input) Writer.Error!void {
             try writeTarget(w, "term-scroll", s.win, s.node);
             try w.print(" lines={d}\n", .{s.lines});
         },
-        .text => |t| {
-            try writeTarget(w, "term-text", t.win, t.node);
+        inline .text, .paste => |t, tag| {
+            try writeTarget(w, if (tag == .text) "term-text" else "term-paste", t.win, t.node);
             if (ctl.hasNewline(t.text)) {
                 var buf: [24]u8 = undefined;
                 const m = ctl.markerFor(&buf, t.text, 0);
@@ -279,5 +281,6 @@ pub fn parseInput(c: ctl.Ctl) Error!?Input {
     }
     if (std.mem.eql(u8, c.verb, "term-scroll")) return .{ .scroll = .{ .win = win, .node = node, .lines = try num(i32, c.attr("lines")) } };
     if (std.mem.eql(u8, c.verb, "term-text")) return .{ .text = .{ .win = win, .node = node, .text = c.attr("text") orelse "" } };
+    if (std.mem.eql(u8, c.verb, "term-paste")) return .{ .paste = .{ .win = win, .node = node, .text = c.attr("text") orelse "" } };
     return null;
 }
