@@ -629,14 +629,22 @@ pub fn run(opts: Options) -> i32 {
 
 /// The browser has no system fonts: IBM Plex Sans, which gpui_web resolves
 /// `.SystemUIFont` to and which must exist before the first frame, as the
-/// UI font, and JetBrains Mono. From GPUI Kit's story-web (OFL, web/fonts).
+/// UI font, and JetBrains Mono, each with the faces that `font-bold`,
+/// `font-semibold` and `italic` need (without them those draw as regular).
+/// Regular from GPUI Kit's story-web, the rest from IBM/plex and
+/// JetBrains/JetBrainsMono (all OFL, web/fonts).
 #[cfg(target_family = "wasm")]
 fn web_fonts(cx: &mut App) {
     use std::borrow::Cow;
     cx.text_system()
         .add_fonts(vec![
             Cow::Borrowed(include_bytes!("../../web/fonts/JetBrainsMono-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../../web/fonts/JetBrainsMono-Bold.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../../web/fonts/JetBrainsMono-Italic.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../../web/fonts/IBMPlexSans-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../../web/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../../web/fonts/IBMPlexSans-Bold.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../../web/fonts/IBMPlexSans-Italic.ttf").as_slice()),
         ])
         .expect("web fonts");
     gpui_component::Theme::global_mut(cx).font_family = "IBM Plex Sans".into();

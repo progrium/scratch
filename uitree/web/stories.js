@@ -141,8 +141,16 @@ text b  selectable  text='Selectable: drag across me to select'` },
   {
     id: 'styled-text', group: 'core', title: 'Styled text', desc: 'One string with styled runs: each line of runs is START LENGTH (bytes into text) and the words for that range. A text node styles all of itself; styled-text styles parts.',
     sections: [
-      { label: 'Runs', ui: `
-styled-text s  text='Error: file not found (exit 2), see the log'`, files: { 's/runs': '0 6 font-bold text-color=danger\n7 14 italic\n22 8 bg=selection\n40 3 underline text-color=info\n' } },
+      { label: 'Error message', ui: `
+styled-text s  text='Example Error: file not found (exit 2), see the log'`, files: { 's/runs': '0 14 font-bold text-color=danger\n15 14 italic\n30 8 bg=selection\n48 3 underline text-color=info\n' } },
+      { label: 'Search highlight (offsets are bytes: the curly quotes are 3 each)', ui: `
+styled-text s  text='Found “layout” in 3 files: the layout pass runs before paint'`, files: { 's/runs': '6 12 font-semibold\n35 6 bg=warning\n' } },
+      { label: 'Code', ui: `
+styled-text s  text='let count = 42; // the answer'`, files: { 's/runs': '0 3 font-bold text-color=primary\n12 2 text-color=info\n16 13 italic text-color=muted-foreground\n' } },
+      { label: 'Diff stat', ui: `
+styled-text s  text='4 files changed, 120 insertions(+), 37 deletions(-)'`, files: { 's/runs': '17 17 text-color=success\n36 15 text-color=danger\n' } },
+      { label: 'Price', ui: `
+styled-text s  text='Was $49, now $29 for a limited time'`, files: { 's/runs': '4 3 line-through text-color=muted-foreground\n13 3 font-bold text-color=success\n23 12 underline\n' } },
     ],
   },
   {
