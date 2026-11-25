@@ -102,7 +102,6 @@ include a file of the same name holding an example.
 | `desc-items` | `label value` | `description-list` |
 | `menu` | core.md's item grammar | menus, `context-menu`, `dropdown-button` |
 | `ops` | `kind id geometry attrs` | `canvas` |
-| `icon-items` | `id label=text icon=name pos=x,y [selected]` | `icon-view` |
 
 ### What descriptors are for
 
@@ -139,7 +138,7 @@ type without testing each.
 | `nav` | `tabs` `tab` `sidebar` `sidebar-group` `sidebar-item` `breadcrumb` `toolbar` `link` |
 | `layout` | `grid` `resizable` `panel` `separator` `group-box` `accordion` `collapsible` |
 | `feedback` | `progress` `spinner` `badge` `alert` `empty` `kbd` `tag` |
-| `desktop` | `icon-view` `console` `terminal` `file-chooser` |
+| `desktop` | `terminal` `file-chooser` |
 | `web` | `web` |
 
 `core` is required: every host claims it. The others are optional.
@@ -161,54 +160,20 @@ version.
 
 ### New in this spec
 
-Four types in the profiles above weren't in uitreefs, uitree's
-predecessor. Three come from 9/UX and the toolkit-go proposal; `terminal`
-came later. uitree's core has descriptors for all four; its renderers
-draw `terminal` (and `web`, the GPUI one natively), not yet `icon-view`
-or `console`.
+Two types in the profiles above weren't in uitreefs, uitree's
+predecessor. `web` comes from 9/UX and the toolkit-go proposal;
+`terminal` came later. uitree's core has descriptors for both, and its
+renderers draw them (`web` natively on GPUI, as a placeholder box in the
+terminal renderer).
 
-**`icon-view`** (`desktop`). Icons at free positions, as in a Finder
-window. The host does selection, rubber-banding and dragging icons, so
-the client sees only results.
-
-```text
-type    icon-view  tier=component  profile=desktop  since=1.0
-file    items  format=icon-items
-prop    selection  text  readonly
-prop    arrange    enum=free,grid,list  default=free
-verb    select   ID...                  class=activate
-verb    open     ID...                  class=activate
-verb    move     ID x,y                 class=edit
-verb    rename   ID TEXT                class=edit
-event   select   kind=state   attrs=sel
-event   move     kind=state   attrs=item,pos
-event   open     kind=action  attrs=items
-event   rename   kind=action  attrs=item
-event   drop     kind=request attrs=drag,item
-```
-
-**`console`** (`desktop`). A terminal-style text area that is a program's
-console: output is appended, typed lines are sent. On 9/UX the host
-serves the console as the client's child process's `/dev/cons`, as Run
-Command does today.
-
-```text
-type    console  tier=component  profile=desktop  since=1.0
-prop    value      text  file readonly
-prop    input      text  file readonly
-prop    raw        bool  default=off
-verb    append   TEXT                  class=edit
-verb    insert   TEXT                  class=edit
-verb    interrupt                      class=activate
-verb    clear                          class=edit
-event   submit     kind=action   attrs=n
-event   interrupt  kind=action
-```
+9/UX also has `icon-view` (icons at free positions, as in a Finder
+window) and `console` (a program's `/dev/cons` as a text area). They are
+left out of this spec for now, while 9/UX iterates on them; the two
+converge once both have settled.
 
 **`terminal`** (`desktop`). A VT terminal emulator as a node: a program's
 output drawn as a grid of styled cells, with keys, mouse, selection and
-scrollback. Unlike `console`, it runs full-screen programs (shells,
-editors, `htop`). The screen is the host's, not the renderer's: the host
+scrollback. It runs full-screen programs (shells, editors, `htop`). The screen is the host's, not the renderer's: the host
 parses the output (libghostty-vt in uitree), so `screen` reads the same
 on every renderer and with none.
 

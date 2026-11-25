@@ -21,7 +21,6 @@ defined; others are agreed between programs, with `x.` for experiments.
 | `image` | an image; the host's format (`image(6)` on Plan 9, PNG elsewhere), named in `version` |
 | `uri` | one URI per line |
 | `html` | an HTML fragment, UTF-8 |
-| `ui.icon` | icons dragged out of an `icon-view`: `icon id=ID [label=T]` per line |
 
 ## Dragging
 

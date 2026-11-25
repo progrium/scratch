@@ -658,14 +658,14 @@ test "component verbs" {
     var f: Fx = undefined;
     try f.app();
     defer f.deinit();
-    // 0.2's editor has no verbs (`save` is its event); console's `clear`
+    // 0.2's editor has no verbs (`save` is its event); web's `reload`
     // is a component verb the host runs.
-    try f.ok(R ++ "/ctl", "new console src");
+    try f.ok(R ++ "/ctl", "new web src");
     f.t.clearChanges();
-    try f.ok(R ++ "/src/ctl", "clear");
+    try f.ok(R ++ "/src/ctl", "reload");
     try tt.expectEqual(@as(usize, 1), try cmdsOf(&f, .component_verb));
     try tt.expectEqual(Code.unknown_command, try f.code(R ++ "/src/ctl", "explode"));
-    try tt.expect(std.mem.indexOf(u8, try f.read(R ++ "/src/ctl"), "clear") != null);
+    try tt.expect(std.mem.indexOf(u8, try f.read(R ++ "/src/ctl"), "reload") != null);
 }
 
 // ---------------------------------------------------------------- events

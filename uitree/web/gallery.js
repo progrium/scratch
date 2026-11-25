@@ -29,8 +29,7 @@ export function storyTypes(s) {
  * own list is only checked against it, abi.zig's create), and a type the
  * renderer doesn't draw is an empty box. So the list is here: the
  * terminal renderer's is renderer/tui/types/types.zig's `names` (the
- * gallery test checks they agree); GPUI draws every type but the two the
- * spec has ahead of the renderers (components.md, New in this spec).
+ * gallery test checks they agree); GPUI draws every type.
  */
 export const drawn = {
   tui: new Set(['div', 'text', 'styled-text', 'img', 'svg', 'icon', 'scroll', 'spacer', 'button', 'checkbox', 'radio-group',
@@ -40,7 +39,7 @@ export const drawn = {
     'sidebar-item', 'group-box', 'avatar', 'editor', 'markdown', 'sheet', 'alert-dialog', 'resizable', 'panel', 'dock',
     'dock-panel', 'message-list', 'collapsible', 'accordion', 'accordion-item', 'breadcrumb', 'dropdown-button', 'tag',
     'web', 'terminal']),
-  gpui: { has: (t) => t !== 'icon-view' && t !== 'console' },
+  gpui: { has: () => true },
 };
 
 /** The stories' types that `renderer` (gpui or tui) draws and the core has ($ui/types). */

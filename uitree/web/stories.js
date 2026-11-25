@@ -742,13 +742,6 @@ editor p  placeholder='Type here…'  : h=60 border-1 border-color=border rounde
     id: 'web', group: 'desktop', title: 'Web', desc: 'A web view among native nodes: inline HTML here; the page can post messages back.',
     sections: [{ label: 'Inline page', full: true, ui: 'div x  : v-flex h=180\n  web w  : flex-1 border-1 border-color=border rounded-md', files: { 'x/w/html': page } }],
   },
-  {
-    id: 'icon-view', group: 'desktop', title: 'Icon view, console', desc: 'Icons at free positions; a program\'s console. Both are in the spec ahead of the renderers.',
-    sections: [
-      { label: 'Icon view', full: true, ui: 'icon-view v  : h=160 border-1 border-color=border rounded-md', files: { 'v/items': 'a label=Documents icon=folder pos=16,16\nb label=notes.md icon=file-text pos=112,16 selected\nc label=Trash icon=trash pos=208,16\n' } },
-      { label: 'Console', full: true, ui: 'console c  : h=120 border-1 border-color=border rounded-md', ctl: { c: "append '$ echo hello: console output, appended by the app'" } },
-    ],
-  },
 
   // theme
   {

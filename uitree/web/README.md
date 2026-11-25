@@ -181,7 +181,7 @@ an empty box. So `gallery.js` keeps the lists. The terminal renderer's is
 the pickers and calendar, combobox, OTP, rating, pagination, stepper,
 skeleton, shimmer, bubble, avatar group, diff, HTML, the virtual list and
 the popover, hover card, tooltip and context-menu overlays are GPUI's
-only. Neither renderer draws `icon-view` or `console` yet.
+only.
 
 The page also writes what the stories need besides the tree: data files,
 bytes (`img`'s `data`), assets (`$ui/asset/NAME` for `svg src=@NAME`,

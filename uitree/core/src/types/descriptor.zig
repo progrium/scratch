@@ -170,8 +170,8 @@ pub fn parse(arena: std.mem.Allocator, text: []const u8, diag: ?*Diag) ParseErro
     }
     if (!have_type) return fail(diag, 0, "no type line");
 
-    // A `file` line with no prop of its name (icon-view's `items`, web's
-    // `message`) is still a file under the node: a data prop, or bytes.
+    // A `file` line with no prop of its name (web's `message` and
+    // `result`) is still a file under the node: a data prop, or bytes.
     for (files.items) |f| {
         const have = for (props.items) |q| {
             if (std.mem.eql(u8, q.name, f.name)) break true;
