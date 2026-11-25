@@ -275,6 +275,12 @@ pub(crate) fn typed_text(k: &gpui::Keystroke) -> Option<&str> {
     (!t.is_empty() && !t.chars().any(char::is_control)).then_some(t)
 }
 
+/// Whether `$ui/keys` binds `stroke` (in any context: a text key bound
+/// anywhere is rare, and uit_key then picks the binding that applies).
+pub(crate) fn key_is_bound(keys: &[uitcore::KeyBinding], stroke: &str) -> bool {
+    keys.iter().any(|b| b.keystroke == stroke)
+}
+
 /// A pump's `UitChanges.terms`: mark what to re-read, and redraw.
 pub(crate) fn changed(inner: &Rc<Inner>, terms: &[TermChange], cx: &mut App) {
     for t in terms {
@@ -346,16 +352,19 @@ impl Component for Terminal {
             cx.stop_propagation();
         };
         let e = ent.clone();
-        let win = node.win().to_string();
         let on_key = move |ev: &KeyDownEvent, _: &mut Window, cx: &mut App| {
             let Some(text) = typed_text(&ev.keystroke) else { return };
-            // The app's bindings first; then the text is the program's.
             // Either way the window mustn't also encode it as a key.
             cx.stop_propagation();
             let s = e.read(cx);
             let ks = crate::window::keystroke(&ev.keystroke);
-            let bound = s.with_core(|c| c.key(&win, &ks, 0)).unwrap_or(false);
-            if !bound {
+            // An app binding for the stroke goes through uit_key, which
+            // acts on it; otherwise the text is the program's. (uit_key
+            // can't be asked first: an unbound stroke reaches the focused
+            // terminal as a key, and `shift-a` has no layout to become `A`.)
+            if s.with_core(|c| key_is_bound(&c.keys(), &ks)).unwrap_or(false) {
+                s.send_key(&ks);
+            } else {
                 s.send_text(text);
             }
         };
