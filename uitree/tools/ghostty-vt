@@ -1,0 +1,203 @@
+#!/bin/sh
+# ghostty-vt: libghostty-vt, the terminal engine the core links
+# (core/README.md, "The terminal engine").
+#
+#	tools/ghostty-vt build TARGET OPTIMIZE OUT
+#		build libghostty-vt for TARGET (a Zig triple) into the
+#		install prefix OUT: OUT/include/ghostty/vt.h and
+#		OUT/lib/libghostty-vt.a, and the same as one object,
+#		OUT/lib/ghostty-vt.o, which the core links.
+#		core/build.zig runs this; what it builds is kept in the cache,
+#		so it builds once per target and optimize mode.
+#	tools/ghostty-vt fetch
+#		download and check the pinned tarballs and Zig into the cache
+#	tools/ghostty-vt zig
+#		print the path of the pinned Zig 0.17 (downloading it)
+#	tools/ghostty-vt key
+#		print a key for CI caches: changes when a pin does
+#
+# libghostty-vt needs Zig 0.17 and the core is on 0.16 (the pin in
+# tools/zig-pin), so this fetches its own Zig 0.17 from ziglang.org. It
+# builds from Ghostty's release tarballs, the source and its -deps tarball
+# (Ghostty's PACKAGING-LIBGHOSTTY.md), offline with --system, each
+# checked against the sha256 pinned below.
+#
+# The cache is $UITREE_CACHE (default uitree/.local), which CI keeps
+# between runs. Set ZIG17 to use a Zig 0.17 you already have. Where
+# release.files.ghostty.org can't be reached, point GHOSTTY_VT_SRC at an
+# unpacked source tree (a vt-X.Y.Z checkout works) and GHOSTTY_VT_SYSTEM
+# at a directory of its packages; GHOSTTY_VT_FLAGS adds flags to its
+# `zig build`. A build without Zig 0.17 at all is `zig build
+# -Dterminal=plain` in core/, or -Dghostty-vt=PREFIX with a prefix this
+# script built elsewhere.
+set -eu
+
+VT_VERSION=1.0.2
+VT_SHA256=1dcafa8a3357f3a6bbf4f2696e61de611400c5469518716793dfffd35f008b3e
+VT_DEPS_SHA256=c56156dbea82fdf71f13bf0d704cdf4393b6a04208d7f9691e0d7f60c7f9ca4d
+ZIG17_VERSION=0.17.1
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+cache=${UITREE_CACHE:-$here/.local}
+dl=$cache/dl
+
+die() { echo "ghostty-vt: $*" >&2; exit 1; }
+
+sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+	else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+# get URL FILE SHA256: download URL to $dl/FILE once, and check it. A
+# SHA256 of - is a pin still to fill in: say what the file's is.
+get() {
+	mkdir -p "$dl"
+	f=$dl/$2
+	if [ ! -f "$f" ]; then
+		echo "ghostty-vt: fetching $1" >&2
+		curl -fsSL --retry 4 --retry-delay 2 -o "$f.part" "$1" || die "can't fetch $1 (zig build -Dterminal=plain builds the core without libghostty-vt)"
+		mv "$f.part" "$f"
+	fi
+	got=$(sha256 "$f")
+	if [ "$3" = - ]; then
+		echo "ghostty-vt: warning: no sha256 pinned for $2; it is $got" >&2
+	elif [ "$got" != "$3" ]; then
+		rm -f "$f"
+		die "$2 has sha256 $got, want $3"
+	fi
+}
+
+find_zig17() {
+	if [ -n "${ZIG17:-}" ]; then echo "$ZIG17"; return; fi
+	case "$(uname -s)-$(uname -m)" in
+	Linux-x86_64) h=x86_64-linux s=3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a ;;
+	Linux-aarch64 | Linux-arm64) h=aarch64-linux s=a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795 ;;
+	Darwin-x86_64) h=x86_64-macos s=9af07b20319fbd0c92ee46ad23e81d6a782b1aaea2cfb8dcbff35f1d2c7ddbb7 ;;
+	Darwin-arm64) h=aarch64-macos s=75f1bc7a1e9852f17ec9a0c1895f767c4ec56d46bc8a834920eece1d0359dd8d ;;
+	*) die "no Zig $ZIG17_VERSION download for $(uname -s) $(uname -m): set ZIG17, or build the core with -Dterminal=plain" ;;
+	esac
+	d=$cache/zig-$h-$ZIG17_VERSION
+	if [ ! -x "$d/zig" ]; then
+		get "https://ziglang.org/download/$ZIG17_VERSION/zig-$h-$ZIG17_VERSION.tar.xz" "zig-$h-$ZIG17_VERSION.tar.xz" "$s"
+		rm -rf "$d.part" && mkdir -p "$d.part"
+		tar -xJf "$dl/zig-$h-$ZIG17_VERSION.tar.xz" -C "$d.part" --strip-components=1
+		rm -rf "$d" && mv "$d.part" "$d"
+	fi
+	echo "$d/zig"
+}
+
+# The source and deps trees, unpacked once into the cache.
+sources() {
+	if [ -n "${GHOSTTY_VT_SRC:-}" ]; then
+		src=$GHOSTTY_VT_SRC
+		sys=${GHOSTTY_VT_SYSTEM:?GHOSTTY_VT_SRC needs GHOSTTY_VT_SYSTEM}
+		return
+	fi
+	base=https://release.files.ghostty.org/libghostty-vt/$VT_VERSION
+	src=$cache/libghostty-vt-$VT_VERSION
+	sys=$cache/libghostty-vt-$VT_VERSION-deps
+	for p in "libghostty-vt-$VT_VERSION.tar.gz $VT_SHA256 $src" "libghostty-vt-$VT_VERSION-deps.tar.gz $VT_DEPS_SHA256 $sys"; do
+		set -- $p
+		[ -d "$3" ] && continue
+		get "$base/$1" "$1" "$2"
+		rm -rf "$3.part" && mkdir -p "$3.part"
+		tar -xzf "$dl/$1" -C "$3.part" --strip-components=1
+		mv "$3.part" "$3"
+	done
+}
+
+# Apple's name for an architecture, for ld -arch.
+macarch() { case $1 in aarch64 | arm64) echo arm64 ;; *) echo "$1" ;; esac; }
+
+# applerel ARCH: $a's members as the one object $o, with Apple's ld, which
+# wants the architecture and platform spelled out for -r. The minimum
+# macOS is Zig's default one; the SDK version is only recorded.
+applerel() {
+	sdk=$(xcrun --show-sdk-version 2>/dev/null || echo 15.0)
+	ld -r -arch "$1" -platform_version macos 13.0 "$sdk" -all_load "$a" -o "$o"
+}
+
+case "${1:-}" in
+build)
+	[ $# -eq 4 ] || die "usage: tools/ghostty-vt build TARGET OPTIMIZE OUT"
+	target=$2 optimize=$3 out=$4
+	# libghostty-vt's wasm build is wasm32-freestanding (its wasi build
+	# is broken upstream); that object links into the core's wasm32-wasi
+	# module with no imports of its own. Native builds use the target's
+	# baseline CPU, as uitcore-sys builds the core: Highway picks its
+	# SIMD paths at run time.
+	case $target in
+	wasm32-*) vt_target=wasm32-freestanding cpu= ;;
+	*) vt_target=$target cpu=-Dcpu=baseline ;;
+	esac
+	z= src= sys=
+	# Built once per version, target, mode and flags into the cache,
+	# which CI keeps, then copied to OUT: a fresh Zig or Cargo cache
+	# then costs a copy, not a four-minute build.
+	flags=${GHOSTTY_VT_FLAGS:-}${GHOSTTY_VT_SRC:+ src=$GHOSTTY_VT_SRC}
+	key=$(printf '%s' "$flags" | cksum | cut -d' ' -f1)
+	built=$cache/vt/$VT_VERSION-$target-$optimize-$key
+	if [ ! -f "$built/lib/ghostty-vt.o" ]; then
+		z=$(find_zig17)
+		sources
+		# PACKAGING-LIBGHOSTTY.md: the build's global cache must start empty.
+		zc=$(mktemp -d "${TMPDIR:-/tmp}/ghostty-vt-zc.XXXXXX")
+		trap 'rm -rf "$zc"' EXIT
+		rm -rf "$built.part"
+		echo "ghostty-vt: building libghostty-vt $VT_VERSION for $vt_target ($optimize)" >&2
+		(cd "$src" && ZIG_GLOBAL_CACHE_DIR=$zc "$z" build \
+			--system "$sys" --prefix "$built.part" --cache-dir "$zc/local" \
+			-Demit-lib-vt -Demit-xcframework=false -Dstrip=true \
+			-Dtarget="$vt_target" $cpu -Doptimize="$optimize" \
+			${GHOSTTY_VT_FLAGS:-}) >&2 || die "zig build of libghostty-vt failed in $src"
+		# Only the static library and headers: the core links the
+		# archive, and the shared library and wasm module would only be
+		# in the way.
+		[ -f "$built.part/lib/libghostty-vt.a" ] || die "no lib/libghostty-vt.a in $built.part"
+		# The wasm build installs no headers; they are the same for
+		# every target, in the source's include/ghostty.
+		if [ ! -f "$built.part/include/ghostty/vt.h" ]; then
+			mkdir -p "$built.part/include"
+			cp -R "$src/include/ghostty" "$built.part/include/"
+		fi
+		find "$built.part" -mindepth 1 -maxdepth 1 ! -name lib ! -name include -exec rm -rf {} +
+		find "$built.part/lib" -mindepth 1 ! -name libghostty-vt.a -exec rm -rf {} +
+		# Zig bundles its compiler_rt into the archive. libuitcore.a
+		# bundles its own, and two copies of one member clash in a
+		# renderer's link, so take this one out.
+		a=$built.part/lib/libghostty-vt.a
+		for m in $("$z" ar t "$a" | grep 'compiler_rt\.o$'); do "$z" ar d "$a" "$m"; done
+		# The core links one relocatable object, lib/ghostty-vt.o: Zig
+		# puts an archive given to a static library in it whole (with
+		# LLVM) and linkers can't read an archive in an archive, but
+		# an object goes in as a member like any other.
+		o=$built.part/lib/ghostty-vt.o
+		case $vt_target in
+		wasm32-*)
+			set -- $("$z" ar t "$a")
+			[ $# -eq 1 ] || die "libghostty-vt.a for wasm has $# members, not 1"
+			"$z" ar p "$a" "$1" >"$o"
+			# Zig 0.17 passes an f80 to compiler_rt's __extendxftf2 by
+			# pointer, and the core's Zig 0.16 compiler_rt takes it by
+			# value: a signature clash wasm-ld won't link. So the object
+			# calls __vt_extxftf2 instead (the same length, so the
+			# object's layout doesn't change), which core/build.zig
+			# defines with 0.17's signature.
+			perl -0777 -pi -e 's/__extendxftf2/__vt_extxftf2/g' "$o" ;;
+		*-macos*) applerel "$(macarch "${target%%-*}")" ;;
+		native*) if [ "$(uname -s)" = Darwin ]; then applerel "$(macarch "$(uname -m)")"
+			else "$z" ld.lld -r --whole-archive "$a" -o "$o"; fi ;;
+		*) "$z" ld.lld -r --whole-archive "$a" -o "$o" ;;
+		esac || die "can't make lib/ghostty-vt.o"
+		rm -rf "$built" && mv "$built.part" "$built"
+	fi
+	rm -rf "$out" && mkdir -p "$out" && cp -R "$built/lib" "$built/include" "$out/"
+	;;
+fetch)
+	find_zig17 >/dev/null
+	sources
+	;;
+zig) find_zig17 ;;
+key) echo "vt-$VT_VERSION-$VT_SHA256-$VT_DEPS_SHA256-zig-$ZIG17_VERSION" ;;
+*) die "usage: tools/ghostty-vt build TARGET OPTIMIZE OUT | fetch | zig | key" ;;
+esac

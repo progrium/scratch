@@ -16,7 +16,13 @@ pub fn build(b: *std.Build) void {
     // h9 on by default: a host without it can't run apps. Tests don't need it.
     const with_h9 = b.option(bool, "h9", "Link hyper9 into the core (default true)") orelse true;
 
-    const uitcore = b.dependency("uitcore", .{ .target = target, .optimize = optimize, .h9 = with_h9 });
+    // The core's terminal engine (core/build.zig): libghostty-vt, whose
+    // objects come inside libuitcore.a, or the plain stand-in.
+    const terminal = b.option([]const u8, "terminal", "The core's terminal engine: ghostty or plain (core/build.zig's default)");
+    const uitcore = if (terminal) |t|
+        b.dependency("uitcore", .{ .target = target, .optimize = optimize, .h9 = with_h9, .terminal = t })
+    else
+        b.dependency("uitcore", .{ .target = target, .optimize = optimize, .h9 = with_h9 });
     const core_lib = uitcore.artifact("uitcore");
 
     const vaxis = b.dependency("vaxis", .{ .target = target, .optimize = optimize });

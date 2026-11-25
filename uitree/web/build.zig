@@ -6,7 +6,8 @@
 //!                         h9.wasm stripped of DWARF by wasm-opt
 //!   root.h9a              root.list's files from a 386 root tree
 //!                         (-Droot386, made from the 9front ISO: README.md)
-//!   the core              core's `zig build -Dtarget=wasm32-wasi`
+//!   the core              core's `zig build -Dtarget=wasm32-wasi`, with
+//!                         libghostty-vt unless -Dterminal=plain
 //!   terminal renderer     renderer/tui's, the same way
 //!   GPUI renderer         crates/web on the pinned nightly (rust-nightly),
 //!                         then wasm-bindgen, plus GPUI Kit's icons
@@ -54,6 +55,9 @@ pub fn build(b: *std.Build) void {
     const gpui = b.option(bool, "gpui", "Build the GPUI renderer (Rust; default true)") orelse true;
     const root386 = b.option([]const u8, "root386", "386 root tree for root.h9a (default third_party/hyper9/.local/9front/root386)") orelse
         b.pathFromRoot("../third_party/hyper9/.local/9front/root386");
+    // The core's terminal engine (core/README.md): ghostty, its default,
+    // or plain, which needs no Zig 0.17. Passed to all three core builds.
+    const terminal = b.option([]const u8, "terminal", "The core's terminal engine: ghostty or plain (core/build.zig's default)");
     const opt = b.fmt("-Doptimize={s}", .{@tagName(optimize)});
     const zig = b.graph.zig_exe;
     const dir = struct {
@@ -95,6 +99,7 @@ pub fn build(b: *std.Build) void {
     for (zig_parts) |p| {
         const run = b.addSystemCommand(&.{ zig, "build", "-Dtarget=wasm32-wasi", opt });
         run.addArgs(p.extra);
+        if (terminal) |t| run.addArg(b.fmt("-Dterminal={s}", .{t}));
         run.setCwd(dir(b, p.dir));
         run.has_side_effects = true;
         run.addArg("--prefix");
@@ -115,6 +120,7 @@ pub fn build(b: *std.Build) void {
         });
         cargo.setCwd(dir(b, "../renderer/gpui"));
         cargo.setEnvironmentVariable("UITCORE_OPTIMIZE", @tagName(optimize));
+        if (terminal) |t| cargo.setEnvironmentVariable("UITCORE_TERMINAL", t);
         cargo.setEnvironmentVariable("RUSTFLAGS", "--cfg getrandom_backend=\"wasm_js\"");
         cargo.has_side_effects = true;
         const bindgen = b.addSystemCommand(&.{
