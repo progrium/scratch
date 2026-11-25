@@ -245,3 +245,74 @@ fn ime_commit_and_composition(cx: &mut TestAppContext) {
         })
     }));
 }
+
+fn line_text(h: &Harness, ent: &gpui::Entity<TermState>, y: usize) -> String {
+    h.cx.update(|cx| {
+        let s = ent.read(cx);
+        let mut out = String::new();
+        for r in &s.grid.lines[y].runs {
+            while (out.chars().count() as u32) < r.col {
+                out.push(' ');
+            }
+            out.push_str(&r.text);
+        }
+        out.trim_end().to_string()
+    })
+}
+
+#[gpui::test]
+fn core_cells_reach_the_painter(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new terminal sh");
+    let t = format!("{R}/sh");
+    h.settle();
+    h.write(&format!("{t}/out"), "hello\r\nworld");
+    h.settle();
+    let ent = state(&h, &t);
+    assert_eq!(line_text(&h, &ent, 0), "hello");
+    assert_eq!(line_text(&h, &ent, 1), "world");
+    let (cols, rows) = h.cx.update(|cx| ent.read(cx).grid.size());
+    assert_eq!(h.read(&format!("{t}/cols")).unwrap().trim(), cols.to_string());
+    assert_eq!(h.read(&format!("{t}/rows")).unwrap().trim(), rows.to_string());
+    let c = h.cx.update(|cx| ent.read(cx).grid.cursor());
+    assert_eq!((c.x, c.y), (5, 1));
+
+    // Only the changed row is new.
+    let rev0 = h.cx.update(|cx| ent.read(cx).grid.lines[0].rev);
+    h.write(&format!("{t}/out"), "!");
+    h.settle();
+    assert_eq!(line_text(&h, &ent, 1), "world!");
+    assert_eq!(h.cx.update(|cx| ent.read(cx).grid.lines[0].rev), rev0);
+}
+
+#[gpui::test]
+fn typed_text_and_keys_reach_the_program(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new terminal sh");
+    let t = format!("{R}/sh");
+    h.settle();
+    h.click(&t);
+    let mut keys = h.subscribe(&format!("{t}/keys"));
+    // Text as typed (shift-a is `A`, not the core's `a`), then keys the
+    // core encodes: ctrl-j is LF, which ends the subscription's line.
+    // (The test platform has no layout, so shift-1 would type `1`.)
+    h.keys("main", "shift-a b ctrl-j");
+    let got = h.events(&mut keys);
+    assert_eq!(got.first().map(String::as_str), Some("Ab"), "{got:?}");
+}
+
+#[gpui::test]
+fn app_bindings_win_over_typed_text(cx: &mut TestAppContext) {
+    let mut h = window(cx);
+    h.ctl(R, "new terminal sh");
+    let t = format!("{R}/sh");
+    h.write("keys", "shift-a  greet");
+    h.settle();
+    h.click(&t);
+    let mut ev = h.subscribe(&format!("{R}/events"));
+    let mut keys = h.subscribe(&format!("{t}/keys"));
+    h.keys("main", "shift-a c ctrl-j");
+    let evs = h.events(&mut ev);
+    assert!(evs.iter().any(|l| l.starts_with("action greet")), "{evs:?}");
+    assert_eq!(h.events(&mut keys).first().map(String::as_str), Some("c"));
+}
