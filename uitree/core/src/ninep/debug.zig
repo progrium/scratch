@@ -12,7 +12,7 @@
 //! drag n=N type=TYPE data=TEXT
 //! drag n=N type=file name=NAME data=BYTES    (a file item, held in memory)
 //! drag n=N type=file path=HOST-PATH          (a file item from the host)
-//! key win=W stroke=KEYS
+//! key win=W stroke=KEYS [node=PATH]      (node: the focused node, a terminal)
 //! menu item=ID
 //! appearance mode=light|dark
 //! ```
@@ -56,7 +56,7 @@ pub const Inject = union(enum) {
     /// One representation of drag N's offer, or for `type=file` one file
     /// item: `name=` with `data=` held in memory, or `path=` a host file.
     drag: struct { n: u64, type: []const u8, data: []const u8, name: ?[]const u8 = null, path: ?[]const u8 = null },
-    key: struct { win: []const u8, stroke: []const u8 },
+    key: struct { win: []const u8, stroke: []const u8, node: ?[]const u8 = null },
     menu: struct { item: []const u8 },
     appearance: struct { dark: bool },
 };
@@ -135,6 +135,7 @@ pub fn parse(arena: Allocator, line: []const u8, err: *Err) fsmod.Error!Inject {
         return .{ .key = .{
             .win = c.attr("win") orelse return err.set("bad syntax: key needs win="),
             .stroke = c.attr("stroke") orelse return err.set("bad syntax: key needs stroke="),
+            .node = c.attr("node"),
         } };
     }
     if (std.mem.eql(u8, verb, "menu")) {

@@ -1,0 +1,89 @@
+#!/bin/rc
+# 31-terminal: components.md § terminal and core.md § Stream files. A
+# terminal node in stream mode: program output written to `out` is drawn
+# and reads back as `screen`; keys typed while it is focused come out of
+# `keys`, encoded for the program; the write, paste, reset and scroll
+# verbs. The screen is the host's (its engine), so these hold on any
+# renderer or none. awk's printf makes the bytes rc can't write (CR, ESC).
+# needs: T3
+. ./lib.rc
+# The desktop profile's other types aren't all in the catalog yet, so it
+# isn't claimed: the type itself is what this needs.
+if(! test -d $k/types/terminal) {
+	echo skip: no terminal type
+	exit
+}
+mainwin
+r=$k/win/main
+t=$r/sh
+
+echo '# a terminal node and its files'
+w $r/ctl new terminal sh
+exists $t/out $t/keys $t/screen $t/selection $t/cols $t/rows $t/title $t/cwd $t/tty
+cat $t/tree
+echo '# an 80x24 grid until a renderer lays it out; nothing on screen'
+val $t/cols $t/rows $t/screen $t/selection
+echo '# what is written to out is drawn: screen reads it at once'
+awk 'BEGIN { printf "one\r\ntwo\r\n" }' >$t/out
+val $t/screen
+echo '# writes append; escape sequences set style and are not drawn'
+awk 'BEGIN { printf "\033[1;31mred\033[0m and plain" }' >>$t/out
+val $t/screen
+echo '# out reads as nothing and stores nothing'
+val $t/out
+echo '# the host owns screen, cols, keys'
+w $t/screen x
+w $t/cols 10
+w $t/keys x
+echo '# write draws as if the program had written it'
+w $t/ctl write '!'
+val $t/screen
+echo '# reset clears the screen'
+w $t/ctl reset
+val $t/screen
+echo '# scroll: top, bottom, or lines'
+w $t/ctl scroll top
+w $t/ctl scroll -3
+w $t/ctl scroll bottom
+w $t/ctl scroll sideways
+w $t/ctl scroll
+echo '# an unknown verb'
+w $t/ctl spawn sh
+
+echo '# keys: what the user types while it is focused, encoded'
+{
+	inj key win'='main stroke'='l node'='sh
+	inj key win'='main stroke'='s node'='sh
+	inj key win'='main stroke'='ctrl-j node'='sh
+	awk '{ print; exit }' <[0=3]
+} <[3]$t/keys
+echo '# paste sends text to the program, its newlines as CR (shown ^M)'
+{
+	w $t/ctl 'paste text=<<E
+echo hi
+ls
+
+E'
+	inj key win'='main stroke'='ctrl-j node'='sh
+	awk '{ gsub(/\r/, "^M"); print; exit }' <[0=3]
+} <[3]$t/keys
+echo '# a stroke the app binds is the app''s, not the program''s'
+wq $k/keys ctrl-s save
+{
+	inj key win'='main stroke'='ctrl-s node'='sh
+	inj key win'='main stroke'='x node'='sh
+	inj key win'='main stroke'='ctrl-j node'='sh
+	awk '{ print; exit }' <[0=4]
+	evs 'win=main'
+} <[4]$t/keys <[3]$r/events
+
+echo '# bell is an event'
+{
+	awk 'BEGIN { printf "\007" }' >$t/out
+	cat $t/screen >/dev/null
+	evs 'win=main' 'node=sh'
+} <[3]$t/events
+
+echo '# gone with its node'
+w $r/ctl delete sh
+exists $t/out

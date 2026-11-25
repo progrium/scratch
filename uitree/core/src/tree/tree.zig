@@ -34,6 +34,8 @@ const pathm = @import("path.zig");
 const trace = @import("trace.zig");
 const doc = @import("doc.zig");
 const filesm = @import("files.zig");
+const termm = @import("term.zig");
+const engine = @import("../term/engine.zig");
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -152,6 +154,9 @@ pub const Changes = struct {
     /// Files a renderer changed (`mirror`): not in `props`, since the
     /// renderer that sent them has them, but other renderers don't.
     mirrors: []const PropChange = &.{},
+    /// Terminal nodes whose cells, cursor, styles or size changed
+    /// (uitcore.h's UitChanges.terms), from `pumpTerms`.
+    terms: []const termm.Change = &.{},
 };
 
 /// An event from the UI, or an echo. See `Tree.emit`.
@@ -221,6 +226,7 @@ const Log = struct {
     /// Created and removed in the same pump: neither.
     view_created: std.ArrayList(Handle) = .empty,
     view_removed: std.ArrayList(Handle) = .empty,
+    terms: std.ArrayList(termm.Change) = .empty,
 };
 
 pub const Config = struct {
@@ -264,6 +270,9 @@ pub const Tree = struct {
     next_drag: u64 = 1,
     /// The `op=` a drop's target accepted with, by drag, for `dragend`.
     drag_ops: std.AutoHashMapUnmanaged(u64, []const u8) = .empty,
+    /// Terminal nodes' engines and streams (term.zig). Not tree state:
+    /// 9P threads write `out` and read `keys` directly.
+    terms: termm.Terms,
 
     /// A tree with the default `main` window, hidden. The tree must not
     /// move: streams point at its bus.
@@ -279,6 +288,7 @@ pub const Tree = struct {
             .bus = .init(gpa, io),
             .log = .{ .arena = .init(gpa) },
             .files = .init(gpa, io),
+            .terms = .init(gpa, io),
         };
         t.st.system_dark = cfg.system_dark;
         errdefer t.destroyParts();
@@ -300,6 +310,7 @@ pub const Tree = struct {
         t.shared.bounds.deinit(t.gpa);
         t.log.arena.deinit();
         t.files.deinit();
+        t.terms.deinit();
         t.drag_ops.deinit(t.gpa);
     }
 
@@ -465,9 +476,11 @@ pub const Tree = struct {
                 _ = try t.request(ev.ev, dflt);
             } else _ = try t.emit(ev.ev);
         }
+        for (tx.term_acts.items) |x| try t.terms.verb(x.h, x.act);
         if (tx.quit) {
             t.st.gone = true;
             t.bus.shutDown();
+            t.terms.shutDown();
         }
     }
 
@@ -573,6 +586,7 @@ pub const Tree = struct {
             .removed = l.view_removed.items,
             .props = props.items,
             .cmds = l.cmds.items,
+            .terms = l.terms.items,
         };
     }
 
@@ -638,6 +652,7 @@ pub const Tree = struct {
                 if (props_only) continue;
                 try t.log.created.append(a, h);
                 try t.bus.addLive(h);
+                try t.termCame(nn);
                 if (new.winOfRoot(nn.root)) |w| try t.addDirty(w.nameStr());
                 continue;
             };
@@ -646,6 +661,10 @@ pub const Tree = struct {
             if (on.ty != nn.ty) {
                 try t.addProp(h, "type");
                 any = true;
+                if (!props_only) {
+                    t.terms.remove(h);
+                    try t.termCame(nn);
+                }
             }
             if (!std.mem.eql(Handle, on.order.items, nn.order.items)) {
                 try t.addProp(h, "order");
@@ -675,6 +694,7 @@ pub const Tree = struct {
                 if (new.nodes.contains(e.key_ptr.*)) continue;
                 try removed.append(t.gpa, e.key_ptr.*);
                 try t.log.removed.append(a, e.key_ptr.*);
+                t.terms.remove(e.key_ptr.*);
                 if (new.winOfRoot(e.value_ptr.*.root)) |w| try t.addDirty(w.nameStr());
             }
             if (removed.items.len > 0) {
@@ -903,6 +923,7 @@ pub const Tree = struct {
         try t.pushCmd(.{ .tag = .quit });
         t.st.gone = true;
         t.bus.shutDown();
+        t.terms.shutDown();
     }
 
     /// Runs `f(tx, arg)` as an op that no client made: nothing is traced.
@@ -1058,7 +1079,11 @@ pub const Tree = struct {
                 best_depth = dpt;
             }
         }
-        const b = best orelse return false;
+        const b = best orelse {
+            // Unbound: a focused terminal's program gets it.
+            if (act) return t.termKey(at, stroke);
+            return false;
+        };
         if (!act) return true;
         // A disabled action's binding is taken but sends nothing.
         if (t.disabled.contains(b.action)) return true;
@@ -1208,6 +1233,91 @@ pub const Tree = struct {
     pub fn appGone(t: *Tree) void {
         t.st.gone = true;
         t.bus.shutDown();
+        t.terms.shutDown();
+    }
+
+    // ------------------------------------------------------------ terminals
+
+    /// A node came into the state (or changed type): a terminal gets its
+    /// engine, sized as the renderer last said or 80x24 until it says.
+    fn termCame(t: *Tree, n: *const Node) Error!void {
+        if (!std.mem.eql(u8, n.ty.name, termm.type_name)) return;
+        const sb = std.fmt.parseInt(u32, std.mem.trim(u8, n.value("scrollback"), " \t\r\n"), 10) catch 10_000;
+        try t.terms.add(n.id, .{ .scrollback = sb });
+    }
+
+    /// Once per pump, after the ops: feeds every terminal what its program
+    /// wrote, sends the events that caused, and logs what changed for
+    /// `changes().terms`. Owner thread.
+    pub fn pumpTerms(t: *Tree) Error!void {
+        if (t.terms.count() == 0) return;
+        try t.terms.pump(t.log.arena.allocator(), t, &t.log.terms);
+    }
+
+    /// term.zig's `Terms.pump` sends node events through this.
+    pub fn termEvent(t: *Tree, h: Handle, name: []const u8, attrs: []const Attr) Error!void {
+        if (t.st.gone or t.st.node(h) == null) return;
+        _ = try t.emit(.{ .name = name, .node = h, .attrs = attrs });
+    }
+
+    /// A terminal change no pump of this tree made: a remote core's, from
+    /// its stream (render/dial.zig).
+    pub fn logTermChange(t: *Tree, c: termm.Change) Error!void {
+        const a = t.log.arena.allocator();
+        try t.log.terms.append(a, .{ .node = c.node, .what = c.what, .rows = try a.dupe(u32, c.rows) });
+    }
+
+    /// Whether `h` is a terminal node with an engine.
+    pub fn isTerm(t: *Tree, h: Handle) bool {
+        return t.terms.owned(h) != null;
+    }
+
+    /// uit_term_resize: the grid that fits the node with the renderer's
+    /// font. A new size sends `resize cols=C rows=R`.
+    pub fn termResize(t: *Tree, h: Handle, cols: u32, rows: u32, cw: u32, ch: u32) Error!void {
+        if (!t.isTerm(h)) return t.setErr(.bad_value, "not a terminal");
+        if (cols == 0 or rows == 0) return t.setErr(.bad_value, "cols and rows");
+        const clamp = struct {
+            fn f(v: u32) u16 {
+                return @intCast(@min(v, std.math.maxInt(u16)));
+            }
+        }.f;
+        const changed = try t.terms.resize(h, .{ .cols = clamp(cols), .rows = clamp(rows), .cell_w_px = clamp(cw), .cell_h_px = clamp(ch) });
+        if (!changed) return;
+        var cb: [16]u8 = undefined;
+        var rb: [16]u8 = undefined;
+        const sz = t.terms.owned(h).?.eng.size();
+        try t.termEvent(h, "resize", &.{
+            .{ .key = "cols", .value = std.fmt.bufPrint(&cb, "{d}", .{sz.cols}) catch unreachable },
+            .{ .key = "rows", .value = std.fmt.bufPrint(&rb, "{d}", .{sz.rows}) catch unreachable },
+        });
+    }
+
+    /// uit_term_mouse. True when the program took it (a mouse mode).
+    pub fn termMouse(t: *Tree, h: Handle, m: engine.Mouse) Error!bool {
+        if (!t.isTerm(h)) return t.setErr(.bad_value, "not a terminal");
+        return t.terms.mouse(h, m);
+    }
+
+    /// uit_term_scroll. True when the program got it.
+    pub fn termScroll(t: *Tree, h: Handle, lines: i32) Error!bool {
+        if (!t.isTerm(h)) return t.setErr(.bad_value, "not a terminal");
+        return t.terms.wheel(h, lines);
+    }
+
+    /// uit_term_text: committed text for the program.
+    pub fn termText(t: *Tree, h: Handle, text: []const u8) Error!void {
+        if (!t.isTerm(h)) return t.setErr(.bad_value, "not a terminal");
+        return t.terms.text(h, text);
+    }
+
+    /// A keystroke no binding took, for the focused terminal: encoded for
+    /// its program. False when `at` isn't a terminal or the stroke has no
+    /// encoding.
+    fn termKey(t: *Tree, at: Handle, stroke: []const u8) Error!bool {
+        if (!t.isTerm(at)) return false;
+        const k = engine.parseStroke(stroke, if (std.mem.eql(u8, t.cfg.cmdkey, "cmd") or std.mem.eql(u8, t.cfg.cmdkey, "super")) .super else .ctrl) orelse return false;
+        return t.terms.key(at, k);
     }
 };
 
@@ -1266,6 +1376,7 @@ fn isPair(v: []const u8) bool {
 // ---------------------------------------------------------------- Tx
 
 const PendingEvent = struct { ev: EventIn, request: ?[]const u8 = null };
+const TermAct = struct { h: Handle, act: termm.Act };
 const BatchOp = enum { begin, end };
 
 /// One op in progress: a private copy of the state, and what to do once
@@ -1282,6 +1393,8 @@ const Tx = struct {
     cmds: std.ArrayList(HostCmd) = .empty,
     batch_ops: std.ArrayList(BatchOp) = .empty,
     answered: std.ArrayList(u64) = .empty,
+    /// Terminal verbs, applied to the engines once the op is in.
+    term_acts: std.ArrayList(TermAct) = .empty,
     /// Above zero inside a `new`, a document, or an op nobody wrote:
     /// those writes are traced as the one line that made them, and send
     /// no echoes.
@@ -2544,12 +2657,35 @@ const Tx = struct {
             try noArgs(tx, c);
             return tx.overlayOpen(h, eq(u8, verb, "open"));
         }
+        // A terminal's verbs are the core's: its screen is here.
+        if (std.mem.eql(u8, n.ty.name, termm.type_name)) return tx.termVerb(h, verb, c);
         // A verb that is also the type's action event (`click` on a
         // button) sends it, as the user would.
         if (n.ty.event(verb)) |e| if (e.kind == .action) {
             try tx.event(.{ .name = verb, .node = h, .via = "ctl", .attrs = try tx.a.dupe(Attr, c.attrs) });
         };
         try tx.cmd(.{ .tag = .component_verb, .node = h, .ctl = c });
+    }
+
+    /// `write TEXT`, `paste TEXT`, `reset`, `scroll top|bottom|LINES` on a
+    /// terminal (components.md § terminal). TEXT is the words joined by
+    /// spaces, or `text=`.
+    fn termVerb(tx: *Tx, h: Handle, verb: []const u8, c: Ctl) Error!void {
+        const eq = std.mem.eql;
+        const act: termm.Act = if (eq(u8, verb, "write") or eq(u8, verb, "paste")) blk: {
+            const text = c.attr("text") orelse if (c.words.len == 1) c.words[0] else try std.mem.join(tx.a, " ", c.words);
+            break :blk if (eq(u8, verb, "write")) .{ .write = text } else .{ .paste = text };
+        } else if (eq(u8, verb, "reset")) blk: {
+            try noArgs(tx, c);
+            break :blk .reset;
+        } else if (eq(u8, verb, "scroll")) blk: {
+            if (c.words.len != 1) return tx.fail(.bad_syntax, "scroll top|bottom|LINES", .{});
+            const w = c.words[0];
+            break :blk .{ .scroll = if (eq(u8, w, "top")) .top else if (eq(u8, w, "bottom")) .bottom else .{
+                .lines = std.fmt.parseInt(i32, w, 10) catch return tx.fail(.bad_value, "scroll {s}", .{w}),
+            } };
+        } else return tx.fail(.unknown_command, "{s}", .{verb});
+        try tx.term_acts.append(tx.a, .{ .h = h, .act = act });
     }
 
     /// An overlay opens or closes: its `open` prop, the window's list, and

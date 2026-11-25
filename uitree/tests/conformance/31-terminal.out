@@ -1,0 +1,67 @@
+# a terminal node and its files
+ok
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+yes
+terminal sh
+# an 80x24 grid until a renderer lays it out; nothing on screen
+80
+|
+24
+|
+|
+|
+# what is written to out is drawn: screen reads it at once
+one
+two
+|
+# writes append; escape sequences set style and are not drawn
+one
+two
+red and plain
+|
+# out reads as nothing and stores nothing
+|
+# the host owns screen, cols, keys
+permission denied
+permission denied
+permission denied
+# write draws as if the program had written it
+ok
+one
+two
+red and plain!
+|
+# reset clears the screen
+ok
+|
+# scroll: top, bottom, or lines
+ok
+ok
+ok
+bad value
+bad syntax
+# an unknown verb
+unknown command
+# keys: what the user types while it is focused, encoded
+ls
+# paste sends text to the program, its newlines as CR (shown ^M)
+ok
+echo hi^Mls^M
+# a stroke the app binds is the app's, not the program's
+x
+resync - -
+action save sh via=key win=main
+# bell is an event
+resync - -
+bell - sh win=main
+# gone with its node
+ok
+no
+exit=0

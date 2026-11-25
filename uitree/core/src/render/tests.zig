@@ -50,10 +50,11 @@ const Fx = struct {
         var arena: std.heap.ArenaAllocator = .init(tt.allocator);
         defer arena.deinit();
         var uch: abi.UitChanges = .{};
+        try f.t.pumpTerms();
         try abi.fill(arena.allocator(), try f.t.changes(), &uch);
         var aw: std.Io.Writer.Allocating = .init(tt.allocator);
         errdefer aw.deinit();
-        const src: stream.Source = .{ .st = f.t.committed(), .cat = &f.cat };
+        const src: stream.Source = .{ .st = f.t.committed(), .cat = &f.cat, .terms = &f.t.terms };
         f.enc.seq += 1;
         if (!f.started) {
             try f.enc.snapshot(src, &aw.writer);
@@ -257,9 +258,9 @@ test "a core draws another core's app through uit_render_dial" {
     try tt.expectEqualStrings("Ada", Both.text(app, "in").?);
 }
 
-// ---- Terminals (render.md § Terminals, the terminal contracts' C4). The
-// encoder doesn't send these yet (T3 wires them in); this pins their
-// spelling, and that they read back as the C ABI structs they came from.
+// ---- Terminals (render.md § Terminals, the terminal contracts' C4): their
+// spelling, that they read back as the C ABI structs they came from, and
+// the encoder's use of them.
 
 const term = @import("term.zig");
 const ctl = @import("../proto/ctl.zig");
@@ -375,4 +376,101 @@ test "terminal input lines: term-resize, term-mouse, term-scroll, term-text" {
     }
     try tt.expectEqual(@as(?term.Input, null), try term.parseInput(try ctl.parse(arena.allocator(), "key win=main stroke=a")));
     try tt.expectError(error.BadSyntax, term.parseInput(try ctl.parse(arena.allocator(), "term-mouse win=main node=sh action=hover col=1 row=1")));
+}
+
+test "a terminal in the stream: whole when made, then what changed" {
+    var f: Fx = undefined;
+    try f.init();
+    defer f.deinit();
+    try f.ok("win/main/ctl", "new terminal sh");
+    const t = f.t.terms.get(f.t.terms.handles()[0]).?;
+    defer t.unref();
+    try t.write("$ ls\r\n");
+    try f.expect(
+        \\batch 2 x.t=0
+        \\window main title=Test size=400,300 state=normal
+        \\new div win/main
+        \\new terminal win/main/sh
+        \\term win/main/sh cols=80 rows=24 cursor=0,1 shape=block visible=on blink=off
+        \\term-styles win/main/sh first=0 text=<<END
+        \\- - -
+        \\END
+        \\term-rows win/main/sh text=<<END
+        \\0 0:0:4 '$ ls'
+        \\END
+        \\end 2
+        \\
+    );
+    // One row changed; the cursor moved.
+    try t.write("a  b");
+    try f.expect(
+        \\batch 3 x.t=0
+        \\term win/main/sh cols=80 rows=24 cursor=4,1 shape=block visible=on blink=off
+        \\term-rows win/main/sh text=<<END
+        \\1 0:0:4 'a  b'
+        \\END
+        \\end 3
+        \\
+    );
+    // A verb on its ctl draws too; nothing changed is nothing sent.
+    try f.ok("win/main/sh/ctl", "write !");
+    try f.expect(
+        \\batch 4 x.t=0
+        \\term win/main/sh cols=80 rows=24 cursor=5,1 shape=block visible=on blink=off
+        \\term-rows win/main/sh text=<<END
+        \\1 0:0:5 'a  b!'
+        \\END
+        \\end 4
+        \\
+    );
+    const none = try f.pump();
+    defer tt.allocator.free(none);
+    try tt.expectEqualStrings("", none);
+}
+
+test "the checker replays a terminal to the same screen" {
+    const check = @import("check.zig");
+    var cat = try types.Catalog.builtin(tt.allocator);
+    defer cat.deinit();
+    const live = try treem.Tree.create(tt.allocator, tt.io, &cat, .{});
+    defer live.destroy();
+    const k = try check.Checker.create(tt.allocator, tt.io, &cat);
+    defer k.destroy();
+    const Step = struct {
+        fn pump(kk: *check.Checker, lt: *treem.Tree) !void {
+            try lt.pumpTerms();
+            lt.publish() catch {};
+            try kk.pump(lt.committed(), try lt.changes(), &lt.terms);
+            lt.clearChanges();
+        }
+    };
+    try live.apply(.{ .write = .{ .session = 1, .path = "win/main/ctl", .data = "set . title=T\nnew text x text=1" } });
+    try Step.pump(k, live);
+    try live.apply(.{ .write = .{ .session = 1, .path = "win/main/ctl", .data = "new terminal sh" } });
+    try Step.pump(k, live);
+    const h = live.committed().win("main").?.root;
+    var sh: treem.Handle = 0;
+    for (live.committed().node(h).?.children.items) |c| {
+        if (std.mem.eql(u8, live.committed().node(c).?.ty.name, "terminal")) sh = c;
+    }
+    const t = live.terms.get(sh).?;
+    defer t.unref();
+    try t.write("one\r\ntwo\r\n");
+    try Step.pump(k, live);
+    try t.write("three");
+    try live.apply(.{ .write = .{ .session = 1, .path = "win/main/sh/ctl", .data = "scroll top" } });
+    try Step.pump(k, live);
+
+    var aw: std.Io.Writer.Allocating = .init(tt.allocator);
+    defer aw.deinit();
+    const ok = try k.compare(live.committed(), &live.terms, &aw.writer);
+    if (!ok) std.debug.print("{s}\n", .{aw.written()});
+    try tt.expect(ok);
+    // The replica made no engine of its own; its view says the screen.
+    try tt.expectEqual(@as(usize, 0), k.t.terms.count());
+    try tt.expectEqual(@as(usize, 1), k.rep.views.map.count());
+    var sw: std.Io.Writer.Allocating = .init(tt.allocator);
+    defer sw.deinit();
+    try k.rep.views.map.values()[0].screenText(&sw.writer);
+    try tt.expectEqualStrings("one\ntwo\nthree\n", sw.written());
 }

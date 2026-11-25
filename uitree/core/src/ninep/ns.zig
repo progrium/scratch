@@ -65,14 +65,14 @@ pub const TreeFs = struct {
         return .{
             .kind = switch (st.kind) {
                 .dir => .dir,
-                .events, .trace => .stream,
+                .events, .trace, .stream, .sink => .stream,
                 else => .file,
             },
             .qid = fsmod.qidOf(path),
             .vers = st.ver,
             .perm = switch (st.kind) {
                 .dir => 0o777,
-                .readonly, .events, .trace => 0o444,
+                .readonly, .events, .trace, .stream => 0o444,
                 else => 0o666,
             },
             .length = st.len,
@@ -118,6 +118,7 @@ pub const TreeFs = struct {
         if (inFiles(path)) return n.fileOpen(path, mode, err);
         var arena: std.heap.ArenaAllocator = .init(n.gpa);
         defer arena.deinit();
+        if (try n.termOpen(snap, arena.allocator(), path, mode, err)) |o| return o;
         const target = snap.streamTarget(arena.allocator(), path) catch |e| {
             // A file being created (a prop not set yet): it exists once
             // the write at clunk applies.
@@ -174,7 +175,81 @@ pub const TreeFs = struct {
         defer snap.release();
         if (snap.gone()) return err.set("app gone");
         if (inFiles(path)) return n.fileRead(path, arena, err);
+        n.termSync(snap, arena, path);
         return snap.read(arena, path) catch |e| errText(err, e);
+    }
+
+    // ------------------------------------------------------------------
+    // A terminal's stream files (core.md § Stream files) and live values
+    // (tree/term.zig).
+
+    /// The terminal node a path's file is on, with the file's name.
+    fn termFile(n: *TreeFs, snap: *tree.Snapshot, arena: Allocator, path: []const u8) ?struct { h: tree.Handle, name: []const u8 } {
+        const loc = snap.resolve(arena, std.mem.trim(u8, path, "/"), null) catch return null;
+        if (loc != .file) return null;
+        const nd = snap.st.node(loc.file.node) orelse return null;
+        if (!std.mem.eql(u8, nd.ty.name, tree.term.type_name)) return null;
+        _ = n;
+        return .{ .h = loc.file.node, .name = loc.file.name };
+    }
+
+    /// `out` opens as a sink, `keys` as a stream; null for any other file.
+    fn termOpen(n: *TreeFs, snap: *tree.Snapshot, arena: Allocator, path: []const u8, mode: fsmod.OpenMode, err: *Err) fsmod.Error!?fsmod.Opened {
+        const f = n.termFile(snap, arena, path) orelse return null;
+        const nd = snap.st.node(f.h).?;
+        const df = nd.ty.file(f.name) orelse return null;
+        if (!df.stream) return null;
+        const t = n.t.terms.get(f.h) orelse return err.set("gone");
+        defer t.unref();
+        if (df.readonly) {
+            if (mode.write) return err.set("permission denied: read-only");
+            const r = t.openKeys() catch |e| return switch (e) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.Gone => err.set("gone"),
+            };
+            return .{ .stream = .{ .ptr = r, .vt = &keys_vt } };
+        }
+        if (!mode.write) return .{};
+        return .{ .sink = .{ .ptr = t.ref(), .vt = &sink_vt } };
+    }
+
+    /// Before a read of a terminal's live value: wait for the pump that
+    /// feeds what was written before it.
+    fn termSync(n: *TreeFs, snap: *tree.Snapshot, arena: Allocator, path: []const u8) void {
+        const f = n.termFile(snap, arena, path) orelse return;
+        if (!tree.term.isLive(f.name)) return;
+        const t = n.t.terms.get(f.h) orelse return;
+        defer t.unref();
+        t.sync();
+    }
+
+    const sink_vt: fsmod.Sink.VTable = .{ .write = sinkWrite, .close = sinkClose };
+
+    fn sinkWrite(p: *anyopaque, data: []const u8, err: *Err) fsmod.Error!void {
+        const t: *tree.term.Term = @ptrCast(@alignCast(p));
+        t.write(data) catch |e| return switch (e) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.Gone => err.set("gone"),
+        };
+    }
+    fn sinkClose(p: *anyopaque) void {
+        const t: *tree.term.Term = @ptrCast(@alignCast(p));
+        t.unref();
+    }
+
+    const keys_vt: fsmod.Stream.VTable = .{ .read = kRead, .interrupt = kInterrupt, .close = kClose };
+
+    fn kRead(p: *anyopaque, buf: []u8) error{Interrupted}!usize {
+        const r: *tree.term.KeyReader = @ptrCast(@alignCast(p));
+        return r.read(buf);
+    }
+    fn kInterrupt(p: *anyopaque) void {
+        const r: *tree.term.KeyReader = @ptrCast(@alignCast(p));
+        r.interrupt();
+    }
+    fn kClose(p: *anyopaque) void {
+        const r: *tree.term.KeyReader = @ptrCast(@alignCast(p));
+        r.close();
     }
 
     fn call(n: *TreeFs, op: tree.Op, err: *Err) fsmod.Error!void {
@@ -480,4 +555,103 @@ test "TreeFs: per-write ctl errors, reads after writes, text at clunk" {
     q.close();
     owner.stop.store(true, .release);
     thr.join();
+}
+
+test "TreeFs: a terminal's out, screen and keys over 9P" {
+    const t = std.testing;
+    const types = @import("../types/root.zig");
+    const server = @import("server.zig");
+    const transport = @import("transport.zig");
+    const Client = @import("client.zig").Client;
+    const wire = @import("wire.zig");
+
+    var th: std.Io.Threaded = .init(t.allocator, .{});
+    defer th.deinit();
+    const io = th.io();
+    var cat = try types.Catalog.builtin(t.allocator);
+    defer cat.deinit();
+    const tr = try Tree.create(t.allocator, io, &cat, .{});
+    defer tr.destroy();
+    var q: tree.OpQueue = .init(t.allocator, io);
+    defer q.deinit();
+
+    // The owner thread: drain and feed the terminals until told to stop,
+    // noting the most `out` ever held.
+    const Owner = struct {
+        q: *tree.OpQueue,
+        t: *Tree,
+        stop: std.atomic.Value(bool) = .init(false),
+        most: usize = 0,
+        fn run(o: *@This()) void {
+            while (!o.stop.load(.acquire)) {
+                const n = o.q.drain(o.t);
+                for (o.t.terms.handles()) |h| {
+                    const x = o.t.terms.owned(h).?;
+                    x.mu.lockUncancelable(o.t.io);
+                    o.most = @max(o.most, x.out.items.len, x.out.capacity);
+                    x.mu.unlock(o.t.io);
+                }
+                o.t.pumpTerms() catch {};
+                o.t.clearChanges();
+                if (n == 0) std.Thread.yield() catch {};
+            }
+        }
+    };
+    var owner: Owner = .{ .q = &q, .t = tr };
+    const thr = try std.Thread.spawn(.{}, Owner.run, .{&owner});
+
+    var tfs: TreeFs = .{ .gpa = t.allocator, .t = tr, .q = &q };
+    var srv: server.Server = .init(t.allocator, io, tfs.fs());
+    const p = try transport.pair();
+    try srv.serve(p[0]);
+    var cl = try Client.init(t.allocator, p[1]);
+    try cl.version();
+    const root = try cl.attach();
+
+    try cl.put(root, "win/main/ctl", "new terminal sh\n");
+    // `echo hi >out; cat screen`: the read waits for the feed.
+    try cl.put(root, "win/main/sh/out", "hi\r\n");
+    const scr = try cl.get(t.allocator, root, "win/main/sh/screen");
+    defer t.allocator.free(scr);
+    try t.expectEqualStrings("hi\n", scr);
+    const cols = try cl.get(t.allocator, root, "win/main/sh/cols");
+    defer t.allocator.free(cols);
+    try t.expectEqualStrings("80\n", cols);
+    // `out` reads as nothing; `keys` can't be written.
+    const empty = try cl.get(t.allocator, root, "win/main/sh/out");
+    defer t.allocator.free(empty);
+    try t.expectEqualStrings("", empty);
+    const kw = try cl.walk(root, "win/main/sh/keys");
+    try t.expectError(error.Rerror, cl.open(kw, wire.OWRITE));
+    try cl.clunk(kw);
+
+    // A big write in pieces never makes the host hold more than the bound.
+    const o = try cl.walk(root, "win/main/sh/out");
+    try cl.open(o, wire.OWRITE);
+    var piece: [8000]u8 = undefined;
+    for (&piece, 0..) |*b, i| b.* = if (i % 80 == 79) '\n' else 'x';
+    var off: u64 = 0;
+    for (0..256) |_| {
+        _ = try cl.write(o, off, &piece);
+        off += piece.len;
+    }
+    _ = try cl.write(o, off, "\r\nend");
+    try cl.clunk(o);
+    const scr2 = try cl.get(t.allocator, root, "win/main/sh/screen");
+    defer t.allocator.free(scr2);
+    try t.expect(std.mem.endsWith(u8, scr2, "\nend\n"));
+
+    // A paste reaches whoever reads `keys`.
+    const k = try cl.walk(root, "win/main/sh/keys");
+    try cl.open(k, wire.OREAD);
+    try cl.put(root, "win/main/sh/ctl", "paste 'ls -l'\n");
+    try t.expectEqualStrings("ls -l", try cl.read(k, 0, 64));
+    try cl.clunk(k);
+
+    cl.deinit();
+    srv.deinit();
+    q.close();
+    owner.stop.store(true, .release);
+    thr.join();
+    try t.expect(owner.most <= tree.term.out_cap);
 }

@@ -16,6 +16,7 @@ pub const doc = @import("doc.zig");
 pub const snapshot = @import("snapshot.zig");
 pub const queue = @import("queue.zig");
 pub const files = @import("files.zig");
+pub const term = @import("term.zig");
 const treem = @import("tree.zig");
 
 pub const Tree = treem.Tree;

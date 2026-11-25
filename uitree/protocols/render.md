@@ -310,7 +310,7 @@ headless host and the renderer tree share one parser:
 | `mirror win=W node=PATH file=F value=V` | `uit_mirror` |
 | `bounds win=W node=PATH value='x y w h'` | `uit_bounds` (primary only) |
 | `frame win=W` | `uit_frame_drawn` (primary only) |
-| `key win=W stroke=cmd-s` | `uit_key` |
+| `key win=W stroke=cmd-s [node=PATH]` | `uit_key`; `node=` names the focused terminal an unbound stroke goes to |
 | `menu item=ID` | `uit_menu_action` |
 | `appearance mode=light\|dark` | `uit_system_dark` (primary only) |
 | `request NAME win=W node=PATH id=ID [default=X]` | `uit_request`; the answer comes back as `answer ID VALUE` |
@@ -464,8 +464,9 @@ Built (`zig build remote` in `core/` for `uitree-remote`):
   every pump of a run, replays the stream into an empty tree, and compares
   the two as documents (every window's `tree` and `over/`, focus, title,
   keys, menus, theme) at the end. `tests/conformance/run -r` runs it under
-  all 30 scripts, in CI, and all 30 agree. `$UITREE_RENDER_DUMP=FILE`
-  keeps the stream. [`render/tests.zig`](../core/src/render/tests.zig)
+  all the scripts, in CI, and they all agree, terminals' screens included.
+  `$UITREE_RENDER_DUMP=FILE` keeps the stream, here and in a core that
+  dials (`uit_render_dial`). [`render/tests.zig`](../core/src/render/tests.zig)
   pins the stream's spelling, and one test has a core draw another
   core's app over a real socket.
 - **`uitree-remote`**: a host with no renderer of its own, over uitcore.h
