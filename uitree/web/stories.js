@@ -139,10 +139,10 @@ text b  selectable  text='Selectable: drag across me to select'` },
     ],
   },
   {
-    id: 'styled-text', group: 'core', title: 'Styled text', desc: 'One text with styled runs: byte ranges and the words for each.',
+    id: 'styled-text', group: 'core', title: 'Styled text', desc: 'One string with styled runs: each line of runs is START LENGTH (bytes into text) and the words for that range. A text node styles all of itself; styled-text styles parts.',
     sections: [
       { label: 'Runs', ui: `
-styled-text s  text='Error: file not found (exit 2), see the log'`, files: { 's/runs': '0 6 font-bold text-color=danger\n7 14 italic\n16 6 bg=muted\n28 3 underline text-color=primary\n' } },
+styled-text s  text='Error: file not found (exit 2), see the log'`, files: { 's/runs': '0 6 font-bold text-color=danger\n7 14 italic\n22 8 bg=selection\n40 3 underline text-color=info\n' } },
     ],
   },
   {
