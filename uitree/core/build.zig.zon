@@ -8,5 +8,5 @@
         // framing). A submodule of this repo.
         .h9 = .{ .path = "../third_party/hyper9", .lazy = true },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "include", "types" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "include", "types", "tests" },
 }

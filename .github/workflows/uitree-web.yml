@@ -52,6 +52,11 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y binaryen brotli
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
+      # libghostty-vt for wasm, and the Zig 0.17 that builds it (tools/ghostty-vt).
+      - uses: actions/cache@v4
+        with:
+          path: uitree/.local
+          key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
       - uses: actions/cache@v4
         id: root
         with:
@@ -65,12 +70,13 @@ jobs:
           . scripts/pins.sh
           zig build isoroot -- ".local/9front/9front-$NINEFRONT_RELEASE.386.iso" .local/9front/root386
           rm -f .local/9front/*.iso
-      - run: zig build web
+      # The core and both renderers with libghostty-vt in them.
+      - run: zig build web -Dterminal=ghostty
       - name: Playwright's Chromium
         run: |
           npm install --no-save --no-package-lock playwright@1.63.0
           npx playwright install --with-deps chromium
-      - run: zig build test -- --shots "$RUNNER_TEMP/shots"
+      - run: zig build test -Dterminal=ghostty -- --shots "$RUNNER_TEMP/shots"
       - if: always()
         uses: actions/upload-artifact@v4
         with:
