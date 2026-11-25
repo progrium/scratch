@@ -256,3 +256,123 @@ test "a core draws another core's app through uit_render_dial" {
     while (!std.mem.eql(u8, Both.text(app, "in") orelse "", "Ada") and tries < 2000) : (tries += 1) Both.pump(app, rend);
     try tt.expectEqualStrings("Ada", Both.text(app, "in").?);
 }
+
+// ---- Terminals (render.md § Terminals, the terminal contracts' C4). The
+// encoder doesn't send these yet (T3 wires them in); this pins their
+// spelling, and that they read back as the C ABI structs they came from.
+
+const term = @import("term.zig");
+const ctl = @import("../proto/ctl.zig");
+
+test "terminal records: term, term-styles, term-rows" {
+    var aw: std.Io.Writer.Allocating = .init(tt.allocator);
+    defer aw.deinit();
+    const w = &aw.writer;
+    const cur: abi.UitTermCursor = .{ .x = 3, .y = 1, .shape = 1, .visible = 1, .blink = 1, .cols = 80, .rows = 24 };
+    const styles = [_]abi.UitTermStyle{
+        .{},
+        .{ .fg = 0xcd3131ff, .flags = abi.UIT_TERM_BOLD | abi.UIT_TERM_ITALIC },
+        .{ .bg = 0x1e1e1eff, .underline_color = 0xffcc00ff, .underline = 3, .flags = abi.UIT_TERM_INVERSE },
+    };
+    const r0 = [_]abi.UitTermRun{
+        .{ .col = 0, .width = 2, .style = 1, .text = abi.UitStr.lit("$ ") },
+        .{ .col = 2, .width = 6, .style = 0, .selected = 1, .text = abi.UitStr.lit("ls -la") },
+        .{ .col = 10, .width = 4, .style = 2, .text = abi.UitStr.lit("日本") },
+        .{ .col = 15, .width = 3, .style = 0, .text = abi.UitStr.lit("it's") },
+    };
+    const rows = [_]abi.UitTermRow{
+        .{ .y = 0, .runs = &r0, .n_runs = r0.len },
+        .{ .y = 1 },
+    };
+    try term.writeTerm(w, "win/main/sh", cur);
+    try term.writeStyles(w, "win/main/sh", 0, &styles);
+    try term.writeRows(w, "win/main/sh", &rows);
+    try term.writeStyles(w, "win/main/sh", 3, &.{});
+    try term.writeRows(w, "win/main/sh", &.{});
+    try tt.expectEqualStrings(
+        \\term win/main/sh cols=80 rows=24 cursor=3,1 shape=bar visible=on blink=on
+        \\term-styles win/main/sh first=0 text=<<END
+        \\- - -
+        \\#cd3131ff - - bold italic
+        \\- #1e1e1eff #ffcc00ff inverse underline=curly
+        \\END
+        \\term-rows win/main/sh text=<<END
+        \\0 0:1:2 '$ ' 2:0:6:sel 'ls -la' 10:2:4 日本 15:0:3 'it''s'
+        \\1
+        \\END
+        \\
+    , aw.written());
+
+    // They read back as what they were made from.
+    var arena: std.heap.ArenaAllocator = .init(tt.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const cmds = try ctl.parseWrite(a, aw.written());
+    try tt.expectEqual(@as(usize, 3), cmds.len);
+    try tt.expectEqualStrings("term", cmds[0].verb);
+    try tt.expectEqualStrings("win/main/sh", cmds[0].words[0]);
+    try tt.expectEqual(cur, try term.parseTerm(cmds[0]));
+    try tt.expectEqualStrings("0", cmds[1].attr("first").?);
+    var lines = std.mem.splitScalar(u8, cmds[1].attr("text").?, '\n');
+    for (styles) |s| try tt.expectEqual(s, try term.parseStyleLine(lines.next().?));
+    lines = std.mem.splitScalar(u8, cmds[2].attr("text").?, '\n');
+    const back = try term.parseRowLine(a, lines.next().?);
+    try tt.expectEqual(@as(u32, 0), back.y);
+    try tt.expectEqual(r0.len, back.n_runs);
+    for (r0, back.runs.?[0..back.n_runs]) |want, got| {
+        try tt.expectEqual(want.col, got.col);
+        try tt.expectEqual(want.width, got.width);
+        try tt.expectEqual(want.style, got.style);
+        try tt.expectEqual(want.selected, got.selected);
+        try tt.expectEqualStrings(want.text.slice(), got.text.slice());
+    }
+    const blank = try term.parseRowLine(a, lines.next().?);
+    try tt.expectEqual(@as(u32, 1), blank.y);
+    try tt.expectEqual(@as(usize, 0), blank.n_runs);
+    try tt.expectError(error.BadSyntax, term.parseRowLine(a, "0 1:0:1"));
+    try tt.expectError(error.BadSyntax, term.parseStyleLine("#fff - -"));
+}
+
+test "terminal input lines: term-resize, term-mouse, term-scroll, term-text" {
+    var aw: std.Io.Writer.Allocating = .init(tt.allocator);
+    defer aw.deinit();
+    const w = &aw.writer;
+    const ins = [_]term.Input{
+        .{ .resize = .{ .win = "main", .node = "sh", .cols = 80, .rows = 24, .cell_w_px = 16, .cell_h_px = 34 } },
+        .{ .mouse = .{ .win = "main", .node = "sh", .m = .{ .action = abi.UIT_TERM_PRESS, .button = abi.UIT_TERM_BUTTON_LEFT, .col = 4, .row = 2, .mods = abi.UIT_TERM_MOD_SHIFT | abi.UIT_TERM_MOD_CTRL, .clicks = 2 } } },
+        .{ .mouse = .{ .win = "main", .node = "sh", .m = .{ .action = abi.UIT_TERM_MOVE, .col = 5, .row = 2 } } },
+        .{ .scroll = .{ .win = "main", .node = "sh", .lines = -3 } },
+        .{ .text = .{ .win = "main", .node = "sh", .text = "日本語" } },
+        .{ .text = .{ .win = "main", .node = "sh", .text = "two\nlines" } },
+    };
+    for (ins) |in| try term.writeInput(w, in);
+    try tt.expectEqualStrings(
+        \\term-resize win=main node=sh cols=80 rows=24 cw=16 ch=34
+        \\term-mouse win=main node=sh action=press button=left col=4 row=2 mods=shift,ctrl clicks=2
+        \\term-mouse win=main node=sh action=move button=none col=5 row=2
+        \\term-scroll win=main node=sh lines=-3
+        \\term-text win=main node=sh text=日本語
+        \\term-text win=main node=sh text=<<END
+        \\two
+        \\lines
+        \\END
+        \\
+    , aw.written());
+
+    var arena: std.heap.ArenaAllocator = .init(tt.allocator);
+    defer arena.deinit();
+    const cmds = try ctl.parseWrite(arena.allocator(), aw.written());
+    try tt.expectEqual(ins.len, cmds.len);
+    for (ins, cmds) |want, c| {
+        const got = (try term.parseInput(c)).?;
+        try tt.expectEqual(std.meta.activeTag(want), std.meta.activeTag(got));
+        switch (want) {
+            .resize => |r| try tt.expectEqual(r.cell_h_px, got.resize.cell_h_px),
+            .mouse => |m| try tt.expectEqual(m.m, got.mouse.m),
+            .scroll => |s| try tt.expectEqual(s.lines, got.scroll.lines),
+            .text => |t| try tt.expectEqualStrings(t.text, got.text.text),
+        }
+    }
+    try tt.expectEqual(@as(?term.Input, null), try term.parseInput(try ctl.parse(arena.allocator(), "key win=main stroke=a")));
+    try tt.expectError(error.BadSyntax, term.parseInput(try ctl.parse(arena.allocator(), "term-mouse win=main node=sh action=hover col=1 row=1")));
+}

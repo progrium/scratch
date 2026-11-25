@@ -1,6 +1,11 @@
 /* uitcore.h: the C ABI between the uitree core (Zig, libuitcore) and a
  * renderer (GPUI in Rust, the terminal in Zig).
  *
+ * Version 9: version 8 plus terminal nodes (components.md § terminal):
+ * uit_term_rows, uit_term_styles and uit_term_cursor read a terminal's
+ * cells; uit_term_resize, uit_term_mouse, uit_term_scroll and
+ * uit_term_text send its input; UitChanges.terms says which terminals
+ * changed in a pump. uit_key goes to a focused terminal.
  * Version 8: version 7 plus the shell layer's first files
  * (protocols/shell.md): UIT_CMD_APP_CTL carries `tray`, `delete
  * tray/NAME`, `open URL` and `set app` to the renderer, and
@@ -60,7 +65,7 @@
 extern "C" {
 #endif
 
-#define UIT_ABI_VERSION 8u
+#define UIT_ABI_VERSION 9u
 
 /* ---------------------------------------------------------------------
  * Basic types
@@ -292,6 +297,8 @@ typedef struct {
     /* ABI 7: files a renderer changed through uit_mirror. Not in props;
        a host with one renderer can ignore them. */
     const UitPropChange *mirrors; size_t n_mirrors;
+    /* ABI 9: terminal nodes whose rows, cursor, styles or size changed. */
+    const struct UitTermChange *terms; size_t n_terms;
 } UitChanges;
 
 /* Applies every queued op, publishes the 9P snapshot, acks writers and
@@ -439,7 +446,10 @@ int      uit_frame_drawn(UitCore *, UitStr win);
 /* The user closed the window and the renderer already applied the answer. */
 int      uit_window_closed(UitCore *, UitStr win);
 /* A keystroke the renderer's own widgets didn't take. 1 if it matched a
- * binding (an `action` event follows), 0 if not. focused may be 0. */
+ * binding (an `action` event follows), 0 if not. focused may be 0.
+ * Since 9: when focused is a terminal node and no binding took the
+ * keystroke, the core encodes it for the terminal's program (honoring
+ * its modes) and returns 1; 0 if it has no encoding (`cmd-q`). */
 int      uit_key(UitCore *, UitStr win, UitStr keystroke, UitNode focused);
 /* A menu item was chosen: `action ID - via=menu`. */
 int      uit_menu_action(UitCore *, UitStr id);
@@ -520,6 +530,161 @@ int uit_render_dial(UitCore *, UitStr addr, UitStr name, UitStr role);
  * (flag words and files, style and order included when set): what a
  * document prints for it. Borrowed until the next pump. */
 int uit_node_props(UitCore *, UitNode, const UitStr **out, size_t *n);
+
+/* ---- Terminal nodes (components.md § terminal). Since 9. ----------
+ *
+ * A `terminal` node's screen lives in the core (core/src/term/), so a
+ * renderer never parses program output: it draws the cells these calls
+ * hand it and sends structured input, which the core encodes for the
+ * program. Coordinates are cells from 0 at the top left of the viewport,
+ * which is what is drawn, scrolled back or not.
+ *
+ * Every call takes a terminal node's handle: UIT_EINVAL for any other.
+ * Reads are borrowed until the next uit_pump, as everywhere. Owner thread.
+ *
+ * A pump's UitChanges.terms lists the terminals to redraw and what to
+ * re-read. A renderer that just learned of a terminal (UitChanges.created)
+ * reads it all: styles, every row, the cursor. */
+
+/* UitTermChange.what */
+#define UIT_TERM_ROWS         1u   /* rows changed: those in rows[], or every row with ALL */
+#define UIT_TERM_ALL          2u   /* every row (scroll, resize, clear, a reset) */
+#define UIT_TERM_CURSOR       4u
+#define UIT_TERM_STYLES       8u   /* the style table grew; ids already seen keep their meaning */
+#define UIT_TERM_STYLES_RESET 16u  /* the table was rebuilt and ids renumbered: re-read it; ALL is set */
+#define UIT_TERM_SIZE         32u  /* cols or rows changed */
+
+typedef struct UitTermChange {
+    UitNode node;
+    uint32_t what;           /* UIT_TERM_* bits */
+    const uint32_t *rows;    /* with UIT_TERM_ROWS and not ALL: viewport rows, ascending */
+    size_t n_rows;
+} UitTermChange;
+
+/* UitTermStyle.flags */
+#define UIT_TERM_BOLD      1u
+#define UIT_TERM_FAINT     2u
+#define UIT_TERM_ITALIC    4u
+#define UIT_TERM_INVERSE   8u   /* swap fg and bg when drawing; the core doesn't */
+#define UIT_TERM_STRIKE    16u
+#define UIT_TERM_BLINK     32u
+#define UIT_TERM_INVISIBLE 64u  /* draw the background only */
+#define UIT_TERM_OVERLINE  128u
+
+typedef enum {
+    UIT_TERM_UNDERLINE_NONE = 0,
+    UIT_TERM_UNDERLINE_SINGLE = 1,
+    UIT_TERM_UNDERLINE_DOUBLE = 2,
+    UIT_TERM_UNDERLINE_CURLY = 3,
+    UIT_TERM_UNDERLINE_DOTTED = 4,
+    UIT_TERM_UNDERLINE_DASHED = 5
+} UitTermUnderline;
+
+/* One entry of the style table. Colors are 0xRRGGBBAA with the palette
+ * and true color already resolved; 0 means the default: the theme's
+ * `foreground` for fg, no fill (the node's own background shows) for bg,
+ * the cell's fg for underline_color. Entry 0 is the default style, all
+ * zero. */
+typedef struct {
+    uint32_t fg;
+    uint32_t bg;
+    uint32_t underline_color;
+    uint32_t flags;      /* UIT_TERM_BOLD ... */
+    uint32_t underline;  /* UitTermUnderline */
+} UitTermStyle;
+
+/* Cells in one style, in column order, never overlapping. Cells no run
+ * covers are blank in style 0, and a row's trailing blank default cells
+ * have no run. */
+typedef struct {
+    uint32_t col;
+    uint32_t width;     /* cells covered; a wide character counts 2 and is one character of text */
+    uint32_t style;     /* index into uit_term_styles */
+    uint32_t selected;  /* 1 inside the selection; runs are split at its edges */
+    UitStr text;        /* UTF-8, blanks as spaces */
+} UitTermRun;
+
+typedef struct {
+    uint32_t y;         /* viewport row */
+    const UitTermRun *runs;
+    size_t n_runs;
+} UitTermRow;
+
+/* Viewport rows first .. first+n-1, clipped to the grid: *n_out of them,
+ * in order. */
+int uit_term_rows(UitCore *, UitNode, uint32_t first, uint32_t n, const UitTermRow **out, size_t *n_out);
+
+/* The style table, ids from 0. It only grows, unless a pump says
+ * UIT_TERM_STYLES_RESET. */
+int uit_term_styles(UitCore *, UitNode, const UitTermStyle **out, size_t *n);
+
+typedef enum {
+    UIT_TERM_CURSOR_BLOCK = 0,
+    UIT_TERM_CURSOR_BAR = 1,
+    UIT_TERM_CURSOR_UNDERLINE = 2,
+    UIT_TERM_CURSOR_BLOCK_HOLLOW = 3
+} UitTermCursorShape;
+
+typedef struct {
+    uint32_t x, y;      /* viewport cell; meaningless when not visible */
+    uint32_t shape;     /* UitTermCursorShape */
+    int32_t visible;    /* 0 when the program hid it or the view is scrolled past it */
+    int32_t blink;
+    uint32_t cols, rows; /* the grid's size, as the primary renderer last set it */
+} UitTermCursor;
+
+int uit_term_cursor(UitCore *, UitNode, UitTermCursor *out);
+
+/* After layout: the grid that fits the node's bounds with the renderer's
+ * font, and one cell's size in device pixels (0 if not known), for
+ * programs that ask. The core resizes the screen, tells a pty program
+ * (TIOCSWINSZ) and sends `resize cols=C rows=R` if they changed. Only the
+ * primary renderer's call counts (render.md § Several renderers). */
+int uit_term_resize(UitCore *, UitNode, uint32_t cols, uint32_t rows, uint32_t cell_w_px, uint32_t cell_h_px);
+
+typedef enum {
+    UIT_TERM_PRESS = 0,
+    UIT_TERM_RELEASE = 1,
+    UIT_TERM_MOVE = 2
+} UitTermMouseAction;
+
+typedef enum {
+    UIT_TERM_BUTTON_NONE = 0,
+    UIT_TERM_BUTTON_LEFT = 1,
+    UIT_TERM_BUTTON_MIDDLE = 2,
+    UIT_TERM_BUTTON_RIGHT = 3
+} UitTermButton;
+
+/* UitTermMouse.mods */
+#define UIT_TERM_MOD_SHIFT 1u
+#define UIT_TERM_MOD_ALT   2u
+#define UIT_TERM_MOD_CTRL  4u
+#define UIT_TERM_MOD_SUPER 8u
+
+typedef struct {
+    uint32_t action;   /* UitTermMouseAction */
+    uint32_t button;   /* pressed or released; for MOVE the one held, or NONE */
+    uint32_t col, row; /* viewport cell under the pointer */
+    uint32_t mods;     /* UIT_TERM_MOD_* */
+    uint32_t clicks;   /* 1, 2, 3: single, double, triple press */
+} UitTermMouse;
+
+/* A press, release or move over the node. Under a mouse mode the core
+ * reports it to the program and returns 1. Otherwise it returns 0 and
+ * uses it itself: a drag selects cells (words for a double press, lines
+ * for a triple), and the selection's text is the node's `selection`. */
+int uit_term_mouse(UitCore *, UitNode, const UitTermMouse *m);
+
+/* The wheel, in lines: negative scrolls back into history, positive
+ * toward the live screen. Under a mouse mode it is reported as wheel
+ * presses at the pointer's last cell; in the alternate screen with
+ * alternate scroll on, as arrow keys; otherwise it moves the viewport. */
+int uit_term_scroll(UitCore *, UitNode, int32_t lines);
+
+/* Committed text for the program: IME output, or a character a key
+ * produced that the renderer would rather send as text. Encoded as typed
+ * (never bracketed; `paste` on the node's ctl is for pastes). */
+int uit_term_text(UitCore *, UitNode, UitStr text);
 
 #ifdef __cplusplus
 }

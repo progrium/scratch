@@ -172,6 +172,9 @@ draws.
 | `answer ID VALUE` | the app answered request `ID` | `UIT_CMD_ANSWER` |
 | `redraw WIN` | a batch committed: draw now even if nothing else changed | `UIT_CMD_REDRAW` |
 | `quit` / `exit STATUS` | the app quit / the h9 client exited | `UIT_CMD_QUIT`, `UitChanges.exited` |
+| `term PATH cols=C rows=R cursor=X,Y ...` | a terminal's size and cursor ([§ Terminals](#terminals)) | `UitChanges.terms` + `uit_term_cursor` (ABI 9) |
+| `term-styles PATH first=N text=<<END` | terminal style table entries from id N | `uit_term_styles` |
+| `term-rows PATH text=<<END` | terminal rows that changed, as runs | `uit_term_rows` |
 
 A renderer ignores a record it doesn't know, as readers do everywhere in
 the spec. Asset bodies stay out of the stream: `asset NAME` says read
@@ -216,7 +219,62 @@ the spec. Asset bodies stay out of the stream: `asset NAME` says read
 - **Within a batch:** `window` lines (with any newly shown window's
   content), then deletes (only the top of each removed subtree), then
   remakes and news (parents first), then sets, then mirrors, then order
-  fixes, then the host commands in the order the core issued them.
+  fixes, then terminal records, then the host commands in the order the
+  core issued them.
+
+### Terminals
+
+A `terminal` node's screen is the core's ([components.md](components.md#new-in-this-spec)),
+so the stream carries its cells: what `uit_term_cursor`, `uit_term_styles`
+and `uit_term_rows` hand a renderer in process, encoded once per pump. A
+renderer draws them as they are and never parses program output. The
+spelling is pinned by [`render/tests.zig`](../core/src/render/tests.zig)
+and written and read by [`render/term.zig`](../core/src/render/term.zig).
+
+```text
+term win/main/sh cols=80 rows=24 cursor=3,1 shape=bar visible=on blink=on
+term-styles win/main/sh first=0 text=<<END
+- - -
+#cd3131ff - - bold italic
+- #1e1e1eff #ffcc00ff inverse underline=curly
+END
+term-rows win/main/sh text=<<END
+0 0:1:2 '$ ' 2:0:6:sel 'ls -la' 10:2:4 日本 15:0:3 'it''s'
+1
+END
+```
+
+- **`term`** gives the grid's size and the cursor: its cell, `shape`
+  (`block`, `bar`, `underline`, `block-hollow`), `visible` and `blink`. It
+  follows the node's `new` line and comes again whenever any of them
+  change.
+- **`term-styles`** gives the style table, one style per line from id
+  `first`: foreground, background and underline color as `#rrggbbaa` or
+  `-` for the default (the theme's `foreground`; no fill; the cell's
+  foreground), then the attribute words `bold faint italic inverse strike
+  blink invisible overline` and `underline=single|double|curly|dotted|dashed`.
+  Id 0 is the default style. `first=0` replaces the table, which happens
+  in a snapshot and when the core renumbers it; any other `first` appends.
+  It is sent only when the table changes.
+- **`term-rows`** gives rows as runs. A line is the viewport row, then one
+  `COL:STYLE:WIDTH` word per run (`:sel` added inside the selection)
+  followed by the run's text as one quoted word. Cells no run covers are
+  blank in style 0; a line with only the row number is a blank row. A
+  batch lists every row the pump changed; a snapshot lists the rows that
+  aren't blank.
+- A renderer ignores attribute words and records it doesn't know, as
+  everywhere in the stream.
+
+Terminal input goes on `input` as these lines, which mirror the C ABI's
+calls. Keys need no line of their own: `key` with the terminal focused
+reaches it, as `uit_key` does.
+
+```text
+term-resize win=main node=sh cols=80 rows=24 cw=16 ch=34
+term-mouse win=main node=sh action=press button=left col=4 row=2 mods=shift,ctrl clicks=2
+term-scroll win=main node=sh lines=-3
+term-text win=main node=sh text=日本語
+```
 
 ## Snapshot and resync
 
@@ -258,6 +316,10 @@ headless host and the renderer tree share one parser:
 | `request NAME win=W node=PATH id=ID [default=X]` | `uit_request`; the answer comes back as `answer ID VALUE` |
 | `closed win=W` | `uit_window_closed` (primary only) |
 | `drag ...` | `uit_drag`; the inject grammar plus `start`/`drop`/`end` |
+| `term-resize win=W node=PATH cols=C rows=R cw=PX ch=PX` | `uit_term_resize` (primary only) |
+| `term-mouse win=W node=PATH action=A button=B col=C row=R [mods=M] [clicks=N]` | `uit_term_mouse` |
+| `term-scroll win=W node=PATH lines=N` | `uit_term_scroll` |
+| `term-text win=W node=PATH text=V` | `uit_term_text` |
 
 `node=` is window-relative with `win=`, as in events. `request` takes an
 `id` the renderer picks, because a write can't return the seq the C ABI
@@ -383,6 +445,11 @@ the `uit_*` input calls, and the encoder reads what a renderer reads. ABI
   renderers need them; the stream says them as `mirror` records.
 - **`uit_node_props`**: a node's set props in the order they were set,
   which the encoder needs for `new` lines and an inspector would want too.
+
+ABI 9 adds the terminal calls the `term` records and `term-*` input lines
+carry ([§ Terminals](#terminals)): `uit_term_rows`, `uit_term_styles`,
+`uit_term_cursor`, `uit_term_resize`, `uit_term_mouse`, `uit_term_scroll`,
+`uit_term_text` and `UitChanges.terms`.
 
 Nothing in `$ui` changes.
 
