@@ -102,6 +102,25 @@ one line follows the same rule: `type`, `order`, `tag`, `style`, `on`,
 and the window's `title`, `state`, `focus`, `bounds` and `inner`. Data
 files are lines and follow it too.
 
+### Stream files
+
+A few files are byte streams rather than values: a `file` line that says
+`stream` in a type's descriptor ([components.md](components.md#the-descriptor)),
+such as a `terminal`'s `out` and `keys`.
+
+- **Writes append**, and nothing is stored: a write is the next bytes of
+  the stream, never the file's whole value, and is not split into lines or
+  trimmed. A write returns once the host has taken the bytes, and blocks
+  while the host's buffer for the stream is full.
+- **Reads block**, on a stream the host writes (`readonly`, a
+  terminal's `keys`), until bytes arrive, as `events` does, and return
+  what has arrived, up to the read's size. Each open is its own reader and
+  sees what arrives after it opened. It ends with end of file when its
+  node goes away or the app quits. A stream the client writes (`out`)
+  reads as empty.
+- Stream files are left out of documents, and `set` and `new` can't
+  write them.
+
 ## Coordinates
 
 Every position and size is in **logical points** (AppKit points, CSS

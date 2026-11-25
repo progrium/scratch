@@ -158,8 +158,13 @@ pub fn parse(arena: std.mem.Allocator, text: []const u8, diag: ?*Diag) ParseErro
             const name = positional(args, 0) orelse return fail(diag, n, "file: no name");
             if (!isName(name)) return fail(diag, n, "file: bad name");
             const fmt = attr(args, "format") orelse return fail(diag, n, "file: no format=");
+            var f: types.DataFile = .{ .name = name, .format = fmt };
+            for (args[1..]) |a| if (a.attr() == null) {
+                if (std.mem.eql(u8, a.text, "stream")) f.stream = true else if (std.mem.eql(u8, a.text, "readonly")) f.readonly = true;
+            };
+            if (f.stream and !std.mem.eql(u8, fmt, "bytes")) return fail(diag, n, "file: stream needs format=bytes");
             for (files.items) |q| if (std.mem.eql(u8, q.name, name)) return fail(diag, n, "file: duplicate");
-            try files.append(arena, .{ .name = name, .format = fmt });
+            try files.append(arena, f);
         }
         // Any other keyword is from a newer spec: ignored.
     }
@@ -171,7 +176,7 @@ pub fn parse(arena: std.mem.Allocator, text: []const u8, diag: ?*Diag) ParseErro
         const have = for (props.items) |q| {
             if (std.mem.eql(u8, q.name, f.name)) break true;
         } else false;
-        if (!have) try props.append(arena, .{ .name = f.name, .form = if (std.mem.eql(u8, f.format, "bytes")) .bytes else .data, .file = true });
+        if (!have) try props.append(arena, .{ .name = f.name, .form = if (std.mem.eql(u8, f.format, "bytes")) .bytes else .data, .file = true, .readonly = f.readonly });
     }
     t.props = try props.toOwnedSlice(arena);
     t.words = try words.toOwnedSlice(arena);
@@ -302,6 +307,26 @@ test "enum forms, file lines, verb synopses" {
     try std.testing.expectEqual(types.Class.author, t.verb("eval").?.class.?);
     try std.testing.expectEqualStrings("item", t.event("drop").?.attrs[1]);
     try std.testing.expect(t.child == .none);
+}
+
+test "stream files" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const t = try parse(arena.allocator(),
+        \\type    terminal  tier=component  profile=desktop  since=1.0
+        \\file    out   format=bytes  stream
+        \\file    keys  format=bytes  stream  readonly
+        \\file    log   format=bytes
+    , null);
+    try std.testing.expect(t.file("out").?.stream and !t.file("out").?.readonly);
+    try std.testing.expect(t.file("keys").?.stream and t.file("keys").?.readonly);
+    try std.testing.expect(!t.file("log").?.stream);
+    // Each is a bytes file under the node; keys only the host writes.
+    try std.testing.expect(t.prop("out").?.form == .bytes and t.prop("out").?.file);
+    try std.testing.expect(t.prop("keys").?.readonly and !t.prop("out").?.readonly);
+    var d: Diag = .{};
+    try std.testing.expectError(error.BadSyntax, parse(arena.allocator(), "type x tier=element\nfile f format=items stream\n", &d));
+    try std.testing.expectEqualStrings("line 2: file: stream needs format=bytes", d.detail());
 }
 
 test "bad descriptors" {

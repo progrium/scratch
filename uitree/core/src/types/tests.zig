@@ -294,3 +294,22 @@ test "Catalog.parse takes several descriptors and refuses duplicates" {
     try std.testing.expectError(error.BadSyntax, Catalog.parse(std.testing.allocator, "type a tier=element\ntype a tier=element\n", &d));
     try std.testing.expectError(error.BadSyntax, Catalog.parse(std.testing.allocator, "child any\n", &d));
 }
+
+test "the terminal descriptor (the terminal contracts, C2)" {
+    var c = try builtin();
+    defer c.deinit();
+    const t = c.lookup("terminal").?;
+    try std.testing.expectEqualStrings("desktop", t.profile.?);
+    try std.testing.expect(t.child == .none);
+    // Stream mode's two files: out is written, keys only the host writes.
+    try std.testing.expect(t.file("out").?.stream and !t.prop("out").?.readonly);
+    try std.testing.expect(t.file("keys").?.stream and t.prop("keys").?.readonly);
+    for ([_][]const u8{ "screen", "selection" }) |n| try std.testing.expect(t.prop(n).?.file and t.prop(n).?.readonly);
+    for ([_][]const u8{ "tty", "cols", "rows", "title", "cwd" }) |n| try std.testing.expect(t.prop(n).?.readonly);
+    try std.testing.expectEqualStrings("off", t.prop("pty").?.default.?);
+    try std.testing.expectEqualStrings("10000", t.prop("scrollback").?.default.?);
+    try std.testing.expectEqual(types.Class.keys, t.verb("paste").?.class.?);
+    try std.testing.expectEqual(types.Class.edit, t.verb("write").?.class.?);
+    try std.testing.expectEqual(types.EventKind.action, t.event("hangup").?.kind);
+    try std.testing.expectEqualStrings("rows", t.event("resize").?.attrs[1]);
+}

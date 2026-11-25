@@ -10,6 +10,7 @@ pub const ninep = @import("ninep/root.zig");
 pub const machine = @import("machine/root.zig");
 pub const abi = @import("abi.zig");
 pub const render = @import("render/root.zig");
+pub const term = @import("term/engine.zig");
 pub const web = @import("web.zig");
 
 comptime {

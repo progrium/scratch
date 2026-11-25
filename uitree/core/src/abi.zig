@@ -28,7 +28,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 /// Must match UIT_ABI_VERSION in include/uitcore.h.
-pub const abi_version: u32 = 8;
+pub const abi_version: u32 = 9;
 
 // ---------------------------------------------------------------------
 // The header's types. Keep in step with include/uitcore.h; the test at
@@ -150,6 +150,91 @@ pub const UitChanges = extern struct {
     /// `props`; a host with one renderer can ignore them.
     mirrors: ?[*]const UitPropChange = null,
     n_mirrors: usize = 0,
+    /// ABI 9: terminal nodes whose rows, cursor, styles or size changed.
+    /// Empty until the terminal node is wired into the tree (T3).
+    terms: ?[*]const UitTermChange = null,
+    n_terms: usize = 0,
+};
+
+// ---- Terminal nodes (ABI 9). The contracts (T1) freeze these; the
+// calls answer UIT_ENOTSUP until the tree glue (T3) fills them in.
+
+pub const UIT_TERM_ROWS: u32 = 1;
+pub const UIT_TERM_ALL: u32 = 2;
+pub const UIT_TERM_CURSOR: u32 = 4;
+pub const UIT_TERM_STYLES: u32 = 8;
+pub const UIT_TERM_STYLES_RESET: u32 = 16;
+pub const UIT_TERM_SIZE: u32 = 32;
+
+pub const UitTermChange = extern struct {
+    node: UitNode = 0,
+    what: u32 = 0,
+    rows: ?[*]const u32 = null,
+    n_rows: usize = 0,
+};
+
+/// UitTermStyle.flags: the same bits, in the same order, as
+/// term.engine.Flags, so a style converts with a bitcast.
+pub const UIT_TERM_BOLD: u32 = 1;
+pub const UIT_TERM_FAINT: u32 = 2;
+pub const UIT_TERM_ITALIC: u32 = 4;
+pub const UIT_TERM_INVERSE: u32 = 8;
+pub const UIT_TERM_STRIKE: u32 = 16;
+pub const UIT_TERM_BLINK: u32 = 32;
+pub const UIT_TERM_INVISIBLE: u32 = 64;
+pub const UIT_TERM_OVERLINE: u32 = 128;
+
+pub const UitTermStyle = extern struct {
+    fg: u32 = 0,
+    bg: u32 = 0,
+    underline_color: u32 = 0,
+    flags: u32 = 0,
+    underline: u32 = 0,
+};
+
+pub const UitTermRun = extern struct {
+    col: u32 = 0,
+    width: u32 = 0,
+    style: u32 = 0,
+    selected: u32 = 0,
+    text: UitStr = .{},
+};
+
+pub const UitTermRow = extern struct {
+    y: u32 = 0,
+    runs: ?[*]const UitTermRun = null,
+    n_runs: usize = 0,
+};
+
+pub const UitTermCursor = extern struct {
+    x: u32 = 0,
+    y: u32 = 0,
+    shape: u32 = 0,
+    visible: i32 = 0,
+    blink: i32 = 0,
+    cols: u32 = 0,
+    rows: u32 = 0,
+};
+
+pub const UIT_TERM_PRESS: u32 = 0;
+pub const UIT_TERM_RELEASE: u32 = 1;
+pub const UIT_TERM_MOVE: u32 = 2;
+pub const UIT_TERM_BUTTON_NONE: u32 = 0;
+pub const UIT_TERM_BUTTON_LEFT: u32 = 1;
+pub const UIT_TERM_BUTTON_MIDDLE: u32 = 2;
+pub const UIT_TERM_BUTTON_RIGHT: u32 = 3;
+pub const UIT_TERM_MOD_SHIFT: u32 = 1;
+pub const UIT_TERM_MOD_ALT: u32 = 2;
+pub const UIT_TERM_MOD_CTRL: u32 = 4;
+pub const UIT_TERM_MOD_SUPER: u32 = 8;
+
+pub const UitTermMouse = extern struct {
+    action: u32 = 0,
+    button: u32 = 0,
+    col: u32 = 0,
+    row: u32 = 0,
+    mods: u32 = 0,
+    clicks: u32 = 1,
 };
 
 pub const UIT_ARG_NONE: u32 = 0;
@@ -1269,6 +1354,49 @@ pub export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
 }
 
 // ---------------------------------------------------------------------
+// Terminal nodes (ABI 9). Stubs until T3 wires the engine into the tree.
+
+pub export fn uit_term_rows(c: *Core, h: UitNode, first: u32, n: u32, out: ?*?[*]const UitTermRow, n_out: ?*usize) c_int {
+    _ = .{ c, h, first, n };
+    if (out) |o| o.* = null;
+    if (n_out) |o| o.* = 0;
+    return UIT_ENOTSUP;
+}
+
+pub export fn uit_term_styles(c: *Core, h: UitNode, out: ?*?[*]const UitTermStyle, n: ?*usize) c_int {
+    _ = .{ c, h };
+    if (out) |o| o.* = null;
+    if (n) |o| o.* = 0;
+    return UIT_ENOTSUP;
+}
+
+pub export fn uit_term_cursor(c: *Core, h: UitNode, out: ?*UitTermCursor) c_int {
+    _ = .{ c, h };
+    if (out) |o| o.* = .{};
+    return UIT_ENOTSUP;
+}
+
+pub export fn uit_term_resize(c: *Core, h: UitNode, cols: u32, rows: u32, cell_w_px: u32, cell_h_px: u32) c_int {
+    _ = .{ c, h, cols, rows, cell_w_px, cell_h_px };
+    return UIT_ENOTSUP;
+}
+
+pub export fn uit_term_mouse(c: *Core, h: UitNode, m: ?*const UitTermMouse) c_int {
+    _ = .{ c, h, m };
+    return UIT_ENOTSUP;
+}
+
+pub export fn uit_term_scroll(c: *Core, h: UitNode, lines: i32) c_int {
+    _ = .{ c, h, lines };
+    return UIT_ENOTSUP;
+}
+
+pub export fn uit_term_text(c: *Core, h: UitNode, text: UitStr) c_int {
+    _ = .{ c, h, text };
+    return UIT_ENOTSUP;
+}
+
+// ---------------------------------------------------------------------
 
 test "header and abi.zig agree on the version and the constants" {
     const h = @embedFile("uitcore.h");
@@ -1279,13 +1407,61 @@ test "header and abi.zig agree on the version and the constants" {
         .{ "UIT_CMD_THEME_LOAD = 14", UIT_CMD_THEME_LOAD }, .{ "UIT_CMD_ASSETS = 15", UIT_CMD_ASSETS }, .{ "UIT_ARG_TEXT = 6", UIT_ARG_TEXT },
         .{ "UIT_CMD_APP_CTL = 16", UIT_CMD_APP_CTL },
         .{ "UIT_STATE_GROUP_HOVER = 6", UIT_STATE_GROUP_HOVER },
+        .{ "UIT_TERM_UNDERLINE_DASHED = 5", 5 },       .{ "UIT_TERM_CURSOR_BLOCK_HOLLOW = 3", 3 },
+        .{ "UIT_TERM_MOVE = 2", UIT_TERM_MOVE },       .{ "UIT_TERM_BUTTON_RIGHT = 3", UIT_TERM_BUTTON_RIGHT },
     };
+    // The #define bit constants.
+    const defines = .{
+        .{ "UIT_TERM_ROWS", UIT_TERM_ROWS },           .{ "UIT_TERM_ALL", UIT_TERM_ALL },
+        .{ "UIT_TERM_CURSOR", UIT_TERM_CURSOR },       .{ "UIT_TERM_STYLES", UIT_TERM_STYLES },
+        .{ "UIT_TERM_STYLES_RESET", UIT_TERM_STYLES_RESET }, .{ "UIT_TERM_SIZE", UIT_TERM_SIZE },
+        .{ "UIT_TERM_BOLD", UIT_TERM_BOLD },           .{ "UIT_TERM_FAINT", UIT_TERM_FAINT },
+        .{ "UIT_TERM_ITALIC", UIT_TERM_ITALIC },       .{ "UIT_TERM_INVERSE", UIT_TERM_INVERSE },
+        .{ "UIT_TERM_STRIKE", UIT_TERM_STRIKE },       .{ "UIT_TERM_BLINK", UIT_TERM_BLINK },
+        .{ "UIT_TERM_INVISIBLE", UIT_TERM_INVISIBLE }, .{ "UIT_TERM_OVERLINE", UIT_TERM_OVERLINE },
+        .{ "UIT_TERM_MOD_SHIFT", UIT_TERM_MOD_SHIFT }, .{ "UIT_TERM_MOD_ALT", UIT_TERM_MOD_ALT },
+        .{ "UIT_TERM_MOD_CTRL", UIT_TERM_MOD_CTRL },   .{ "UIT_TERM_MOD_SUPER", UIT_TERM_MOD_SUPER },
+    };
+    inline for (defines) |d| {
+        const want = std.fmt.comptimePrint("#define {s} ", .{d[0]});
+        const at = std.mem.indexOf(u8, h, want) orelse return error.TestUnexpectedResult;
+        var rest = std.mem.trimStart(u8, h[at + want.len ..], " ");
+        rest = rest[0 .. std.mem.indexOfScalar(u8, rest, 'u') orelse return error.TestUnexpectedResult];
+        try std.testing.expectEqual(@as(u32, d[1]), try std.fmt.parseInt(u32, rest, 10));
+    }
+    // UitTermStyle.flags is term.engine.Flags as bits.
+    const Flags = @import("term/engine.zig").Flags;
+    try std.testing.expectEqual(UIT_TERM_BOLD, @as(u16, @bitCast(Flags{ .bold = true })));
+    try std.testing.expectEqual(UIT_TERM_OVERLINE, @as(u16, @bitCast(Flags{ .overline = true })));
+    try std.testing.expectEqual(UIT_TERM_INVERSE, @as(u16, @bitCast(Flags{ .inverse = true })));
     inline for (consts) |k| {
         try std.testing.expect(std.mem.indexOf(u8, h, k[0]) != null);
         try std.testing.expectEqual(std.fmt.parseInt(i64, k[0][std.mem.lastIndexOfScalar(u8, k[0], ' ').? + 1 ..], 10) catch unreachable, @as(i64, k[1]));
     }
 }
 
+
+test "the terminal calls answer ENOTSUP until the tree has terminals (ABI 9)" {
+    const core = try testCore();
+    defer uit_destroy(core);
+    var rows: ?[*]const UitTermRow = null;
+    var n: usize = 7;
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_rows(core, 1, 0, 24, &rows, &n));
+    try std.testing.expectEqual(@as(usize, 0), n);
+    var styles: ?[*]const UitTermStyle = null;
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_styles(core, 1, &styles, &n));
+    var cur: UitTermCursor = .{ .x = 9 };
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_cursor(core, 1, &cur));
+    try std.testing.expectEqual(@as(u32, 0), cur.x);
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_resize(core, 1, 80, 24, 8, 16));
+    const m: UitTermMouse = .{ .action = UIT_TERM_PRESS, .button = UIT_TERM_BUTTON_LEFT };
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_mouse(core, 1, &m));
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_scroll(core, 1, -3));
+    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_text(core, 1, UitStr.lit("x")));
+    var ch: UitChanges = .{};
+    try std.testing.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try std.testing.expectEqual(@as(usize, 0), ch.n_terms);
+}
 
 fn testCore() !*Core {
     var c: ?*Core = null;
@@ -1461,13 +1637,17 @@ test "extern layouts match the header's (64-bit)" {
     // checks the same numbers on the Rust side.
     const want = .{
         .{ UitStr, 16 },        .{ UitAttr, 32 },      .{ UitConfig, 80 },      .{ UitMachineArgs, 120 },
-        .{ UitPropChange, 24 }, .{ UitCtl, 48 },       .{ UitHostCmd, 128 },    .{ UitChanges, 120 },
+        .{ UitPropChange, 24 }, .{ UitCtl, 48 },       .{ UitHostCmd, 128 },    .{ UitChanges, 136 },
         .{ UitStyleArg, 32 },   .{ UitStyleWord, 56 }, .{ UitLine, 24 },        .{ UitKeyBinding, 56 },
         .{ UitMenuItem, 112 },  .{ UitDragMsg, 48 },    .{ UitConn, 40 },
+        .{ UitTermChange, 24 }, .{ UitTermStyle, 20 }, .{ UitTermRun, 32 },     .{ UitTermRow, 24 },
+        .{ UitTermCursor, 28 }, .{ UitTermMouse, 24 },
     };
     inline for (want) |w| try std.testing.expectEqual(@as(usize, w[1]), @sizeOf(w[0]));
     try std.testing.expectEqual(@as(usize, 64), @offsetOf(UitConfig, "wake"));
     try std.testing.expectEqual(@as(usize, 96), @offsetOf(UitHostCmd, "seq"));
+    try std.testing.expectEqual(@as(usize, 120), @offsetOf(UitChanges, "terms"));
+    try std.testing.expectEqual(@as(usize, 16), @offsetOf(UitTermRun, "text"));
 }
 
 test "a 9P client writes and reads through the ABI's pump" {
