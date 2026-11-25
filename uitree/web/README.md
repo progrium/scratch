@@ -177,7 +177,7 @@ node test/run.mjs                 # on zig-out/ as built: --only APP,... --rende
 `probe.js` is a 9P client of the page's core, a connection of its own
 beside the app's: a case finds a node by its `bounds` file, acts with
 the real mouse and keyboard, and checks the tree (`test/cases.mjs`).
-24 cases pass: clicks, key bindings, typing, Enter, exit status, field
+25 cases pass: clicks, key bindings, typing, Enter, exit status, field
 errors, a secret input, dialogs, sidebar pages, switch, number-input,
 the select popup, radio-group, slider, theme mode and name, table
 filter, sheet, context menu, alert dialog, checkbox, textarea, the
