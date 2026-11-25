@@ -33,8 +33,8 @@
 set -eu
 
 VT_VERSION=1.0.2
-VT_SHA256=-
-VT_DEPS_SHA256=-
+VT_SHA256=1dcafa8a3357f3a6bbf4f2696e61de611400c5469518716793dfffd35f008b3e
+VT_DEPS_SHA256=c56156dbea82fdf71f13bf0d704cdf4393b6a04208d7f9691e0d7f60c7f9ca4d
 ZIG17_VERSION=0.17.1
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -106,6 +106,9 @@ sources() {
 	done
 }
 
+# Apple's name for an architecture, for ld -arch.
+macarch() { case $1 in aarch64 | arm64) echo arm64 ;; *) echo "$1" ;; esac; }
+
 case "${1:-}" in
 build)
 	[ $# -eq 4 ] || die "usage: tools/ghostty-vt build TARGET OPTIMIZE OUT"
@@ -173,8 +176,8 @@ build)
 			# object's layout doesn't change), which core/build.zig
 			# defines with 0.17's signature.
 			perl -0777 -pi -e 's/__extendxftf2/__vt_extxftf2/g' "$o" ;;
-		*-macos* | *-ios*) ld -r -all_load "$a" -o "$o" ;;
-		native*) if [ "$(uname -s)" = Darwin ]; then ld -r -all_load "$a" -o "$o"
+		*-macos* | *-ios*) ld -r -arch "$(macarch "${target%%-*}")" -all_load "$a" -o "$o" ;;
+		native*) if [ "$(uname -s)" = Darwin ]; then ld -r -arch "$(macarch "$(uname -m)")" -all_load "$a" -o "$o"
 			else "$z" ld.lld -r --whole-archive "$a" -o "$o"; fi ;;
 		*) "$z" ld.lld -r --whole-archive "$a" -o "$o" ;;
 		esac || die "can't make lib/ghostty-vt.o"
