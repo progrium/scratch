@@ -5,8 +5,8 @@
 //!
 //! Environment: `ZIG` (default `zig`, 0.16), `UITCORE_OPTIMIZE` (default
 //! ReleaseSafe), `UITCORE_TERMINAL` (the core's terminal engine, `ghostty`
-//! or `plain`: core/build.zig's -Dterminal, whose default is plain until the
-//! ghostty engine lands), `UITCORE_LIB_DIR` (skip zig build and link a prebuilt
+//! or `plain`: core/build.zig's -Dterminal, whose default is ghostty but on
+//! Windows), `UITCORE_LIB_DIR` (skip zig build and link a prebuilt
 //! libuitcore.a and libkern.a from there).
 //!
 //! With the ghostty engine, libghostty-vt's objects are inside

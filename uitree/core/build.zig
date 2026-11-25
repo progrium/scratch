@@ -5,10 +5,10 @@
 //!                        and run it natively; on wasm32-wasi, install
 //!                        zig-out/web/vt-smoke.wasm for tests/vt-smoke.mjs
 //!
-//! -Dterminal=ghostty     the terminal engine is libghostty-vt (not yet the
-//!                        default: until T2), built by ../tools/ghostty-vt with
+//! -Dterminal=ghostty     the terminal engine is libghostty-vt (the default
+//!                        but on Windows), built by ../tools/ghostty-vt with
 //!                        its own Zig 0.17, or taken from -Dghostty-vt=PREFIX
-//! -Dterminal=plain       the plain-text stand-in (the default): no Zig 0.17
+//! -Dterminal=plain       the plain-text stand-in: no Zig 0.17, no download
 //!
 //! Needs Zig 0.16, the same pin as hyper9. No Rust.
 
@@ -59,8 +59,8 @@ pub fn build(b: *std.Build) void {
     // libghostty-vt goes into libuitcore.a as one more object, so a
     // renderer links nothing more. It needs no C++ library: its C++ (simdutf, Highway)
     // calls only libc.
-    const terminal = b.option(Terminal, "terminal", "Terminal engine: ghostty (libghostty-vt) or plain (default plain until the ghostty engine lands, T2)") orelse
-        Terminal.plain;
+    const terminal = b.option(Terminal, "terminal", "Terminal engine: ghostty (libghostty-vt) or plain (default ghostty, plain on Windows)") orelse
+        if (target.result.os.tag == .windows) Terminal.plain else Terminal.ghostty;
     opts.addOption(Terminal, "terminal", terminal);
     core.addOptions("build_options", opts);
     const vt = if (terminal == .ghostty) ghosttyVt(b, target, optimize) else null;

@@ -27,8 +27,8 @@ third_party/      hyper9 (submodule)
 git submodule update --init uitree/third_party/hyper9
 tools/zig-pin                       # the Zig version (core/build.zig.zon), 0.16.0
 cd uitree/core
-zig build test                      # no Rust needed; -Dterminal=ghostty fetches
-                                    # and links libghostty-vt (core/README.md)
+zig build test                      # no Rust needed; the first build fetches
+                                    # libghostty-vt (core/README.md), or -Dterminal=plain
 zig build -Dh9=true                 # libuitcore.a, uitree-headless, apps in h9
 cd ../tests/conformance && ./run    # needs $H9ROOT, a 9front root
 cd ../../renderer/gpui

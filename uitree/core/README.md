@@ -12,11 +12,9 @@ terminal emulation as a C library. `-Dterminal` picks the engine:
 
 | | What the core links | Needs |
 | --- | --- | --- |
-| `-Dterminal=ghostty` | libghostty-vt, inside `libuitcore.a` | a first build that downloads Ghostty's release and Zig 0.17, or `-Dghostty-vt=DIR` |
-| `-Dterminal=plain` (the default for now) | a plain-text stand-in in `src/term/` | nothing more |
+| `-Dterminal=ghostty` (the default, but on Windows) | libghostty-vt, inside `libuitcore.a` | a first build that downloads Ghostty's release and Zig 0.17, or `-Dghostty-vt=DIR` |
+| `-Dterminal=plain` | a plain-text stand-in in `src/term/` | nothing more |
 
-Plain stays the default until the ghostty backend (`src/term/ghostty.zig`,
-workstream T2) is written; then ghostty becomes the default but on Windows.
 `build_options.terminal` tells the core's code which it has. With
 `ghostty`, the module `ghostty_vt` is `<ghostty/vt.h>`.
 
@@ -59,7 +57,7 @@ core's Zig 0.16 compiler_rt takes it by value, which wasm-ld won't link.
 The script renames the object's call to `__vt_extxftf2`, and
 `core/build.zig` defines that with 0.17's signature (a few bit moves).
 
-Windows stays on `plain`: Ghostty builds libghostty-vt for the gnu ABI,
+Windows defaults to `plain`: Ghostty builds libghostty-vt for the gnu ABI,
 and the GPUI renderer links the core into an MSVC binary.
 
 Without network access to those hosts, point `GHOSTTY_VT_SRC` at an
@@ -89,7 +87,7 @@ Measured on x86_64 Linux (a 2.1 GHz Xeon VM) on Nov 25, 2026, with
 libghostty-vt built without Kitty graphics, since wuffs couldn't be
 fetched there. CI's builds include it and are slightly larger.
 
-| | `-Dterminal=plain` | `-Dterminal=ghostty` | |
+| | `-Dterminal=plain` | `-Dterminal=ghostty` (the default, but on Windows) | |
 | --- | --- | --- | --- |
 | `ghostty-vt.o`, x86_64 ReleaseFast | | 4.8 MB | |
 | `libuitcore.a`, x86_64 ReleaseFast | 15.5 MB | 20.4 MB | +4.8 MB |
