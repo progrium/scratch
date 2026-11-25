@@ -6,10 +6,12 @@ name: uitree-core
 # uitree/core/build.zig.zon's minimum_zig_version (uitree/tools/zig-pin);
 # the pin job fails if renderer/tui or the hyper9 submodule disagree.
 #
-# The terminal engine (uitree/core/README.md): the core builds with
-# libghostty-vt (-Dterminal=ghostty, which uitree/tools/ghostty-vt builds
-# with its own Zig 0.17, cached in uitree/.local) and with the plain
-# stand-in (-Dterminal=plain). The vt job runs libghostty-vt's smoke test
+# The terminal engine (uitree/core/README.md): the core builds with the
+# plain stand-in (-Dterminal=plain, the default until the ghostty engine
+# lands, T2) and with libghostty-vt (-Dterminal=ghostty, which
+# uitree/tools/ghostty-vt builds with its own Zig 0.17, cached in
+# uitree/.local). Tests run on plain; ghostty is checked by links and by
+# its smoke test until T2 writes src/term/ghostty.zig. The vt job runs libghostty-vt's smoke test
 # through libuitcore.a on x86_64 and aarch64 Linux, macOS, and wasm32 in
 # Node and Chromium.
 
@@ -51,12 +53,12 @@ jobs:
         with:
           path: uitree/.local
           key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
-      - name: zig build test
-        working-directory: uitree/core
-        run: zig build test --summary all
-      - name: zig build test -Dterminal=plain
+      - name: zig build test (plain)
         working-directory: uitree/core
         run: zig build test -Dterminal=plain --summary all
+      - name: zig build -Dterminal=ghostty (libuitcore.a links libghostty-vt)
+        working-directory: uitree/core
+        run: zig build -Dterminal=ghostty
       - name: zig build -Dh9=true
         working-directory: uitree/core
         run: zig build -Dh9=true
@@ -107,15 +109,13 @@ jobs:
           path: uitree/.local
           key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
       - working-directory: uitree/renderer/tui
-        run: zig build test --summary all
-      - working-directory: uitree/renderer/tui
         run: zig build test -Dterminal=plain --summary all
-      - name: uitree-tui links (ghostty, plain, wasm32-wasi)
+      - name: uitree-tui links (ghostty, plain, wasm32-wasi ghostty)
         working-directory: uitree/renderer/tui
         run: |
-          zig build -Dh9=false
+          zig build -Dh9=false -Dterminal=ghostty
           zig build -Dh9=false -Dterminal=plain
-          zig build -Dh9=false -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall
+          zig build -Dh9=false -Dterminal=ghostty -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall
 
   vt:
     name: libghostty-vt (${{ matrix.name }})
@@ -146,16 +146,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qemu-user
       # On wasm32 this only builds zig-out/web/vt-smoke.wasm.
       - name: zig build smoke
-        run: zig build smoke ${{ matrix.args }} --summary all
+        run: zig build smoke -Dterminal=ghostty ${{ matrix.args }} --summary all
       - name: libuitcore.a for the target, both engines
         run: |
-          zig build ${{ matrix.args }}
+          zig build ${{ matrix.args }} -Dterminal=ghostty
           ls -l zig-out/lib zig-out/web 2>/dev/null || true
           zig build ${{ matrix.args }} -Dterminal=plain --prefix "$RUNNER_TEMP/plain"
           ls -l "$RUNNER_TEMP/plain/lib" "$RUNNER_TEMP/plain/web" 2>/dev/null || true
       - if: matrix.name == 'aarch64-linux'
         name: aarch64-linux-gnu too (links only)
-        run: zig build -Dtarget=aarch64-linux-gnu
+        run: zig build -Dtarget=aarch64-linux-gnu -Dterminal=ghostty
       - if: matrix.name == 'wasm32'
         uses: actions/setup-node@v4
         with: { node-version: 24 }

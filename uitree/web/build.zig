@@ -7,7 +7,7 @@
 //!   root.h9a              root.list's files from a 386 root tree
 //!                         (-Droot386, made from the 9front ISO: README.md)
 //!   the core              core's `zig build -Dtarget=wasm32-wasi`, with
-//!                         libghostty-vt unless -Dterminal=plain
+//!                         libghostty-vt with -Dterminal=ghostty
 //!   terminal renderer     renderer/tui's, the same way
 //!   GPUI renderer         crates/web on the pinned nightly (rust-nightly),
 //!                         then wasm-bindgen, plus GPUI Kit's icons
@@ -55,8 +55,8 @@ pub fn build(b: *std.Build) void {
     const gpui = b.option(bool, "gpui", "Build the GPUI renderer (Rust; default true)") orelse true;
     const root386 = b.option([]const u8, "root386", "386 root tree for root.h9a (default third_party/hyper9/.local/9front/root386)") orelse
         b.pathFromRoot("../third_party/hyper9/.local/9front/root386");
-    // The core's terminal engine (core/README.md): ghostty, its default,
-    // or plain, which needs no Zig 0.17. Passed to all three core builds.
+    // The core's terminal engine (core/README.md): ghostty, or plain
+    // (its default for now), which needs no Zig 0.17. Passed to all three core builds.
     const terminal = b.option([]const u8, "terminal", "The core's terminal engine: ghostty or plain (core/build.zig's default)");
     const opt = b.fmt("-Doptimize={s}", .{@tagName(optimize)});
     const zig = b.graph.zig_exe;

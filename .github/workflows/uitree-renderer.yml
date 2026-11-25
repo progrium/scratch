@@ -43,6 +43,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      UITCORE_TERMINAL: ${{ matrix.os == 'windows-latest' && 'plain' || 'ghostty' }}
     steps:
       - uses: actions/checkout@v4
         with: { submodules: true }
@@ -52,7 +54,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: uitree/renderer/gpui }
       # libghostty-vt, inside libuitcore.a, and the Zig 0.17 that builds it
-      # (tools/ghostty-vt). Windows builds the core with -Dterminal=plain.
+      # (tools/ghostty-vt): UITCORE_TERMINAL=ghostty below. Windows builds
+      # the core with plain (Ghostty builds for the gnu ABI, GPUI is MSVC).
       - if: runner.os != 'Windows'
         uses: actions/cache@v4
         with:

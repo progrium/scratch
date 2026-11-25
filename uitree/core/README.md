@@ -12,9 +12,11 @@ terminal emulation as a C library. `-Dterminal` picks the engine:
 
 | | What the core links | Needs |
 | --- | --- | --- |
-| `-Dterminal=ghostty` (the default, but on Windows) | libghostty-vt, inside `libuitcore.a` | a first build that downloads Ghostty's release and Zig 0.17, or `-Dghostty-vt=DIR` |
-| `-Dterminal=plain` | a plain-text stand-in in `src/term/` | nothing more |
+| `-Dterminal=ghostty` | libghostty-vt, inside `libuitcore.a` | a first build that downloads Ghostty's release and Zig 0.17, or `-Dghostty-vt=DIR` |
+| `-Dterminal=plain` (the default for now) | a plain-text stand-in in `src/term/` | nothing more |
 
+Plain stays the default until the ghostty backend (`src/term/ghostty.zig`,
+workstream T2) is written; then ghostty becomes the default but on Windows.
 `build_options.terminal` tells the core's code which it has. With
 `ghostty`, the module `ghostty_vt` is `<ghostty/vt.h>`.
 
@@ -57,7 +59,7 @@ core's Zig 0.16 compiler_rt takes it by value, which wasm-ld won't link.
 The script renames the object's call to `__vt_extxftf2`, and
 `core/build.zig` defines that with 0.17's signature (a few bit moves).
 
-Windows defaults to `plain`: Ghostty builds libghostty-vt for the gnu ABI,
+Windows stays on `plain`: Ghostty builds libghostty-vt for the gnu ABI,
 and the GPUI renderer links the core into an MSVC binary.
 
 Without network access to those hosts, point `GHOSTTY_VT_SRC` at an
@@ -76,8 +78,8 @@ like `uitcore.wasm` in which the test runs on one of the core's coroutines
 `tests/vt-smoke.mjs` runs it in Node 24 and in headless Chromium:
 
 ```sh
-zig build smoke                                            # native
-zig build smoke -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall
+zig build smoke -Dterminal=ghostty                         # native
+zig build smoke -Dterminal=ghostty -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall
 node tests/vt-smoke.mjs                                    # Node and Chromium
 ```
 
