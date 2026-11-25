@@ -153,6 +153,12 @@ pub const ChildRule = union(enum) {
 pub const DataFile = struct {
     name: []const u8,
     format: []const u8,
+    /// `stream` (format=bytes only): writes append and nothing is stored;
+    /// reads block, and each open reads what arrives after it, as `events`
+    /// (core.md § Stream files). A terminal's `out` and `keys`.
+    stream: bool = false,
+    /// `readonly`: only the host writes it.
+    readonly: bool = false,
 };
 
 pub const Type = struct {
@@ -227,7 +233,7 @@ pub const profiles = [_]struct { name: []const u8, types: []const []const u8 }{
     .{ .name = "nav", .types = &.{ "tabs", "tab", "sidebar", "sidebar-group", "sidebar-item", "breadcrumb", "toolbar", "link" } },
     .{ .name = "layout", .types = &.{ "grid", "resizable", "panel", "separator", "group-box", "accordion", "accordion-item", "collapsible" } },
     .{ .name = "feedback", .types = &.{ "progress", "spinner", "badge", "alert", "empty", "kbd", "tag" } },
-    .{ .name = "desktop", .types = &.{ "icon-view", "console", "file-chooser" } },
+    .{ .name = "desktop", .types = &.{ "icon-view", "console", "terminal", "file-chooser" } },
     .{ .name = "web", .types = &.{"web"} },
 };
 

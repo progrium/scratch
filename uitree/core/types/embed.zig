@@ -79,6 +79,7 @@ pub const specs = [_]Spec{
     .{ .name = "table", .text = @embedFile("table/spec") },
     .{ .name = "tabs", .text = @embedFile("tabs/spec") },
     .{ .name = "tag", .text = @embedFile("tag/spec") },
+    .{ .name = "terminal", .text = @embedFile("terminal/spec") },
     .{ .name = "text", .text = @embedFile("text/spec") },
     .{ .name = "textarea", .text = @embedFile("textarea/spec") },
     .{ .name = "title-bar", .text = @embedFile("title-bar/spec") },

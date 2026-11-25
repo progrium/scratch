@@ -6,7 +6,7 @@
 
 use std::os::raw::{c_int, c_void};
 
-pub const UIT_ABI_VERSION: u32 = 8;
+pub const UIT_ABI_VERSION: u32 = 9;
 
 #[repr(C)]
 pub struct UitCore {
@@ -164,6 +164,9 @@ pub struct UitChanges {
     /// ABI 7: files a renderer changed through `uit_mirror`.
     pub mirrors: *const UitPropChange,
     pub n_mirrors: usize,
+    /// ABI 9: terminal nodes whose rows, cursor, styles or size changed.
+    pub terms: *const UitTermChange,
+    pub n_terms: usize,
 }
 
 impl Default for UitChanges {
@@ -327,6 +330,122 @@ unsafe extern "C" {
 /// The host draws the app itself: 9P renderers can be mirrors or views.
 pub const UIT_RENDER_HOST_DRAWS: u32 = 1;
 
+// ---- Terminal nodes (components.md § terminal). Since 9. -------------
+
+/// `UitTermChange::what` bits.
+pub const UIT_TERM_ROWS: u32 = 1;
+pub const UIT_TERM_ALL: u32 = 2;
+pub const UIT_TERM_CURSOR: u32 = 4;
+pub const UIT_TERM_STYLES: u32 = 8;
+pub const UIT_TERM_STYLES_RESET: u32 = 16;
+pub const UIT_TERM_SIZE: u32 = 32;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct UitTermChange {
+    pub node: UitNode,
+    pub what: u32,
+    pub rows: *const u32,
+    pub n_rows: usize,
+}
+
+/// `UitTermStyle::flags` bits.
+pub const UIT_TERM_BOLD: u32 = 1;
+pub const UIT_TERM_FAINT: u32 = 2;
+pub const UIT_TERM_ITALIC: u32 = 4;
+pub const UIT_TERM_INVERSE: u32 = 8;
+pub const UIT_TERM_STRIKE: u32 = 16;
+pub const UIT_TERM_BLINK: u32 = 32;
+pub const UIT_TERM_INVISIBLE: u32 = 64;
+pub const UIT_TERM_OVERLINE: u32 = 128;
+
+pub const UIT_TERM_UNDERLINE_NONE: u32 = 0;
+pub const UIT_TERM_UNDERLINE_SINGLE: u32 = 1;
+pub const UIT_TERM_UNDERLINE_DOUBLE: u32 = 2;
+pub const UIT_TERM_UNDERLINE_CURLY: u32 = 3;
+pub const UIT_TERM_UNDERLINE_DOTTED: u32 = 4;
+pub const UIT_TERM_UNDERLINE_DASHED: u32 = 5;
+
+/// Colors are 0xRRGGBBAA; 0 is the default (theme foreground, no fill,
+/// the cell's fg for the underline).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UitTermStyle {
+    pub fg: u32,
+    pub bg: u32,
+    pub underline_color: u32,
+    pub flags: u32,
+    pub underline: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct UitTermRun {
+    pub col: u32,
+    pub width: u32,
+    pub style: u32,
+    pub selected: u32,
+    pub text: UitStr,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct UitTermRow {
+    pub y: u32,
+    pub runs: *const UitTermRun,
+    pub n_runs: usize,
+}
+
+pub const UIT_TERM_CURSOR_BLOCK: u32 = 0;
+pub const UIT_TERM_CURSOR_BAR: u32 = 1;
+pub const UIT_TERM_CURSOR_UNDERLINE: u32 = 2;
+pub const UIT_TERM_CURSOR_BLOCK_HOLLOW: u32 = 3;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UitTermCursor {
+    pub x: u32,
+    pub y: u32,
+    pub shape: u32,
+    pub visible: i32,
+    pub blink: i32,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+pub const UIT_TERM_PRESS: u32 = 0;
+pub const UIT_TERM_RELEASE: u32 = 1;
+pub const UIT_TERM_MOVE: u32 = 2;
+pub const UIT_TERM_BUTTON_NONE: u32 = 0;
+pub const UIT_TERM_BUTTON_LEFT: u32 = 1;
+pub const UIT_TERM_BUTTON_MIDDLE: u32 = 2;
+pub const UIT_TERM_BUTTON_RIGHT: u32 = 3;
+pub const UIT_TERM_MOD_SHIFT: u32 = 1;
+pub const UIT_TERM_MOD_ALT: u32 = 2;
+pub const UIT_TERM_MOD_CTRL: u32 = 4;
+pub const UIT_TERM_MOD_SUPER: u32 = 8;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UitTermMouse {
+    pub action: u32,
+    pub button: u32,
+    pub col: u32,
+    pub row: u32,
+    pub mods: u32,
+    pub clicks: u32,
+}
+
+unsafe extern "C" {
+    pub fn uit_term_rows(c: *mut UitCore, n: UitNode, first: u32, count: u32, out: *mut *const UitTermRow, n_out: *mut usize) -> c_int;
+    pub fn uit_term_styles(c: *mut UitCore, n: UitNode, out: *mut *const UitTermStyle, len: *mut usize) -> c_int;
+    pub fn uit_term_cursor(c: *mut UitCore, n: UitNode, out: *mut UitTermCursor) -> c_int;
+    pub fn uit_term_resize(c: *mut UitCore, n: UitNode, cols: u32, rows: u32, cell_w_px: u32, cell_h_px: u32) -> c_int;
+    pub fn uit_term_mouse(c: *mut UitCore, n: UitNode, m: *const UitTermMouse) -> c_int;
+    pub fn uit_term_scroll(c: *mut UitCore, n: UitNode, lines: i32) -> c_int;
+    pub fn uit_term_text(c: *mut UitCore, n: UitNode, text: UitStr) -> c_int;
+}
+
 /// In the browser the core is linked in with wasi-libc, whose malloc
 /// takes the memory above the heap base as its own on first use, so it
 /// must be the only allocator: Rust's goes through it too.
@@ -411,7 +530,8 @@ mod tests {
         assert_eq!(offset_of!(UitHostCmd, ctl), 48);
         assert_eq!(offset_of!(UitHostCmd, seq), 96);
         assert_eq!(size_of::<UitHostCmd>(), 128);
-        assert_eq!(size_of::<UitChanges>(), 120);
+        assert_eq!(size_of::<UitChanges>(), 136);
+        assert_eq!(offset_of!(UitChanges, terms), 120);
         assert_eq!(size_of::<UitStyleArg>(), 32);
         assert_eq!(size_of::<UitStyleWord>(), 56);
         assert_eq!(size_of::<UitLine>(), 24);
@@ -419,5 +539,33 @@ mod tests {
         assert_eq!(size_of::<UitMenuItem>(), 112);
         assert_eq!(size_of::<UitDragMsg>(), 48);
         assert_eq!(size_of::<UitConn>(), 40);
+        assert_eq!(size_of::<UitTermChange>(), 24);
+        assert_eq!(size_of::<UitTermStyle>(), 20);
+        assert_eq!(size_of::<UitTermRun>(), 32);
+        assert_eq!(offset_of!(UitTermRun, text), 16);
+        assert_eq!(size_of::<UitTermRow>(), 24);
+        assert_eq!(size_of::<UitTermCursor>(), 28);
+        assert_eq!(size_of::<UitTermMouse>(), 24);
+    }
+
+    #[test]
+    fn terminal_calls_are_stubs_until_the_tree_has_terminals() {
+        let cfg = UitConfig {
+            abi_version: UIT_ABI_VERSION,
+            types: UitStr::EMPTY,
+            style_words: UitStr::EMPTY,
+            theme_tokens: UitStr::EMPTY,
+            system_dark: 0,
+            wake: None,
+            wake_ctx: std::ptr::null_mut(),
+        };
+        let mut c: *mut UitCore = std::ptr::null_mut();
+        assert_eq!(unsafe { uit_create(&cfg, &mut c) }, UIT_OK);
+        let mut cur = UitTermCursor::default();
+        assert_eq!(unsafe { uit_term_cursor(c, 1, &mut cur) }, UIT_ENOTSUP);
+        let mut ch = UitChanges::default();
+        assert_eq!(unsafe { uit_pump(c, &mut ch) }, UIT_OK);
+        assert_eq!(ch.n_terms, 0);
+        unsafe { uit_destroy(c) };
     }
 }

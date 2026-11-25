@@ -69,7 +69,7 @@ child   any
 | `event` | `event NAME kind=state\|action\|request [attrs=a,b]` | An event the type sends, its queue kind, and the attributes it carries |
 | `slot` | `slot NAME [accepts=T,T]` | A child name the type places specially (a dialog's `footer`) and the types it accepts |
 | `child` | `child any\|none\|T,T` | What unnamed children may be |
-| `file` | `file NAME format=F` | A data file and its line format (below) |
+| `file` | `file NAME format=F [stream] [readonly]` | A data file and its line format (below). `stream` (with `format=bytes` only) makes it a byte stream: writes append and nothing is stored, and reads block, each open reading what arrives after it ([core.md § Stream files](core.md#stream-files)). `readonly` means only the host writes it |
 
 Prop forms:
 
@@ -139,7 +139,7 @@ type without testing each.
 | `nav` | `tabs` `tab` `sidebar` `sidebar-group` `sidebar-item` `breadcrumb` `toolbar` `link` |
 | `layout` | `grid` `resizable` `panel` `separator` `group-box` `accordion` `collapsible` |
 | `feedback` | `progress` `spinner` `badge` `alert` `empty` `kbd` `tag` |
-| `desktop` | `icon-view` `console` `file-chooser` |
+| `desktop` | `icon-view` `console` `terminal` `file-chooser` |
 | `web` | `web` |
 
 `core` is required: every host claims it. The others are optional.
@@ -161,8 +161,8 @@ version.
 
 ### New in this spec
 
-Three types in the profiles above don't exist in uitreefs today, and
-come from 9/UX and the toolkit-go proposal.
+Four types in the profiles above don't exist in uitreefs today. Three
+come from 9/UX and the toolkit-go proposal; `terminal` came later.
 
 **`icon-view`** (`desktop`). Icons at free positions, as in a Finder
 window. The host does selection, rubber-banding and dragging icons, so
@@ -201,6 +201,78 @@ verb    clear                          class=edit
 event   submit     kind=action   attrs=n
 event   interrupt  kind=action
 ```
+
+**`terminal`** (`desktop`). A VT terminal emulator as a node: a program's
+output drawn as a grid of styled cells, with keys, mouse, selection and
+scrollback. Unlike `console`, it runs full-screen programs (shells,
+editors, `htop`). The screen is the host's, not the renderer's: the host
+parses the output (libghostty-vt in uitree), so `screen` reads the same
+on every renderer and with none.
+
+```text
+type    terminal  tier=component  profile=desktop  since=1.0
+prop    pty         bool    default=off
+prop    tty         text    readonly
+prop    screen      text    file readonly
+prop    selection   text    file readonly
+prop    cols        number  readonly
+prop    rows        number  readonly
+prop    title       text    readonly
+prop    cwd         text    readonly
+prop    scrollback  number  default=10000  min=0
+file    out   format=bytes  stream
+file    keys  format=bytes  stream  readonly
+verb    write     TEXT                class=edit
+verb    paste     TEXT                class=keys
+verb    reset                         class=edit
+verb    scroll    top|bottom|LINES    class=activate
+event   resize    kind=state   attrs=cols,rows
+event   title     kind=state
+event   bell      kind=action
+event   hangup    kind=action
+child   none
+```
+
+It has two modes.
+
+- **Stream mode** (the default) works anywhere, over remote 9P too, but
+  the program sees no tty. Bytes written to `out` are drawn; the keys the
+  user types come out of `keys`, already encoded for the program (`ESC O
+  A` for Up under application cursor keys). An app pipes a program
+  through the node:
+
+  ```rc
+  t=$ui/win/main/sh
+  prog <$t/keys >$t/out
+  ```
+
+- **Pty mode.** `set sh pty=on` makes the host open a pseudo-terminal pair
+  inside the app's machine and hold the master; `tty` then reads the
+  slave's path (`/dev/pts/0`). The app starts its program on the slave
+  as a session leader, and `isatty` is true for it. `out` and `keys` are
+  unused. Resizes reach the program as `TIOCSWINSZ` and `SIGWINCH`; when
+  the program closes the slave the node sends `hangup`.
+
+The rest is the same in both modes:
+
+- `screen` is the visible screen as plain text: one line per row,
+  trailing blanks and trailing blank rows left out. `selection` is the
+  text the user selected, empty for none.
+- `cols` and `rows` are the grid that fits the node's layout box with the
+  renderer's font. They change with the window, with a `resize` event.
+- `title` and `cwd` are what the program last set with OSC 0 or 2 and
+  OSC 7. A new `title` sends the `title` event.
+- `write TEXT` draws TEXT as if the program had written it to `out`.
+  `paste TEXT` sends TEXT to the program as a paste, in bracketed-paste
+  markers when the program asked for them. `reset` clears the screen,
+  history and modes. `scroll` moves the view: `top`, `bottom`, or a
+  number of lines (negative is back into history). New output snaps the
+  view back to the bottom.
+- `bell` is BEL from the program. OSC 52 clipboard writes become
+  clipboard host commands, gated like any other clipboard write.
+- Keys go to the terminal while it has focus, after the app's own
+  bindings. Mouse input is reported to the program when it enabled a
+  mouse mode, and selects text otherwise.
 
 **`web`** (`web`). A web view as a node, so a window can mix native nodes
 and a page. `window main url=...` in the [shell layer](shell.md) is
@@ -314,3 +386,7 @@ indistinguishable to clients.
 5. **Slots or children.** uitreefs mixes named slots and typed children
    (`sidebar` takes `header`, `footer` and `sidebar-group` children).
    The `slot` and `child` lines cover it, but is there a simpler model?
+6. ~~A terminal's byte streams.~~ Settled: `out` and `keys` are `file`
+   lines with `stream`, not a new prop form, and pty mode has no `spawn`
+   verb: the app starts its program on `tty` itself, so the host never
+   starts processes in the app's machine.
