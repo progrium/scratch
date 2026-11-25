@@ -23,6 +23,7 @@ const abi = @import("../abi.zig");
 const proto = @import("../proto/root.zig");
 const types = @import("../types/root.zig");
 const treem = @import("../tree/root.zig");
+const termrec = @import("term.zig");
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -37,9 +38,12 @@ const ctl = proto.ctl;
 pub const Source = struct {
     st: *const State,
     cat: *const types.Catalog,
+    /// The live terminals the `term` records read (render.md § Terminals).
+    /// Owner thread.
+    terms: ?*treem.term.Terms = null,
 
     pub fn ofCore(c: *abi.Core) Source {
-        return .{ .st = c.state(), .cat = &c.cat };
+        return .{ .st = c.state(), .cat = &c.cat, .terms = &c.tree.terms };
     }
 };
 
@@ -71,6 +75,9 @@ pub const Encoder = struct {
     /// ends, so these wait for it.
     pend_created: std.ArrayList(Handle) = .empty,
     pend_removed: std.ArrayList(Handle) = .empty,
+    /// Terminal styles the renderer has, by node: a batch sends the ones
+    /// after these (`term-styles first=N`).
+    term_styles: std.AutoHashMapUnmanaged(Handle, usize) = .empty,
 
     pub const Dragging = struct { id: []u8, n: u64 };
 
@@ -89,6 +96,50 @@ pub const Encoder = struct {
         e.dragging.deinit(e.gpa);
         e.pend_created.deinit(e.gpa);
         e.pend_removed.deinit(e.gpa);
+        e.term_styles.deinit(e.gpa);
+    }
+
+    // -----------------------------------------------------------------
+    // Terminals (render.md § Terminals)
+
+    /// A terminal as a renderer that just learned of it needs it: `term`,
+    /// the whole style table, and its rows that aren't blank.
+    fn termFull(e: *Encoder, a: Allocator, src: Source, h: Handle, path: []const u8, w: *Writer) !void {
+        const ts = src.terms orelse return;
+        const t = ts.owned(h) orelse return;
+        try termrec.writeTerm(w, path, abi.termCursor(t));
+        const styles = try abi.termStyles(a, t, 0);
+        try termrec.writeStyles(w, path, 0, styles);
+        try e.term_styles.put(e.gpa, h, styles.len);
+        const rows = try abi.termRows(a, t, 0, std.math.maxInt(u32));
+        var kept: std.ArrayList(abi.UitTermRow) = .empty;
+        for (rows) |r| if (r.n_runs > 0) try kept.append(a, r);
+        try termrec.writeRows(w, path, kept.items);
+    }
+
+    /// What a pump changed in a terminal the renderer has.
+    fn termChange(e: *Encoder, a: Allocator, src: Source, tc: abi.UitTermChange, path: []const u8, w: *Writer) !void {
+        const ts = src.terms orelse return;
+        const t = ts.owned(tc.node) orelse return;
+        if (tc.what & (abi.UIT_TERM_CURSOR | abi.UIT_TERM_SIZE) != 0) try termrec.writeTerm(w, path, abi.termCursor(t));
+        if (tc.what & (abi.UIT_TERM_STYLES | abi.UIT_TERM_STYLES_RESET) != 0) {
+            const reset = tc.what & abi.UIT_TERM_STYLES_RESET != 0;
+            const have = if (reset) 0 else e.term_styles.get(tc.node) orelse 0;
+            const styles = try abi.termStyles(a, t, have);
+            try termrec.writeStyles(w, path, @intCast(have), styles);
+            try e.term_styles.put(e.gpa, tc.node, have + styles.len);
+        }
+        if (tc.what & abi.UIT_TERM_ALL != 0) {
+            try termrec.writeRows(w, path, try abi.termRows(a, t, 0, std.math.maxInt(u32)));
+        } else if (tc.what & abi.UIT_TERM_ROWS != 0 and tc.n_rows > 0) {
+            var rows: std.ArrayList(abi.UitTermRow) = .empty;
+            for (tc.rows.?[0..tc.n_rows]) |y| try rows.appendSlice(a, try abi.termRows(a, t, y, 1));
+            try termrec.writeRows(w, path, rows.items);
+        }
+    }
+
+    fn isTerm(n: *const Node) bool {
+        return std.mem.eql(u8, n.ty.name, treem.term.type_name);
     }
 
     /// Forgets every path: a snapshot remakes them from the state.
@@ -175,6 +226,7 @@ pub const Encoder = struct {
         const st = src.st;
         e.clearOrders();
         e.clearPaths();
+        e.term_styles.clearRetainingCapacity();
         try w.print("snap {d}\n", .{e.seq});
         try theme(src, w);
         if (treem.state.Blob.str(st.keys).len > 0) try keys(st, w);
@@ -196,6 +248,7 @@ pub const Encoder = struct {
                 try e.remember(h, path);
                 try nodeLine(a, n, path, w);
                 try e.appended(h, n.parent);
+                if (isTerm(n)) try e.termFull(a, src, h, path, w);
             }
             for (all.items) |h| try e.fixOrder(a, st, h, w);
             for (win.open.items) |h| try w.print("overlay open {s}\n", .{e.paths.get(h) orelse continue});
@@ -216,7 +269,8 @@ pub const Encoder = struct {
         const props = many(abi.UitPropChange, ch.props, ch.n_props);
         const cmds = many(abi.UitHostCmd, ch.cmds, ch.n_cmds);
         const mirrors = many(abi.UitPropChange, ch.mirrors, ch.n_mirrors);
-        if (new_created.len == 0 and new_removed.len == 0 and props.len == 0 and cmds.len == 0 and mirrors.len == 0 and e.dragging.items.len == 0) return false;
+        const terms = many(abi.UitTermChange, ch.terms, ch.n_terms);
+        if (new_created.len == 0 and new_removed.len == 0 and props.len == 0 and cmds.len == 0 and mirrors.len == 0 and terms.len == 0 and e.dragging.items.len == 0) return false;
 
         var arena: std.heap.ArenaAllocator = .init(e.gpa);
         defer arena.deinit();
@@ -409,6 +463,20 @@ pub const Encoder = struct {
         // through as an `order` prop change.
         for (created.items) |h| try reorder.put(a, h, {});
         for (reorder.keys()) |h| try e.fixOrder(a, st, h, w);
+
+        // Terminals: the ones just made whole, then what changed in the
+        // others.
+        for (removed.items) |h| _ = e.term_styles.remove(h);
+        var made_it = made.keyIterator();
+        var made_terms: std.ArrayList(Handle) = .empty;
+        while (made_it.next()) |h| if (st.node(h.*)) |n| if (isTerm(n)) try made_terms.append(a, h.*);
+        std.mem.sort(Handle, made_terms.items, {}, std.sort.asc(Handle));
+        for (made_terms.items) |h| try e.termFull(a, src, h, e.paths.get(h) orelse continue, w);
+        for (terms) |tc| {
+            if (made.contains(tc.node)) continue;
+            const path = e.paths.get(tc.node) orelse continue;
+            try e.termChange(a, src, tc, path, w);
+        }
 
         // Host commands, in order.
         for (cmds) |hc| try e.cmdLine(src, &hc, w);

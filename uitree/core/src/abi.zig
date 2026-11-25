@@ -492,6 +492,8 @@ fn create(c: *Core, cfg: *const UitConfig) c_int {
     c.queue = .init(c.gpa, c.io());
     c.queue.wake = Core.wakeQueue;
     c.queue.wake_ctx = c;
+    c.tree.terms.wake = Core.wakeQueue;
+    c.tree.terms.wake_ctx = c;
     c.tree.publish() catch {};
     c.timer = web.Thread.spawn(.{}, Core.timerLoop, .{c}) catch null;
     return UIT_OK;
@@ -752,6 +754,9 @@ pub export fn uit_pump(c: *Core, out: ?*UitChanges) c_int {
     if (c.render) |h| h.runInput();
     if (remoteOf(c)) |r| r.pump();
     _ = c.queue.drain(t);
+    // Terminals: what their programs wrote, fed once per pump.
+    t.pumpTerms() catch {};
+    if (remoteOf(c)) |r| r.termChanges() catch {};
     t.tick(monoNow(c)) catch {};
     t.publish() catch {};
     var buf: [1]u64 = undefined;
@@ -836,6 +841,13 @@ pub fn fill(a: Allocator, ch: treem.Changes, o: *UitChanges) Allocator.Error!voi
     for (ch.mirrors, mirrors) |p, *x| x.* = .{ .node = p.node, .file = try dupStr(a, p.file) };
     o.mirrors = ptrOf(UitPropChange, mirrors);
     o.n_mirrors = mirrors.len;
+    const terms = try a.alloc(UitTermChange, ch.terms.len);
+    for (ch.terms, terms) |tc, *x| {
+        const rows = try a.dupe(u32, tc.rows);
+        x.* = .{ .node = tc.node, .what = tc.what, .rows = ptrOf(u32, rows), .n_rows = rows.len };
+    }
+    o.terms = ptrOf(UitTermChange, terms);
+    o.n_terms = terms.len;
 }
 
 // ---------------------------------------------------------------------
@@ -1234,8 +1246,17 @@ pub export fn uit_key(c: *Core, win: UitStr, keystroke: UitStr, focused: UitNode
     if (input(c)) |r| return r;
     if (remoteOf(c)) |rm| {
         const bound = c.tree.keyBound(win.slice(), keystroke.slice(), focused) catch |e| return c.fail(e);
-        if (!bound) return 0;
-        if (sent(c, rm.key(win.slice(), keystroke.slice())) != UIT_OK) return UIT_EIO;
+        if (!bound) {
+            // A focused terminal's program gets it, encoded by the app's
+            // core: say which node is focused.
+            const st_ = c.st();
+            const at = if (focused != 0) focused else if (st_.win(win.slice())) |w| w.focus else 0;
+            if (at == 0 or !isTermNode(c, at)) return 0;
+            const p = st_.relPathAlloc(c.reads.allocator(), at) catch return UIT_ENOMEM;
+            if (sent(c, rm.key(win.slice(), keystroke.slice(), p)) != UIT_OK) return UIT_EIO;
+            return 1;
+        }
+        if (sent(c, rm.key(win.slice(), keystroke.slice(), null)) != UIT_OK) return UIT_EIO;
         return 1;
     }
     const hit = c.tree.key(win.slice(), keystroke.slice(), focused) catch |e| return c.fail(e);
@@ -1354,46 +1375,187 @@ pub export fn uit_drag(c: *Core, msg: ?*const UitDragMsg, drag: ?*u64) c_int {
 }
 
 // ---------------------------------------------------------------------
-// Terminal nodes (ABI 9). Stubs until T3 wires the engine into the tree.
+// Terminal nodes (ABI 9): the engine's cells (tree/term.zig), or in a core
+// that draws a remote app, the stream's (render/termview.zig).
+
+const termm = treem.term;
+const engine = @import("term/engine.zig");
+const termview = render.termview;
+
+/// The node's live terminal, owner thread; null with UIT_EINVAL set when
+/// `h` isn't one.
+fn termOf(c: *Core, h: UitNode) ?*termm.Term {
+    const t = c.tree.terms.owned(h) orelse {
+        c.setText("bad value: not a terminal");
+        return null;
+    };
+    return t;
+}
+
+/// Rows `first .. first+n-1` of a live terminal, clipped to its grid, as
+/// the C ABI hands them, in `a`. The render stream's encoder reads the
+/// same.
+pub fn termRows(a: Allocator, t: *termm.Term, first: u32, n: u32) Allocator.Error![]UitTermRow {
+    const rows: u32 = t.eng.size().rows;
+    const lo = @min(first, rows);
+    const hi: u32 = @intCast(@min(@as(u64, first) + n, rows));
+    const out = try a.alloc(UitTermRow, hi - lo);
+    for (out, lo..) |*o, y| {
+        try t.eng.row(@intCast(y), &t.row_buf);
+        const r = &t.row_buf;
+        const runs = try a.alloc(UitTermRun, r.runs.items.len);
+        for (r.runs.items, runs) |x, *u| u.* = .{
+            .col = x.col,
+            .width = x.width,
+            .style = x.style,
+            .selected = @intFromBool(x.selected),
+            .text = UitStr.of(try a.dupe(u8, r.runText(x))),
+        };
+        o.* = .{ .y = @intCast(y), .runs = ptrOf(UitTermRun, runs), .n_runs = runs.len };
+    }
+    return out;
+}
+
+/// A live terminal's style table from id `first`, in `a`.
+pub fn termStyles(a: Allocator, t: *termm.Term, first: usize) Allocator.Error![]UitTermStyle {
+    const all = t.eng.styles();
+    const from = @min(first, all.len);
+    const out = try a.alloc(UitTermStyle, all.len - from);
+    for (all[from..], out) |s, *o| o.* = .{
+        .fg = s.fg,
+        .bg = s.bg,
+        .underline_color = s.underline_color,
+        .flags = @as(u16, @bitCast(s.flags)),
+        .underline = @intFromEnum(s.underline),
+    };
+    return out;
+}
+
+/// A live terminal's cursor and grid size.
+pub fn termCursor(t: *termm.Term) UitTermCursor {
+    const cur = t.eng.cursor();
+    const sz = t.eng.size();
+    return .{
+        .x = cur.x,
+        .y = cur.y,
+        .shape = @intFromEnum(cur.shape),
+        .visible = @intFromBool(cur.visible),
+        .blink = @intFromBool(cur.blink),
+        .cols = sz.cols,
+        .rows = sz.rows,
+    };
+}
 
 pub export fn uit_term_rows(c: *Core, h: UitNode, first: u32, n: u32, out: ?*?[*]const UitTermRow, n_out: ?*usize) c_int {
-    _ = .{ c, h, first, n };
     if (out) |o| o.* = null;
     if (n_out) |o| o.* = 0;
-    return UIT_ENOTSUP;
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    const rows = if (remoteOf(c)) |rm| blk: {
+        if (!isTermNode(c, h)) return UIT_EINVAL;
+        const v = rm.rep.views.get(h) orelse return UIT_OK;
+        break :blk v.rowsOut(c.reads.allocator(), first, n) catch return UIT_ENOMEM;
+    } else blk: {
+        const t = termOf(c, h) orelse return UIT_EINVAL;
+        break :blk termRows(c.reads.allocator(), t, first, n) catch return UIT_ENOMEM;
+    };
+    if (out) |o| o.* = ptrOf(UitTermRow, rows);
+    if (n_out) |o| o.* = rows.len;
+    return UIT_OK;
 }
 
 pub export fn uit_term_styles(c: *Core, h: UitNode, out: ?*?[*]const UitTermStyle, n: ?*usize) c_int {
-    _ = .{ c, h };
     if (out) |o| o.* = null;
     if (n) |o| o.* = 0;
-    return UIT_ENOTSUP;
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    const styles: []const UitTermStyle = if (remoteOf(c)) |rm| blk: {
+        if (!isTermNode(c, h)) return UIT_EINVAL;
+        const v = rm.rep.views.get(h) orelse return UIT_OK;
+        break :blk v.styles.items;
+    } else blk: {
+        const t = termOf(c, h) orelse return UIT_EINVAL;
+        break :blk termStyles(c.reads.allocator(), t, 0) catch return UIT_ENOMEM;
+    };
+    if (out) |o| o.* = ptrOf(UitTermStyle, styles);
+    if (n) |o| o.* = styles.len;
+    return UIT_OK;
+}
+
+fn isTermNode(c: *Core, h: UitNode) bool {
+    const nd = c.st().node(h) orelse return false;
+    return std.mem.eql(u8, nd.ty.name, termm.type_name);
 }
 
 pub export fn uit_term_cursor(c: *Core, h: UitNode, out: ?*UitTermCursor) c_int {
-    _ = .{ c, h };
-    if (out) |o| o.* = .{};
-    return UIT_ENOTSUP;
+    const o = out orelse return UIT_EINVAL;
+    o.* = .{};
+    if (!c.checkOwner()) return UIT_ETHREAD;
+    if (remoteOf(c)) |rm| {
+        if (!isTermNode(c, h)) return UIT_EINVAL;
+        if (rm.rep.views.get(h)) |v| o.* = v.cur;
+        return UIT_OK;
+    }
+    const t = termOf(c, h) orelse return UIT_EINVAL;
+    o.* = termCursor(t);
+    return UIT_OK;
+}
+
+/// A remote terminal's input line: `term-*` on `input`.
+fn termLine(c: *Core, rm: *render.dial.Remote, h: UitNode, in: render.term.Input) c_int {
+    if (!isTermNode(c, h)) return UIT_EINVAL;
+    const st = c.st();
+    const n = st.node(h).?;
+    const w = st.winOfRoot(n.root) orelse return UIT_EINVAL;
+    const p = st.relPathAlloc(c.reads.allocator(), h) catch return UIT_ENOMEM;
+    var x = in;
+    switch (x) {
+        inline else => |*v| {
+            v.win = w.nameStr();
+            v.node = p;
+        },
+    }
+    return sent(c, rm.termInput(x));
 }
 
 pub export fn uit_term_resize(c: *Core, h: UitNode, cols: u32, rows: u32, cell_w_px: u32, cell_h_px: u32) c_int {
-    _ = .{ c, h, cols, rows, cell_w_px, cell_h_px };
-    return UIT_ENOTSUP;
+    if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .resize = .{ .win = "", .node = "", .cols = cols, .rows = rows, .cell_w_px = cell_w_px, .cell_h_px = cell_h_px } });
+    return done(c, c.tree.termResize(h, cols, rows, cell_w_px, cell_h_px));
 }
 
 pub export fn uit_term_mouse(c: *Core, h: UitNode, m: ?*const UitTermMouse) c_int {
-    _ = .{ c, h, m };
-    return UIT_ENOTSUP;
+    if (input(c)) |r| return r;
+    const mm = m orelse return UIT_EINVAL;
+    if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .mouse = .{ .win = "", .node = "", .m = mm.* } });
+    const clamp = struct {
+        fn f(v: u32) u16 {
+            return @intCast(@min(v, std.math.maxInt(u16)));
+        }
+    }.f;
+    const em: engine.Mouse = .{
+        .action = std.enums.fromInt(engine.MouseAction, mm.action) orelse return UIT_EINVAL,
+        .button = std.enums.fromInt(engine.MouseButton, mm.button) orelse return UIT_EINVAL,
+        .col = clamp(mm.col),
+        .row = clamp(mm.row),
+        .mods = @bitCast(@as(u8, @truncate(mm.mods & 0xf))),
+        .clicks = @intCast(@min(@max(mm.clicks, 1), 3)),
+    };
+    const took = c.tree.termMouse(h, em) catch |e| return c.fail(e);
+    c.wake();
+    return @intFromBool(took);
 }
 
 pub export fn uit_term_scroll(c: *Core, h: UitNode, lines: i32) c_int {
-    _ = .{ c, h, lines };
-    return UIT_ENOTSUP;
+    if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .scroll = .{ .win = "", .node = "", .lines = lines } });
+    const took = c.tree.termScroll(h, lines) catch |e| return c.fail(e);
+    c.wake();
+    return @intFromBool(took);
 }
 
 pub export fn uit_term_text(c: *Core, h: UitNode, text: UitStr) c_int {
-    _ = .{ c, h, text };
-    return UIT_ENOTSUP;
+    if (input(c)) |r| return r;
+    if (remoteOf(c)) |rm| return termLine(c, rm, h, .{ .text = .{ .win = "", .node = "", .text = text.slice() } });
+    return done(c, c.tree.termText(h, text.slice()));
 }
 
 // ---------------------------------------------------------------------
@@ -1441,26 +1603,100 @@ test "header and abi.zig agree on the version and the constants" {
 }
 
 
-test "the terminal calls answer ENOTSUP until the tree has terminals (ABI 9)" {
+test "terminal calls: cells, input and changes (ABI 9)" {
+    const tt = std.testing;
     const core = try testCore();
     defer uit_destroy(core);
+    // Not a terminal: EINVAL.
     var rows: ?[*]const UitTermRow = null;
     var n: usize = 7;
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_rows(core, 1, 0, 24, &rows, &n));
-    try std.testing.expectEqual(@as(usize, 0), n);
-    var styles: ?[*]const UitTermStyle = null;
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_styles(core, 1, &styles, &n));
-    var cur: UitTermCursor = .{ .x = 9 };
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_cursor(core, 1, &cur));
-    try std.testing.expectEqual(@as(u32, 0), cur.x);
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_resize(core, 1, 80, 24, 8, 16));
-    const m: UitTermMouse = .{ .action = UIT_TERM_PRESS, .button = UIT_TERM_BUTTON_LEFT };
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_mouse(core, 1, &m));
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_scroll(core, 1, -3));
-    try std.testing.expectEqual(UIT_ENOTSUP, uit_term_text(core, 1, UitStr.lit("x")));
+    try tt.expectEqual(UIT_EINVAL, uit_term_rows(core, 1, 0, 24, &rows, &n));
+    try tt.expectEqual(@as(usize, 0), n);
+
+    try write(core, "win/main/ctl", "new terminal sh");
+    const root = uit_window_root(core, UitStr.lit("main"));
+    var kids: ?[*]const UitNode = null;
+    _ = uit_children(core, root, &kids);
+    const sh = kids.?[0];
+    try tt.expectEqualStrings("terminal", uit_type(core, sh).slice());
+
+    // What the program writes to `out` is fed at the next pump.
+    const t = core.tree.terms.get(sh).?;
+    defer t.unref();
+    try t.write("hi\r\nthere");
     var ch: UitChanges = .{};
-    try std.testing.expectEqual(UIT_OK, uit_pump(core, &ch));
-    try std.testing.expectEqual(@as(usize, 0), ch.n_terms);
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqual(@as(usize, 1), ch.n_terms);
+    try tt.expectEqual(sh, ch.terms.?[0].node);
+    try tt.expect(ch.terms.?[0].what & UIT_TERM_ROWS != 0);
+    try tt.expectEqual(UIT_OK, uit_term_rows(core, sh, 0, 3, &rows, &n));
+    try tt.expectEqual(@as(usize, 3), n);
+    try tt.expectEqualStrings("hi", rows.?[0].runs.?[0].text.slice());
+    try tt.expectEqualStrings("there", rows.?[1].runs.?[0].text.slice());
+    try tt.expectEqual(@as(usize, 0), rows.?[2].n_runs);
+    var cur: UitTermCursor = .{};
+    try tt.expectEqual(UIT_OK, uit_term_cursor(core, sh, &cur));
+    try tt.expectEqual(@as(u32, 5), cur.x);
+    try tt.expectEqual(@as(u32, 1), cur.y);
+    try tt.expectEqual(@as(u32, 80), cur.cols);
+    var styles: ?[*]const UitTermStyle = null;
+    try tt.expectEqual(UIT_OK, uit_term_styles(core, sh, &styles, &n));
+    try tt.expectEqual(@as(usize, 1), n);
+    try tt.expectEqual(@as(u32, 0), styles.?[0].fg);
+    // The node's screen reads the same.
+    var arena: std.heap.ArenaAllocator = .init(tt.allocator);
+    defer arena.deinit();
+    try tt.expectEqualStrings("hi\nthere\n", (try t.readFile(arena.allocator(), "screen")).?);
+
+    // Rows past the grid are clipped.
+    try tt.expectEqual(UIT_OK, uit_term_rows(core, sh, 23, 5, &rows, &n));
+    try tt.expectEqual(@as(usize, 1), n);
+
+    // A resize changes the grid and sends `resize`.
+    try tt.expectEqual(UIT_OK, uit_term_resize(core, sh, 40, 10, 8, 16));
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expect(ch.terms.?[0].what & UIT_TERM_SIZE != 0);
+    try tt.expectEqual(UIT_OK, uit_term_cursor(core, sh, &cur));
+    try tt.expectEqual(@as(u32, 40), cur.cols);
+    try tt.expectEqual(@as(u32, 10), cur.rows);
+    try tt.expectEqualStrings("40\n", (try t.readFile(arena.allocator(), "cols")).?);
+
+    // Keys: a focused terminal's program gets an unbound stroke, encoded.
+    const r = try t.openKeys();
+    defer r.close();
+    try tt.expectEqual(@as(c_int, 1), uit_key(core, UitStr.lit("main"), UitStr.lit("ctrl-c"), sh));
+    try tt.expectEqual(@as(c_int, 1), uit_key(core, UitStr.lit("main"), UitStr.lit("up"), sh));
+    try tt.expectEqual(UIT_OK, uit_term_text(core, sh, UitStr.lit("日本")));
+    var buf: [64]u8 = undefined;
+    const got = try r.read(&buf);
+    try tt.expectEqualStrings("\x03\x1b[A日本", buf[0..got]);
+    // A bound stroke is the app's, not the program's.
+    try write(core, "keys", "ctrl-s save");
+    try tt.expectEqual(@as(c_int, 1), uit_key(core, UitStr.lit("main"), UitStr.lit("ctrl-s"), sh));
+    // No mouse mode in the stand-in: a drag selects.
+    var m: UitTermMouse = .{ .action = UIT_TERM_PRESS, .button = UIT_TERM_BUTTON_LEFT, .col = 0, .row = 1 };
+    try tt.expectEqual(@as(c_int, 0), uit_term_mouse(core, sh, &m));
+    m = .{ .action = UIT_TERM_MOVE, .button = UIT_TERM_BUTTON_LEFT, .col = 2, .row = 1 };
+    try tt.expectEqual(@as(c_int, 0), uit_term_mouse(core, sh, &m));
+    m = .{ .action = UIT_TERM_RELEASE, .button = UIT_TERM_BUTTON_LEFT, .col = 2, .row = 1 };
+    try tt.expectEqual(@as(c_int, 0), uit_term_mouse(core, sh, &m));
+    try tt.expectEqual(UIT_OK, uit_pump(core, &ch));
+    try tt.expectEqualStrings("the", (try t.readFile(arena.allocator(), "selection")).?);
+    try tt.expectEqual(UIT_OK, uit_term_rows(core, sh, 1, 1, &rows, &n));
+    try tt.expectEqual(@as(u32, 1), rows.?[0].runs.?[0].selected);
+    try tt.expectEqual(@as(c_int, 0), uit_term_scroll(core, sh, -3));
+
+    // Verbs: write draws, reset clears.
+    try write(core, "win/main/sh/ctl", "write ' again'");
+    try tt.expectEqualStrings("hi\nthere again\n", (try t.readFile(arena.allocator(), "screen")).?);
+    try write(core, "win/main/sh/ctl", "reset");
+    try tt.expectEqualStrings("", (try t.readFile(arena.allocator(), "screen")).?);
+
+    // Removing the node ends its streams.
+    try write(core, "win/main/ctl", "delete sh");
+    try tt.expectEqual(@as(usize, 0), try r.read(&buf));
+    try tt.expectError(error.Gone, t.write("x"));
+    try tt.expectEqual(UIT_EINVAL, uit_term_cursor(core, sh, &cur));
 }
 
 fn testCore() !*Core {

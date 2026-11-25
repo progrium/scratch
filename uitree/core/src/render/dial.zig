@@ -15,6 +15,7 @@ const proto = @import("../proto/root.zig");
 const treem = @import("../tree/root.zig");
 const ninep = @import("../ninep/root.zig");
 const replica = @import("replica.zig");
+const termrec = @import("term.zig");
 
 const Allocator = std.mem.Allocator;
 const Ctl = proto.ctl.Ctl;
@@ -55,6 +56,9 @@ pub const Remote = struct {
     next_request: u64 = 1,
     /// Set on the owner thread once the stream's `exit` or end was seen.
     exit_told: bool = false,
+    /// $UITREE_RENDER_DUMP: a file to write the stream to, as it came.
+    dump: ?std.Io.File = null,
+    dumped: u64 = 0,
 
     fn io(r: *Remote) std.Io {
         return r.c.io();
@@ -86,6 +90,8 @@ pub const Remote = struct {
 
         const r = try gpa.create(Remote);
         errdefer gpa.destroy(r);
+        // Terminals are drawn from the stream's cells (render/termview.zig).
+        c.tree.terms.enabled = false;
         r.* = .{
             .gpa = gpa,
             .c = c,
@@ -96,6 +102,7 @@ pub const Remote = struct {
             .primary = std.mem.eql(u8, role, "primary"),
         };
         r.rep.host = .{ .ctx = r, .record = onRecord };
+        if (std.c.getenv("UITREE_RENDER_DUMP")) |p| r.dump = std.Io.Dir.cwd().createFile(r.io(), std.mem.span(p), .{}) catch null;
         try r.sendRead(0);
         r.reader = try std.Thread.spawn(.{}, readLoop, .{r});
         r.writer = try std.Thread.spawn(.{}, writeLoop, .{r});
@@ -112,6 +119,7 @@ pub const Remote = struct {
         if (r.reader) |t| t.join();
         r.cl.deinit();
         r.rep.deinit();
+        if (r.dump) |f| f.close(r.io());
         r.inbox.deinit(r.gpa);
         r.outbox.deinit(r.gpa);
         r.input_err.deinit(r.gpa);
@@ -205,6 +213,10 @@ pub const Remote = struct {
         const ended = r.ended;
         r.mu.unlock(r.io());
         defer r.gpa.free(bytes);
+        if (r.dump) |f| if (bytes.len > 0) {
+            f.writePositionalAll(r.io(), bytes, r.dumped) catch {};
+            r.dumped += bytes.len;
+        };
         if (bytes.len > 0) r.rep.feed(bytes) catch |e| {
             std.log.warn("uit_render_dial: stream: {t}", .{e});
         };
@@ -374,12 +386,40 @@ pub const Remote = struct {
         try l.send();
     }
 
-    pub fn key(r: *Remote, win: []const u8, stroke: []const u8) !void {
+    /// `node=` names the focused node when it is a terminal, whose
+    /// program the app's core encodes the stroke for.
+    pub fn key(r: *Remote, win: []const u8, stroke: []const u8, node: ?[]const u8) !void {
         var l = try r.line("key");
         errdefer l.drop();
         try l.attr("win", win);
         try l.attr("stroke", stroke);
+        if (node) |p| try l.attr("node", p);
         try l.send();
+    }
+
+    /// A `term-*` input line (render.md § Terminals).
+    pub fn termInput(r: *Remote, in: termrec.Input) !void {
+        var l: Line = .{ .r = r, .aw = .init(r.gpa) };
+        errdefer l.drop();
+        try termrec.writeInput(&l.aw.writer, in);
+        // writeInput ends the line; send adds another.
+        l.aw.shrinkRetainingCapacity(l.aw.written().len - 1);
+        try l.send();
+    }
+
+    /// Owner thread, in uit_pump: what the stream changed in each
+    /// terminal, for UitChanges.terms.
+    pub fn termChanges(r: *Remote) !void {
+        const t = r.c.tree;
+        r.rep.views.prune(r.gpa, t.current());
+        var arena: std.heap.ArenaAllocator = .init(r.gpa);
+        defer arena.deinit();
+        var it = r.rep.views.map.iterator();
+        while (it.next()) |e| {
+            const got = try e.value_ptr.*.take(arena.allocator());
+            if (got.what == 0) continue;
+            try t.logTermChange(.{ .node = e.key_ptr.*, .what = got.what, .rows = got.rows });
+        }
     }
 
     pub fn menu(r: *Remote, id: []const u8) !void {

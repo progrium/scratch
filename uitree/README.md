@@ -67,5 +67,6 @@ Forth) builds, and are skipped without it.
   screenshots as an artifact.
 
 Status: every workstream has landed on `uitree`. Conformance on
-`uitree-headless`: 30 pass (the transfer layer: typed drags, file drops
-as handles under `$ui/file/`, and the typed clipboard; tooltips).
+`uitree-headless`: 31 pass (the transfer layer: typed drags, file drops
+as handles under `$ui/file/`, and the typed clipboard; tooltips; the
+`terminal` node in stream mode).

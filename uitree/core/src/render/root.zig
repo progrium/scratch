@@ -7,6 +7,7 @@ pub const replica = @import("replica.zig");
 pub const check = @import("check.zig");
 pub const dial = @import("dial.zig");
 pub const term = @import("term.zig");
+pub const termview = @import("termview.zig");
 
 test {
     @import("std").testing.refAllDecls(@This());

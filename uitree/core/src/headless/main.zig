@@ -282,7 +282,10 @@ const Headless = struct {
                     _ = t.dragData(d.n, d.type, d.data) catch |x| return h.treeErr(err, x);
                 }
             },
-            .key => |k| _ = t.key(k.win, k.stroke, 0) catch |x| return h.treeErr(err, x),
+            .key => |k| {
+                const n: Handle = if (k.node) |p| try h.node(a, k.win, p, err) else 0;
+                _ = t.key(k.win, k.stroke, n) catch |x| return h.treeErr(err, x);
+            },
             .menu => |m| t.menuAction(m.item) catch |x| return h.treeErr(err, x),
             .appearance => |ap| t.systemDark(ap.dark) catch |x| return h.treeErr(err, x),
         }
@@ -304,10 +307,12 @@ const Headless = struct {
                 };
             }
         }
+        // Terminals: what their programs wrote, fed once per pump.
+        h.t.pumpTerms() catch {};
         h.t.publish() catch {};
         if (h.checker) |k| {
             const ch = h.t.changes() catch null;
-            if (ch) |x| k.pump(h.t.committed(), x) catch |e| std.debug.print("render check: pump: {t}\n", .{e});
+            if (ch) |x| k.pump(h.t.committed(), x, &h.t.terms) catch |e| std.debug.print("render check: pump: {t}\n", .{e});
         }
         h.t.clearChanges();
         h.finishJobs(jobs);
@@ -348,6 +353,8 @@ pub fn main(init: std.process.Init) !u8 {
     var q: tree.OpQueue = .init(gpa, io);
     q.wake = Headless.wake;
     q.wake_ctx = &h;
+    t.terms.wake = Headless.wake;
+    t.terms.wake_ctx = &h;
     var tfs: ninep.ns.TreeFs = .{ .gpa = gpa, .t = t, .q = &q };
 
     // The tree prints its own loud lines.
@@ -409,7 +416,7 @@ pub fn main(init: std.process.Init) !u8 {
     if (h.checker) |k| {
         var buf: [4096]u8 = undefined;
         var ew = std.Io.File.stderr().writerStreaming(io, &buf);
-        const ok = k.compare(t.committed(), &ew.interface) catch false;
+        const ok = k.compare(t.committed(), &t.terms, &ew.interface) catch false;
         if (ok) ew.interface.print("render check: ok, {d} frames, {d} bytes\n", .{ k.rep.frames, k.bytes }) catch {};
         if (!ok) ew.interface.writeAll("render check: FAIL\n") catch {};
         ew.interface.flush() catch {};

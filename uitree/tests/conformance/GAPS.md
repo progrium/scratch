@@ -147,6 +147,23 @@ layer's Open questions. Carried-over items from uitreefs's GAPS.md that
     host file gone, then end of file at release. `change` needs a platform
     file watcher, which no host has yet.
 
+## Terminals
+
+29g. **Stream mode has no tty**, so nothing turns `\n` into `\r\n`: a
+    bare LF moves down a row and keeps the column, as on any terminal.
+    31 writes CR LF with awk's `printf`.
+29h. **Bells.** One `bell` event per pump however many BELs the program
+    sent in it, so a program ringing in a loop can't flood `events`.
+29i. **`write TEXT` and `paste TEXT`.** TEXT is the verb's words joined
+    by blanks, or `text=` (a here-value for newlines). 31.
+29j. **Which terminal gets a key on a headless host.** Headless has no
+    focus of its own, so `/debug/inject`'s `key` takes `node=PATH`, the
+    focused node, as uit_key's `focused` does. 31.
+29k. **`title`, `cwd` and the `title` event** come from OSC 0, 2 and 7,
+    which the `plain` engine skips; 31 leaves them to the libghostty-vt
+    build. `resize` needs a renderer's layout (uit_term_resize), which
+    headless has none of.
+
 ## Against hyper9 and h9
 
 29. **The 9front kernel rewrites failed walks** to `file does not

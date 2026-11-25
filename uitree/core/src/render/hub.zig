@@ -24,6 +24,7 @@ const proto = @import("../proto/root.zig");
 const ninep = @import("../ninep/root.zig");
 const treem = @import("../tree/root.zig");
 const stream = @import("stream.zig");
+const termrec = @import("term.zig");
 
 const fsmod = ninep.fs;
 const debug = ninep.debug;
@@ -391,6 +392,31 @@ pub const Hub = struct {
         // `drag start|drop|end`: a renderer's own drags and drops. The
         // inject grammar's `drag n=` (a platform offer) stays headless's.
         if (std.mem.eql(u8, cl.verb, "drag") and cl.words.len > 0) return h.drag(a, cl, err);
+        // `term-*`: a terminal's input (render.md § Terminals).
+        if (std.mem.startsWith(u8, cl.verb, "term-")) {
+            const in = (termrec.parseInput(cl) catch return err.set("bad syntax")) orelse return err.set("unknown command");
+            switch (in) {
+                .resize => |x| {
+                    // The grid is the primary's, as layout is.
+                    if (!primary) return;
+                    const n = try h.node(a, x.win, x.node, err);
+                    try h.check(abi.uit_term_resize(c, n, x.cols, x.rows, x.cell_w_px, x.cell_h_px), err);
+                },
+                .mouse => |x| {
+                    const n = try h.node(a, x.win, x.node, err);
+                    try h.check(abi.uit_term_mouse(c, n, &x.m), err);
+                },
+                .scroll => |x| {
+                    const n = try h.node(a, x.win, x.node, err);
+                    try h.check(abi.uit_term_scroll(c, n, x.lines), err);
+                },
+                .text => |x| {
+                    const n = try h.node(a, x.win, x.node, err);
+                    try h.check(abi.uit_term_text(c, n, UitStr.of(x.text)), err);
+                },
+            }
+            return;
+        }
 
         const inj = try debug.parse(a, j.line, err);
         switch (inj) {
@@ -415,7 +441,10 @@ pub const Hub = struct {
                 if (!primary) return;
                 try h.check(abi.uit_frame_drawn(c, UitStr.of(f.win orelse "main")), err);
             },
-            .key => |k| try h.check(abi.uit_key(c, UitStr.of(k.win), UitStr.of(k.stroke), 0), err),
+            .key => |k| {
+                const n: Handle = if (k.node) |p| try h.node(a, k.win, p, err) else 0;
+                try h.check(abi.uit_key(c, UitStr.of(k.win), UitStr.of(k.stroke), n), err);
+            },
             .menu => |m| try h.check(abi.uit_menu_action(c, UitStr.of(m.item)), err),
             .appearance => |ap| {
                 if (!primary) return;

@@ -124,6 +124,31 @@ pub const Opened = struct {
     /// file was under when it was opened, so a commit after that went
     /// away can fail with `gone`.
     token: u64 = 0,
+    /// For a stream the client writes (a terminal's `out`): each write's
+    /// bytes go here as they arrive, unbuffered, and `commit` is never
+    /// called. Reads are empty.
+    sink: ?Sink = null,
+};
+
+/// Where a written stream's bytes go (core.md § Stream files).
+pub const Sink = struct {
+    ptr: *anyopaque,
+    vt: *const VTable,
+
+    pub const VTable = struct {
+        /// Takes the bytes, in order. Blocks while the host's buffer for
+        /// the stream is full.
+        write: *const fn (ptr: *anyopaque, data: []const u8, err: *Err) Error!void,
+        /// The fid is gone. Any thread.
+        close: *const fn (ptr: *anyopaque) void,
+    };
+
+    pub fn write(s: Sink, data: []const u8, err: *Err) Error!void {
+        return s.vt.write(s.ptr, data, err);
+    }
+    pub fn close(s: Sink) void {
+        s.vt.close(s.ptr);
+    }
 };
 
 /// A blocking source of bytes: an `events` subscription, `trace`.

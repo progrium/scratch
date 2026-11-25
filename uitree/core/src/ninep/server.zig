@@ -133,6 +133,7 @@ const Fid = struct {
     token: u64 = 0,
     stream: ?fsmod.Stream = null,
     random: ?fsmod.Random = null,
+    sink: ?fsmod.Sink = null,
 };
 
 const Pending = struct {
@@ -245,6 +246,7 @@ const Conn = struct {
     fn freeFid(cn: *Conn, f: *Fid) void {
         if (f.stream) |s| s.close();
         if (f.random) |r| r.close();
+        if (f.sink) |k| k.close();
         cn.gpa().free(f.path);
         cn.gpa().free(f.data);
         f.wbuf.deinit(cn.gpa());
@@ -536,6 +538,7 @@ const Conn = struct {
         const opened = try fs.open(cn.id, f.path, om, err);
         f.stream = opened.stream;
         f.random = opened.random;
+        f.sink = opened.sink;
         f.write_mode = opened.write_mode;
         f.token = opened.token;
         f.mode = om;
@@ -635,6 +638,11 @@ const Conn = struct {
             cn.putFid(f);
             return cn.fail(tag, "fid not open for writing");
         }
+        if (f.sink != null) {
+            const copy = try cn.gpa().dupe(u8, data);
+            cn.spawn(tag, null, workSink, .{ cn, tag, f, copy });
+            return;
+        }
         switch (f.write_mode) {
             .lines => {
                 const copy = try cn.gpa().dupe(u8, data);
@@ -725,7 +733,7 @@ const Conn = struct {
     /// Whether a clunk of `f` has something to commit: a buffered value
     /// (or a truncate with no write), or a ctl's held partial line.
     fn pendingAtClose(f: *const Fid) bool {
-        if (!f.open or !f.mode.write) return false;
+        if (!f.open or !f.mode.write or f.sink != null) return false;
         return switch (f.write_mode) {
             .at_close => f.wrote or f.mode.trunc,
             .ctl => f.wbuf.items.len > 0,
@@ -802,6 +810,24 @@ const Conn = struct {
             f.wbuf.clearRetainingCapacity();
         }
         if (failed) cn.srv.loud("write", f.path, err.text());
+        f.mu.unlock(cn.io());
+        _ = cn.endPending(p);
+        if (failed) return cn.fail(tag, err.text());
+        cn.reply(tag, p9.Rwrite{ .count = @intCast(data.len) });
+    }
+
+    /// A write to a stream sink: handed over as it is, in order.
+    fn workSink(cn: *Conn, tag: u16, f: *Fid, data: []u8, p: *Pending) void {
+        defer cn.gpa().free(data);
+        defer cn.putFid(f);
+        f.mu.lockUncancelable(cn.io());
+        var err: Err = .{};
+        var failed = false;
+        f.sink.?.write(data, &err) catch |e| {
+            failed = true;
+            if (e == error.OutOfMemory) err.note("out of memory");
+        };
+        f.wrote = true;
         f.mu.unlock(cn.io());
         _ = cn.endPending(p);
         if (failed) return cn.fail(tag, err.text());

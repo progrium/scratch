@@ -16,6 +16,8 @@
 const std = @import("std");
 const proto = @import("../proto/root.zig");
 const treem = @import("../tree/root.zig");
+const termview = @import("termview.zig");
+const termrec = @import("term.zig");
 
 const Allocator = std.mem.Allocator;
 const Ctl = proto.ctl.Ctl;
@@ -42,10 +44,48 @@ pub const Replica = struct {
     /// Writes the local tree refused, as `PATH: DATA: error` lines; for
     /// the checker. Cleared by the caller.
     errors: std.ArrayList(u8) = .empty,
+    /// Terminal nodes' cells, from `term`, `term-styles` and `term-rows`
+    /// (render.md § Terminals). The local tree makes no engines for them.
+    views: termview.Views = .{},
 
     pub fn deinit(r: *Replica) void {
         r.buf.deinit(r.gpa);
         r.errors.deinit(r.gpa);
+        r.views.deinit(r.gpa);
+    }
+
+    /// The terminal node at a stream path, in the local tree.
+    fn termAt(r: *Replica, a: Allocator, path: []const u8) ?treem.Handle {
+        const at = split(path) orelse return null;
+        const st = r.t.current();
+        const wn = st.win(at.win) orelse return null;
+        const h = if (at.rel.len == 0) wn.root else treem.path.resolveNode(st, a, wn.root, at.rel, null) catch return null;
+        const n = st.node(h) orelse return null;
+        if (!std.mem.eql(u8, n.ty.name, treem.term.type_name)) return null;
+        return h;
+    }
+
+    /// `term`, `term-styles`, `term-rows`.
+    fn termRecord(r: *Replica, a: Allocator, c: *const Ctl) !void {
+        if (c.words.len < 1) return;
+        const h = r.termAt(a, c.words[0]) orelse return;
+        r.views.prune(r.gpa, r.t.current());
+        const v = try r.views.getOrMake(r.gpa, h);
+        const eq = std.mem.eql;
+        const res = if (eq(u8, c.verb, "term"))
+            v.setTerm(termrec.parseTerm(c.*) catch return r.refuse(a, c))
+        else if (eq(u8, c.verb, "term-styles"))
+            v.setStyles(std.fmt.parseInt(u32, c.attr("first") orelse "0", 10) catch return r.refuse(a, c), c.attr("text") orelse "")
+        else
+            v.setRows(c.attr("text") orelse "");
+        res catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory;
+            return r.refuse(a, c);
+        };
+    }
+
+    fn refuse(r: *Replica, a: Allocator, c: *const Ctl) !void {
+        try r.errors.appendSlice(r.gpa, try std.fmt.allocPrint(a, "{s} {s}: bad syntax\n", .{ c.verb, if (c.words.len > 0) c.words[0] else "" }));
     }
 
     /// Appends stream bytes and applies every whole record in them.
@@ -103,7 +143,11 @@ pub const Replica = struct {
     fn apply(r: *Replica, a: Allocator, c: *const Ctl) !void {
         const v = c.verb;
         const eq = std.mem.eql;
-        if (eq(u8, v, "snap")) return r.clear(a);
+        if (eq(u8, v, "snap")) {
+            r.views.clear(r.gpa);
+            return r.clear(a);
+        }
+        if (eq(u8, v, "term") or eq(u8, v, "term-styles") or eq(u8, v, "term-rows")) return r.termRecord(a, c);
         if (eq(u8, v, "batch")) return;
         if (eq(u8, v, "end")) {
             if (c.words.len > 0) r.seq = std.fmt.parseInt(u64, c.words[0], 10) catch r.seq;

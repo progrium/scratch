@@ -76,11 +76,12 @@ PR into `uitree` says which scripts it makes pass.
 | 28-feedback | components § Profiles (feedback) | profile feedback |
 | 29-file-drops | transfer.md § Host files (file drops as handles: `item/N/file`, `$ui/file/ID/`, release) | layer transfer |
 | 30-tooltips | core § Node files, § Overlays (tooltips), components § Tooltips | profile overlay |
+| 31-terminal | components § terminal (stream mode), core § Stream files | type terminal |
 
 01 to 26 keep uitreefs's numbers and topics. Three changed shape:
 13 was editor, markdown and dock, which are uitreefs extras the spec
 doesn't define, so it is now the `layout` profile; 16 is now the whole
-transfer layer; 27 to 30 are new. The extras' own behavior (editor
+transfer layer; 27 to 31 are new. The extras' own behavior (editor
 completions, the dock's JSON layout) isn't specified by 0.2, so this
 suite doesn't test it beyond what 27 checks from their descriptors.
 
@@ -167,7 +168,7 @@ fails the write with the usual phrases.
 | `drag n=N type=TYPE data=TEXT` | Add representation TYPE, holding TEXT, to the offer at `$ui/drag/N/`, making it if needed, as a platform drag would before a `drop` names `drag=N` |
 | `drag n=N type=file name=NAME data=BYTES` | Add a file item to drag N's offer, as a platform file drop would: a read-only file handle under `$ui/file/` holding BYTES (in memory), a `file name=NAME size=N` line in `data/file`, and its handle's name in `item/I/file` |
 | `drag n=N type=file path=PATH` | The same for a host file or directory, PATH relative to the directory the host runs in (the suite uses `fixtures/drop`): the handle serves the host file's bytes, or for a directory its tree under `dir/` |
-| `key win=W stroke=KEYS` | The user pressed KEYS in window W: the host resolves `keys` with the focused node's contexts and sends `action ID PATH via=key win=W`, or nothing if no binding applies |
+| `key win=W stroke=KEYS [node=PATH]` | The user pressed KEYS in window W: the host resolves `keys` with the focused node's contexts (or PATH's, as if it had focus) and sends `action ID PATH via=key win=W`; with no binding, a focused `terminal` gets the stroke on `keys`, and otherwise nothing happens |
 | `menu item=ID` | The user chose the menu item with that ID: `action ID - via=menu`, or the item's role |
 | `appearance mode=light\|dark` | The operating system's appearance changed |
 

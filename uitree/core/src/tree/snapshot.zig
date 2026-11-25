@@ -17,6 +17,7 @@ const state = @import("state.zig");
 const pathm = @import("path.zig");
 const docm = @import("doc.zig");
 const treem = @import("tree.zig");
+const termm = @import("term.zig");
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -43,6 +44,12 @@ pub const Kind = enum {
     trace,
     /// Read only.
     readonly,
+    /// A byte stream the host writes (a terminal's `keys`): reads block,
+    /// each open its own reader (core.md § Stream files).
+    stream,
+    /// A byte stream the client writes (a terminal's `out`): each write is
+    /// the next bytes, nothing is stored, reads are empty.
+    sink,
 };
 
 pub const Stat = struct {
@@ -124,7 +131,7 @@ pub const Snapshot = struct {
     fn statLoc(s: *const Snapshot, arena: Allocator, loc: Loc, name: []const u8) Error!Stat {
         const k = s.kindOf(loc);
         const len: u64 = switch (k) {
-            .dir, .events, .trace => 0,
+            .dir, .events, .trace, .stream, .sink => 0,
             else => blk: {
                 if (loc == .file and std.mem.eql(u8, loc.file.name, "tree")) break :blk 0;
                 const empty: []const u8 = "";
@@ -159,6 +166,7 @@ pub const Snapshot = struct {
                 if (eq(u8, f.name, "bounds")) break :blk .readonly;
                 if (eq(u8, f.name, "tree")) break :blk .data;
                 const n = s.st.node(f.node).?;
+                if (n.ty.file(f.name)) |df| if (df.stream) break :blk if (df.readonly) .stream else .sink;
                 const p = n.ty.prop(f.name) orelse break :blk .text;
                 if (p.readonly) break :blk .readonly;
                 break :blk switch (p.form) {
@@ -430,6 +438,12 @@ pub const Snapshot = struct {
             docm.print(w, arena, st, h) catch return error.OutOfMemory;
             return aw.written();
         }
+        // A terminal's screen and what only its engine knows (term.zig).
+        if (termm.isLive(name)) if (s.tree.terms.get(h)) |t| {
+            defer t.unref();
+            if (try t.readFile(arena, name)) |v| return v;
+        };
+        if (n.ty.file(name)) |df| if (df.stream) return "";
         if (n.ty.prop(name)) |p| if (p.form == .bytes) return n.value(name);
         return line(arena, n.value(name));
     }

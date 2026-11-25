@@ -34,6 +34,7 @@ pub const Checker = struct {
         const k = try gpa.create(Checker);
         errdefer gpa.destroy(k);
         const t = try treem.Tree.create(gpa, io, cat, .{ .host = "uitree-replica" });
+        t.terms.enabled = false;
         k.* = .{ .gpa = gpa, .io = io, .cat = cat, .t = t, .rep = .{ .gpa = gpa, .t = t }, .enc = .{ .gpa = gpa } };
         if (std.c.getenv("UITREE_RENDER_DUMP")) |p| k.dump = std.Io.Dir.cwd().createFile(io, std.mem.span(p), .{}) catch null;
         return k;
@@ -50,14 +51,14 @@ pub const Checker = struct {
     /// After a pump of the live tree, before its changes are cleared: the
     /// first is a snapshot, the rest batches, as a renderer that attached
     /// at the start would get them.
-    pub fn pump(k: *Checker, st: *const State, ch: treem.Changes) !void {
+    pub fn pump(k: *Checker, st: *const State, ch: treem.Changes, terms: ?*treem.term.Terms) !void {
         var arena: std.heap.ArenaAllocator = .init(k.gpa);
         defer arena.deinit();
         var uch: abi.UitChanges = .{};
         try abi.fill(arena.allocator(), ch, &uch);
         var aw: Writer.Allocating = .init(k.gpa);
         defer aw.deinit();
-        const src: stream.Source = .{ .st = st, .cat = k.cat };
+        const src: stream.Source = .{ .st = st, .cat = k.cat, .terms = terms };
         k.enc.seq += 1;
         if (!k.started) {
             try k.enc.snapshot(src, &aw.writer);
@@ -72,7 +73,7 @@ pub const Checker = struct {
 
     /// Compares the replica with `live`; writes each difference to `w`.
     /// True when they agree.
-    pub fn compare(k: *Checker, live: *const State, w: *Writer) !bool {
+    pub fn compare(k: *Checker, live: *const State, terms: ?*treem.term.Terms, w: *Writer) !bool {
         var arena: std.heap.ArenaAllocator = .init(k.gpa);
         defer arena.deinit();
         const a = arena.allocator();
@@ -104,11 +105,38 @@ pub const Checker = struct {
             const r = rs.menu(m.name.bytes);
             ok = try same(w, try std.fmt.allocPrint(a, "menu/{s}", .{m.name.bytes}), m.val.bytes, if (r) |x| x.val.bytes else "") and ok;
         }
+        // Terminals: the screen the records drew is the engine's.
+        if (terms) |ts| for (ts.handles()) |h| {
+            const t = ts.owned(h).?;
+            if (live.node(h) == null) continue;
+            const path = try live.relPathAlloc(a, h);
+            var lw: Writer.Allocating = .init(a);
+            t.eng.screenText(&lw.writer) catch return error.OutOfMemory;
+            var rw: Writer.Allocating = .init(a);
+            const rh = replicaNode(a, rs, live, h);
+            if (rh) |x| if (k.rep.views.get(x)) |v| v.screenText(&rw.writer) catch return error.OutOfMemory;
+            ok = try same(w, try std.fmt.allocPrint(a, "{s}/screen", .{path}), lw.written(), rw.written()) and ok;
+        };
         ok = try same(w, "theme/name", Blob.str(live.theme_name), Blob.str(rs.theme_name)) and ok;
         ok = try same(w, "theme/mode", if (live.dark()) "dark" else "light", if (rs.dark()) "dark" else "light") and ok;
         return ok;
     }
 };
+
+/// The replica's node at the live node's path.
+fn replicaNode(a: Allocator, rs: *const State, live: *const State, h: treem.Handle) ?treem.Handle {
+    const lw = live.winOf(h) orelse return null;
+    const rw = rs.win(lw.nameStr()) orelse return null;
+    const n = live.node(h) orelse return null;
+    if (h == n.root) return rw.root;
+    var aw: Writer.Allocating = .init(a);
+    live.fullPath(&aw.writer, h) catch return null;
+    const full = aw.written();
+    // win/W/rel
+    const pre = std.fmt.allocPrint(a, "win/{s}/", .{lw.nameStr()}) catch return null;
+    if (!std.mem.startsWith(u8, full, pre)) return null;
+    return treem.path.resolveNode(rs, a, rw.root, full[pre.len..], null) catch null;
+}
 
 fn doc(a: Allocator, st: *const State, h: treem.Handle) ![]const u8 {
     if (h == 0) return "";
