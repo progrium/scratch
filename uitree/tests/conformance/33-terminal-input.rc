@@ -1,5 +1,5 @@
 #!/bin/rc
-# 32-terminal-input: components.md § terminal, the input on top of the
+# 33-terminal-input: components.md § terminal, the input on top of the
 # screen (T7). Without a mouse mode a drag selects and `selection` serves
 # the text, the copy keystroke puts it on the clipboard and the wheel
 # moves the view; under one, clicks and the wheel are reported to the
