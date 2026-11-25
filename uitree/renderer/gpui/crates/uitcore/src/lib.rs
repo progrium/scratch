@@ -284,7 +284,45 @@ pub struct Changes {
     pub props: Vec<(Node, String)>,
     pub cmds: Vec<HostCmd>,
     pub exited: Option<String>,
+    /// ABI 9: terminal nodes to redraw, and what to re-read.
+    pub terms: Vec<TermChange>,
 }
+
+/// One entry of `UitChanges.terms`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TermChange {
+    pub node: Node,
+    /// `sys::UIT_TERM_*` bits.
+    pub what: u32,
+    /// With `UIT_TERM_ROWS` and not `UIT_TERM_ALL`: the viewport rows that changed.
+    pub rows: Vec<u32>,
+}
+
+impl TermChange {
+    pub fn all(&self) -> bool {
+        self.what & (sys::UIT_TERM_ALL | sys::UIT_TERM_STYLES_RESET) != 0
+    }
+}
+
+/// A run of cells in one style, copied out of the core.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TermRun {
+    pub col: u32,
+    /// Cells covered; a wide character counts 2.
+    pub width: u32,
+    pub style: u32,
+    pub selected: bool,
+    pub text: String,
+}
+
+/// One viewport row as runs.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TermRow {
+    pub y: u32,
+    pub runs: Vec<TermRun>,
+}
+
+pub use sys::{UitTermCursor as TermCursor, UitTermMouse as TermMouse, UitTermStyle as TermStyle};
 
 pub struct MachineArgs<'a> {
     pub prog: &'a str,
@@ -410,6 +448,10 @@ impl Core {
                 sys::UIT_CMD_APP_CTL => HostCmd::AppCtl { ctl: Ctl::copy(&c.ctl) },
                 t => HostCmd::Other(t),
             });
+        }
+        for c in slice(ch.terms, ch.n_terms) {
+            let rows = if c.what & sys::UIT_TERM_ROWS != 0 && c.what & sys::UIT_TERM_ALL == 0 { slice(c.rows, c.n_rows).to_vec() } else { Vec::new() };
+            out.terms.push(TermChange { node: c.node, what: c.what, rows });
         }
         if ch.exited != 0 {
             out.exited = Some(text(ch.exit_status).into_owned());
@@ -650,6 +692,61 @@ impl Core {
         let mut out = drag;
         self.check(unsafe { sys::uit_drag(self.raw, &m, &mut out) })?;
         Ok(out)
+    }
+
+    // ---- Terminal nodes (ABI 9) ----
+
+    /// Viewport rows `first .. first+n`, clipped to the grid, copied.
+    pub fn term_rows(&self, n: Node, first: u32, count: u32) -> Result<Vec<TermRow>, Error> {
+        let mut p = std::ptr::null();
+        let mut k = 0usize;
+        self.check(unsafe { sys::uit_term_rows(self.raw, n, first, count, &mut p, &mut k) })?;
+        Ok(slice(p, k)
+            .iter()
+            .map(|r| TermRow {
+                y: r.y,
+                runs: slice(r.runs, r.n_runs)
+                    .iter()
+                    .map(|u| TermRun { col: u.col, width: u.width, style: u.style, selected: u.selected != 0, text: text(u.text).into_owned() })
+                    .collect(),
+            })
+            .collect())
+    }
+
+    /// The style table, ids from 0.
+    pub fn term_styles(&self, n: Node) -> Result<&[TermStyle], Error> {
+        let mut p = std::ptr::null();
+        let mut k = 0usize;
+        self.check(unsafe { sys::uit_term_styles(self.raw, n, &mut p, &mut k) })?;
+        Ok(slice(p, k))
+    }
+
+    pub fn term_cursor(&self, n: Node) -> Result<TermCursor, Error> {
+        let mut c = TermCursor::default();
+        self.check(unsafe { sys::uit_term_cursor(self.raw, n, &mut c) })?;
+        Ok(c)
+    }
+
+    /// The grid that fits the node's bounds, and a cell in device pixels.
+    pub fn term_resize(&self, n: Node, cols: u32, rows: u32, cell_w: u32, cell_h: u32) -> Result<(), Error> {
+        self.check(unsafe { sys::uit_term_resize(self.raw, n, cols, rows, cell_w, cell_h) })
+    }
+
+    /// True if the program took it (a mouse mode is on); false if the core
+    /// used it itself (selection).
+    pub fn term_mouse(&self, n: Node, m: &TermMouse) -> Result<bool, Error> {
+        let r = unsafe { sys::uit_term_mouse(self.raw, n, m) };
+        self.check(r)?;
+        Ok(r == 1)
+    }
+
+    pub fn term_scroll(&self, n: Node, lines: i32) -> Result<(), Error> {
+        self.check(unsafe { sys::uit_term_scroll(self.raw, n, lines) })
+    }
+
+    /// Committed text (IME output, a typed character) for the program.
+    pub fn term_text(&self, n: Node, t: &str) -> Result<(), Error> {
+        self.check(unsafe { sys::uit_term_text(self.raw, n, s(t)) })
     }
 
     pub fn wake(&self) {

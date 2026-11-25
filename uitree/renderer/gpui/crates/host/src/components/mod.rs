@@ -6,6 +6,7 @@ pub mod forms;
 pub mod layout;
 pub mod nav;
 pub mod overlays;
+pub mod terminal;
 pub mod web;
 
 use crate::ComponentRegistry;
@@ -18,4 +19,5 @@ pub fn register(reg: &mut ComponentRegistry) {
     edit::register(reg);
     layout::register(reg);
     web::register(reg);
+    terminal::register(reg);
 }

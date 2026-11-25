@@ -23,6 +23,8 @@ jiff = "1.0"
 anyhow = "1"
 lsp-types = { version = "0.97.0", features = ["proposed"] }
 similar = "2.7"
+# Cell widths for the terminal node (wide and combining characters).
+unicode-width = "0.2"
 # The native window behind GPUI's: `click-through` (passthrough.rs) and
 # the shell layer's window props (src/platform/).
 raw-window-handle = "0.6"

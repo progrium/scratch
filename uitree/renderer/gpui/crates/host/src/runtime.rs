@@ -688,6 +688,7 @@ pub(crate) fn apply_changes(inner: &Rc<Inner>, ch: Changes, cx: &mut App) {
             with_window(inner, node.win(), cx, |window, cx| comp.prop_changed(&node, state.as_ref(), file, window, cx));
         }
     }
+    crate::components::terminal::changed(inner, &ch.terms, cx);
     for c in ch.cmds {
         host_cmd(inner, c, cx);
     }

@@ -3793,6 +3793,7 @@ dependencies = [
  "similar",
  "tray-icon",
  "uitcore",
+ "unicode-width",
  "wasm-bindgen",
  "web-sys",
  "web-time",
