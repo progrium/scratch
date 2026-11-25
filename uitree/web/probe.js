@@ -11,7 +11,7 @@
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-const T = { version: 100, attach: 104, error: 107, walk: 110, open: 112, read: 116, write: 118, clunk: 120 };
+const T = { version: 100, attach: 104, error: 107, walk: 110, open: 112, create: 114, read: 116, write: 118, clunk: 120 };
 
 export async function probe(core) {
   let buf = new Uint8Array(0);
@@ -122,13 +122,35 @@ export async function probe(core) {
         } catch { /* closed */ } finally { await clunk(fid); }
       })();
     },
-    /** One write of `text` (a ctl command, a value). */
-    async write(path, text) {
+    /**
+     * Writes `data` (text, or bytes such as an image) in one open: one
+     * write when it fits in a message (a ctl command, a value), else in
+     * pieces at increasing offsets, as `cat file >path` would.
+     */
+    async write(path, data) {
       const fid = await walk(path);
       try {
         await rpc(T.open, pack([4, fid], [1, 1 | 16]));
-        const b = enc.encode(text);
-        await rpc(T.write, pack([4, fid], [8, 0], [4, b.length], ['b', b]));
+        const b = typeof data === 'string' ? enc.encode(data) : data;
+        const max = msize - 24;
+        let off = 0;
+        do {
+          const p = b.subarray(off, off + max);
+          await rpc(T.write, pack([4, fid], [8, off], [4, p.length], ['b', p]));
+          off += p.length;
+        } while (off < b.length);
+      } finally { await clunk(fid); }
+    },
+    /** Makes file `name` in directory `dir` (an asset) and writes `data` to it. */
+    async create(dir, name, data) {
+      const fid = await walk(dir);
+      try {
+        await rpc(T.create, pack([4, fid], ['s', name], [4, 0o666], [1, 1 | 16]));
+        const b = typeof data === 'string' ? enc.encode(data) : data;
+        for (let off = 0; off < b.length; off += msize - 24) {
+          const p = b.subarray(off, off + msize - 24);
+          await rpc(T.write, pack([4, fid], [8, off], [4, p.length], ['b', p]));
+        }
       } finally { await clunk(fid); }
     },
     /** Whether `path` exists. */

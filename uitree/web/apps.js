@@ -13,6 +13,8 @@ export const apps = {
   settings: { title: 'Settings', argv: ['rc', 'settings.rc'], files: ['settings.rc', 'lib.rc'] },
   csvview: { title: 'planets.csv', argv: ['awk', '-f', 'csvview.awk', 'planets.csv'], files: ['csvview.awk', 'planets.csv'] },
   files: { title: 'Files', argv: ['rc', 'files.rc'], files: ['files.rc', 'lib.rc'] },
+  // index.html's app: the page writes each component's story itself.
+  gallery: { title: 'Components', argv: ['rc', 'gallery.rc'], files: ['gallery.rc'], hidden: true },
   tour: { title: 'Tour', argv: ['rc', 'tour.rc'], files: ['tour.rc', 'lib.rc', 'notes.md', 'pic.png'] },
   // A Go program (plan9/386), so its one file is bytes; the page shows
   // its source.

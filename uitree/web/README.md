@@ -1,10 +1,11 @@
 # uitree/web: uitree in the browser
 
-![The counter on both renderers in one page: GPUI on the left, the terminal renderer in xterm.js on the right](screenshots/both-renderers.png)
+![The component gallery: the button story on the GPUI renderer, with the component list on the left and the renderer, theme mode and theme switches at the top](screenshots/gallery-gui.png)
 
 Both renderers in a browser page, fully client-side: no server-side h9 and
-no DOM renderer. `index.html` runs `counter.rc` twice, once on each
-renderer.
+no DOM renderer. `index.html` is a gallery of every component, drawn by
+either renderer (below), and `examples.html` runs the example apps on
+both at once.
 
 ```
 page (main thread)                                   Worker, one per app
@@ -142,7 +143,7 @@ terminal renderer in the browser link `libuitcore.a`.
   has WebGPU, was blank too). The renderer asks for WebGL2 unless the page
   says otherwise: `gpui.html?gfx=webgpu` or `gfx=auto` to try the others.
   The browser tests run with WebGPU disabled, so they never took that path.
-- **Two renderers at once were too much for a phone**: `index.html` ran a
+- **Two renderers at once were too much for a phone**: `examples.html` (then `index.html`) ran a
   GPUI module and a terminal module, each with its own h9 machine, about
   550 MB in WebKit, and iOS Safari killed the tab and reloaded it until it
   gave up. On a screen too narrow for the two side by side, the page now
@@ -151,9 +152,65 @@ terminal renderer in the browser link `libuitcore.a`.
   the first few hundred ms after the tree appears, before `cat
   $ui/events` opens, does nothing.
 
+## The component gallery
+
+![The same story on the terminal renderer: cells in xterm.js; stories with a type it doesn't draw are marked in the list](screenshots/gallery-tui.png)
+
+`index.html` shows every type in `core/types`, one story each
+(`stories.js`), with its variations side by side: variants, sizes,
+states, data files, overlays. A switch at the top picks the renderer,
+**GUI** (GPUI on its canvas) or **TUI** (the terminal renderer's cells in
+xterm.js), and two more pick the theme mode and any of GPUI Kit's named
+themes, which both renderers share. Under the renderer are the events
+the story sends as you use it, the tree document it wrote, and the
+descriptors of its types as the renderer serves them.
+
+One app runs per renderer, `gallery/gallery.rc`, which names the window
+and prints its events. The page writes each story itself, through a
+`$ui` connection of its own (`probe.js`, as the tests use), so moving
+between stories is a few writes and not a new machine; only switching
+renderer loads the other page. `gallery.js` turns a story into those
+writes, and draws a section that uses a type the renderer doesn't draw
+as a note naming the type; the list marks such stories with ⊘.
+
+Which types a renderer draws isn't in `$ui/types`: the core serves its
+whole catalog whatever the renderer registers (`uit_create` only checks
+the renderer's list against it), and a type the renderer doesn't draw is
+an empty box. So `gallery.js` keeps the lists. The terminal renderer's is
+`renderer/tui/types/types.zig`'s (the gallery test checks they agree):
+the pickers and calendar, combobox, OTP, rating, pagination, stepper,
+skeleton, shimmer, bubble, avatar group, diff, HTML, the virtual list and
+the popover, hover card, tooltip and context-menu overlays are GPUI's
+only. Neither renderer draws `icon-view` or `console` yet.
+
+The page also writes what the stories need besides the tree: data files,
+bytes (`img`'s `data`), assets (`$ui/asset/NAME` for `svg src=@NAME`,
+made with a 9P create, which `probe.js` now has) and overlays. `probe.js`
+writes a large file in pieces at increasing offsets, as `cat` would.
+
+What the gallery showed:
+
+- **GPUI Kit's icons appear on the next frame after they load**, not when
+  they load: each is fetched when first drawn, and nothing redraws when
+  the fetch completes, so a story full of new icons is blank until the
+  pointer moves over the canvas (any input redraws). The examples have the
+  same delay; it is short there because the pointer is usually moving.
+- **A `terminal` or `web` node ignores its own `h=`** in a scrolling
+  column on GPUI and collapses to one row; inside a box with a height and
+  `flex-1` it fills it. The stories do that.
+- **`button`'s `prefix` and `suffix` slots aren't drawn** by GPUI (the
+  descriptor has them), so the story leaves them out.
+- **The terminal renderer rounds a 4-point `gap` between one-row texts
+  into overlap**: a column of texts with `gap=4` shows every third row.
+
+`?c=ID&r=tui&mode=dark&theme=NAME` opens the gallery on a story, a
+renderer and a theme.
+
 ## Every example, and the tests
 
-`index.html` runs any example on both renderers (`?app=NAME`), and
+![The counter on both renderers in examples.html: GPUI on the left, the terminal renderer in xterm.js on the right](screenshots/both-renderers.png)
+
+`examples.html` runs any example on both renderers (`?app=NAME`), and
 `gpui.html?app=NAME` and `tui.html?app=NAME` run one, filling the page.
 `apps.js` lists them: the conformance examples (counter, hello, confirm,
 signin, settings, csvview, files) and `tour/tour.rc`, which uses what
@@ -177,14 +234,15 @@ node test/run.mjs                 # on zig-out/ as built: --only APP,... --rende
 `probe.js` is a 9P client of the page's core, a connection of its own
 beside the app's: a case finds a node by its `bounds` file, acts with
 the real mouse and keyboard, and checks the tree (`test/cases.mjs`).
-25 cases pass: clicks, key bindings, typing, Enter, exit status, field
+26 cases pass: clicks, key bindings, typing, Enter, exit status, field
 errors, a secret input, dialogs, sidebar pages, switch, number-input,
 the select popup, radio-group, slider, theme mode and name, table
 filter, sheet, context menu, alert dialog, checkbox, textarea, the
 clipboard both ways, tabs, markdown, editor and image, popover, toast,
 tooltip, links, the menu bar, a file dropped from the page, and a
 `terminal` node in stream mode (`repl`, the Go shell from
-examples/go/repl built for plan9/386: keys in, cells out, history). The terminal renderer draws a subset
+examples/go/repl built for plan9/386: keys in, cells out, history), and
+every story of the component gallery written without an error. The terminal renderer draws a subset
 of the components (no tables, sheets, sidebars or menus), so the cases
 for those run on GPUI only.
 
@@ -227,25 +285,27 @@ Still not working, or not covered:
 
 ## Size and speed
 
-What a page downloads, from this build (measured before libghostty-vt
-became the core's terminal engine: with it, each module that links the
-core grows by up to the `uitcore.wasm` difference in
-[core/README.md](../core/README.md#size-and-speed), 293 KB gzip at most,
-less once dead code is dropped): ReleaseSmall Zig, Rust in Cargo's
-`web` profile (opt-level `z`, fat LTO, one codegen unit), names stripped.
-gzip is `gzip -9`, brotli is quality 11, as the build writes them beside
-each file.
+What a page downloads, from this build (libghostty-vt is the core's
+terminal engine, linked into each module that has the core):
+ReleaseSmall Zig, Rust in Cargo's `web` profile (opt-level `z`, fat LTO,
+one codegen unit), names stripped. gzip is `gzip -9`, brotli is quality
+11, as the build writes them beside each file.
 
 | File | Raw | gzip | brotli |
 | --- | --- | --- | --- |
-| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host + the core) | 17.4 MB | 5.8 MB | 4.1 MB |
-| `uitcore.wasm` (the core alone, for core-test.html) | 0.56 MB | 0.21 MB | 0.16 MB |
-| `uitree-tui.wasm` (terminal renderer + core + Yoga + libc++) | 1.1 MB | 0.33 MB | 0.24 MB |
+| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host + the core) | 18.2 MB | 6.1 MB | 4.3 MB |
+| `uitcore.wasm` (the core alone, for core-test.html) | 1.6 MB | 0.57 MB | 0.44 MB |
+| `uitree-tui.wasm` (terminal renderer + core + Yoga + libc++) | 2.3 MB | 0.73 MB | 0.54 MB |
 | `h9/h9.wasm` (h9, DWARF stripped) | 4.6 MB | 1.2 MB | 0.83 MB |
-| `h9/root.h9a` (root.list: rc, awk, sed and 27 more) | 2.2 MB | 0.99 MB | 0.26 MB |
+| `h9/root.h9a` (root.list: rc, awk, sed and 27 more) | 2.2 MB | 0.98 MB | 0.26 MB |
 
-So a GPUI page is about 8 MB gzip or 5.2 MB brotli (the core is now inside the GPUI module rather than beside it), and a terminal page
-2.5 MB or 1.3 MB (plus xterm.js from its CDN).
+So a GPUI page is about 8.2 MB gzip or 5.4 MB brotli, and a terminal
+page 2.9 MB or 1.6 MB (plus xterm.js from its CDN). Against the build
+before libghostty-vt (17.4/5.8/4.1 MB GPUI, 0.56/0.21/0.16 MB core,
+1.1/0.33/0.24 MB terminal), the engine adds about 0.3 MB gzip to the
+GPUI module and 0.4 MB to each Zig module with the core in it. The
+gallery adds two scripts to the page, `stories.js` and `gallery.js`,
+under 20 KB gzip together.
 
 Where it came from, each step measured on the one before (gzip):
 

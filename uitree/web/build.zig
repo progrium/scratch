@@ -31,9 +31,10 @@ const nightly = std.mem.trim(u8, @embedFile("rust-nightly"), " \t\r\n");
 
 /// The pages and their scripts, copied as they are (sw.js is stamped).
 const pages = [_][]const u8{
-    "index.html",  "gpui.html",          "tui.html",   "core-test.html", "tui-test.html",
-    "apps.js",     "cache.js",           "gpui.js",    "h9-worker.js",   "probe.js",
-    "tree.js",     "tui.js",             "uit-web.js", "uitcore-imports.js",
+    "index.html",  "examples.html",      "gpui.html",  "tui.html",       "core-test.html",
+    "tui-test.html", "apps.js",          "cache.js",   "gpui.js",        "h9-worker.js",
+    "probe.js",    "tree.js",            "tui.js",     "uit-web.js",     "uitcore-imports.js",
+    "gallery.js",  "stories.js",
 };
 
 /// The examples (apps.js): each in apps/NAME/ with the files it reads,
@@ -48,6 +49,8 @@ const apps = [_]App{
     .{ .name = "files", .files = &.{ "rc/files.rc", "rc/lib.rc" } },
     .{ .name = "csvview", .files = &.{ "awk/csvview.awk", "awk/planets.csv" } },
     .{ .name = "tour", .files = &.{ "@tour/tour.rc", "@tour/notes.md", "@tour/pic.png", "rc/lib.rc" } },
+    // The component gallery's app (index.html writes the stories itself).
+    .{ .name = "gallery", .files = &.{"@gallery/gallery.rc"} },
     // The page shows main.go; the program itself is built below.
     .{ .name = "repl", .files = &.{"go/repl/main.go"} },
 };
