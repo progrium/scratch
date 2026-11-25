@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_calls_are_stubs_until_the_tree_has_terminals() {
+    fn terminal_calls_refuse_a_node_that_is_not_a_terminal() {
         let cfg = UitConfig {
             abi_version: UIT_ABI_VERSION,
             types: UitStr::EMPTY,
@@ -562,7 +562,7 @@ mod tests {
         let mut c: *mut UitCore = std::ptr::null_mut();
         assert_eq!(unsafe { uit_create(&cfg, &mut c) }, UIT_OK);
         let mut cur = UitTermCursor::default();
-        assert_eq!(unsafe { uit_term_cursor(c, 1, &mut cur) }, UIT_ENOTSUP);
+        assert_eq!(unsafe { uit_term_cursor(c, 1, &mut cur) }, UIT_EINVAL);
         let mut ch = UitChanges::default();
         assert_eq!(unsafe { uit_pump(c, &mut ch) }, UIT_OK);
         assert_eq!(ch.n_terms, 0);
