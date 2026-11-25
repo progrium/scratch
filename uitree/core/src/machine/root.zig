@@ -10,6 +10,8 @@ const std = @import("std");
 const build_options = @import("build_options");
 const abi = @import("../abi.zig");
 const Thread = @import("../web.zig").Thread;
+const term = @import("../tree/term.zig");
+const engine = @import("../term/engine.zig");
 
 pub const available = build_options.h9;
 const h9 = if (available) @import("h9") else struct {};
@@ -29,6 +31,9 @@ pub const Runner = struct {
     threaded: std.Io.Threaded,
     thread: Thread = undefined,
     signals: if (available) h9.Machine.Signals else void = if (available) .{} else {},
+    /// Terminal nodes' pty mode: pairs in this machine whose masters the
+    /// core holds (h9's host ptys, `ptyHost`).
+    ptys: if (available) h9.Machine.Ptys else void = undefined,
     running: std.atomic.Value(bool) = .init(true),
     hung_up: std.atomic.Value(bool) = .init(false),
     out: std.Io.File.Writer = undefined,
@@ -51,7 +56,9 @@ pub const Runner = struct {
         if (!available) return error.Unsupported;
         const r = try gpa.create(Runner);
         r.* = .{ .arena = .init(gpa), .threaded = .init(gpa, .{}), .ctx = ctx, .on_exit = on_exit };
+        r.ptys = .init(gpa, r.io());
         errdefer {
+            r.ptys.deinit();
             r.arena.deinit();
             r.threaded.deinit();
             gpa.destroy(r);
@@ -130,6 +137,7 @@ pub const Runner = struct {
         r.err = errf.writerStreaming(r.io(), &.{});
         opts.stdio = .{ .out = &r.out.interface, .err = &r.err.interface };
         opts.signals = &r.signals;
+        opts.ptys = &r.ptys;
         opts.tmp_dir = if (std.c.getenv("TMPDIR")) |t| std.mem.span(t) else "/tmp";
         r.opts = opts;
         r.prog = try ar.dupe(u8, args.prog.slice());
@@ -178,9 +186,69 @@ pub const Runner = struct {
 
     pub fn join(r: *Runner) void {
         r.thread.join();
+        if (available) r.ptys.deinit();
         r.arena.deinit();
         r.threaded.deinit();
         gpa.destroy(r);
+    }
+
+    // ---------------------------------------------------------------- pty mode
+
+    /// For term.zig's pty mode: opens pairs in this machine. Owner thread;
+    /// valid until `join`, and the core closes every pair before that.
+    pub fn ptyHost(r: *Runner) term.PtyHost {
+        return .{ .ctx = r, .open = ptyOpen };
+    }
+
+    /// One open pair, as the terminal holds it.
+    const Pair = struct {
+        pty: if (available) *h9.Machine.Pty else void,
+        tty_buf: [32]u8 = undefined,
+        tty_len: usize = 0,
+    };
+
+    fn ptyOpen(ctx: *anyopaque, sink: term.PtySink, size: engine.Size) anyerror!term.PtyConn {
+        if (comptime !available) return error.Unsupported;
+        const r: *Runner = @ptrCast(@alignCast(ctx));
+        const pr = try gpa.create(Pair);
+        errdefer gpa.destroy(pr);
+        pr.pty = try r.ptys.open(.{ .ctx = sink.ctx, .data = sink.data, .hangup = sink.hangup, .release = sink.release }, winsize(size));
+        // The Linux view's name for it (#τ/N in the Plan 9 view).
+        pr.tty_len = (std.fmt.bufPrint(&pr.tty_buf, "/dev/pts/{d}", .{pr.pty.n}) catch unreachable).len;
+        return .{ .ctx = pr, .tty = pr.tty_buf[0..pr.tty_len], .write = ptyWrite, .resize = ptyResize, .close = ptyClose };
+    }
+
+    const Winsize = if (available) h9.hostpty.Winsize else void;
+
+    fn winsize(sz: engine.Size) Winsize {
+        if (comptime !available) return {};
+        return .{
+            .rows = sz.rows,
+            .cols = sz.cols,
+            .xpixel = std.math.lossyCast(u16, @as(u32, sz.cols) * sz.cell_w_px),
+            .ypixel = std.math.lossyCast(u16, @as(u32, sz.rows) * sz.cell_h_px),
+        };
+    }
+
+    fn ptyWrite(ctx: *anyopaque, bytes: []const u8) void {
+        if (comptime !available) return;
+        const pr: *Pair = @ptrCast(@alignCast(ctx));
+        // Gone (the program's machine ended) or Full (it stopped
+        // reading): dropped, as `keys` drops for a reader that stopped.
+        pr.pty.write(bytes) catch {};
+    }
+
+    fn ptyResize(ctx: *anyopaque, size: engine.Size) void {
+        if (comptime !available) return;
+        const pr: *Pair = @ptrCast(@alignCast(ctx));
+        pr.pty.resize(winsize(size));
+    }
+
+    fn ptyClose(ctx: *anyopaque) void {
+        if (comptime !available) return;
+        const pr: *Pair = @ptrCast(@alignCast(ctx));
+        pr.pty.close();
+        gpa.destroy(pr);
     }
 };
 

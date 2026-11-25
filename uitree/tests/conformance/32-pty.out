@@ -1,0 +1,43 @@
+# pty=on: tty is the slave
+ok
+/dev/pts/0
+|
+# a program on it sees a terminal the size of the grid
+/dev/pts/0
+isatty
+24 80
+done
+|
+# typed keys reach the program through the master
+ok
+got hi
+# the line discipline: ctrl-c is SIGINT for the foreground program
+ok
+^Cinterrupted
+# output past the bounded buffer: the master waits while it is full
+ok
+line 2998 of output to fill the buffer
+line 2999 of output to fill the buffer
+# a resize is TIOCSWINSZ: the program gets SIGWINCH
+ok
+resync - -
+resize - sh cols=100 rows=30 via=user win=main
+ready
+30 100
+|
+100
+|
+30
+|
+# pty=off closes the master: the program gets SIGHUP
+ok
+|
+hup
+# the program closing its side sends hangup
+ok
+resync - -
+hangup - sh win=main
+# gone with its node
+ok
+no
+exit=0

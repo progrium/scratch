@@ -42,6 +42,11 @@ standard error, cut after the error phrase. A script whose first line is
 doesn't claim in `version`. Results go to `out/`, which git ignores. Each
 PR into `uitree` says which scripts it makes pass.
 
+A script with a `# view: linux` line (32-pty) runs Linux programs: `run`
+gives it `$LINUXROOT` at `#L` and runs it as `/9/bin/rc` in the Plan 9
+view, and skips it without `$LINUXROOT`. Alpine's minirootfs is enough
+for these (CI uses it); busybox has `setsid`, `stty` and `tty`.
+
 ## The scripts
 
 | Script | Spec | Needs |
@@ -77,6 +82,7 @@ PR into `uitree` says which scripts it makes pass.
 | 29-file-drops | transfer.md § Host files (file drops as handles: `item/N/file`, `$ui/file/ID/`, release) | layer transfer |
 | 30-tooltips | core § Node files, § Overlays (tooltips), components § Tooltips | profile overlay |
 | 31-terminal | components § terminal (stream mode), core § Stream files | type terminal |
+| 32-pty | components § terminal (pty mode) | type terminal, h9 with ptys, `$LINUXROOT` |
 
 01 to 26 keep uitreefs's numbers and topics. Three changed shape:
 13 was editor, markdown and dock, which are uitreefs extras the spec
@@ -171,6 +177,7 @@ fails the write with the usual phrases.
 | `key win=W stroke=KEYS [node=PATH]` | The user pressed KEYS in window W: the host resolves `keys` with the focused node's contexts (or PATH's, as if it had focus) and sends `action ID PATH via=key win=W`; with no binding, a focused `terminal` gets the stroke on `keys`, and otherwise nothing happens |
 | `menu item=ID` | The user chose the menu item with that ID: `action ID - via=menu`, or the item's role |
 | `appearance mode=light\|dark` | The operating system's appearance changed |
+| `term-resize win=W node=PATH cols=C rows=R [cw=PX ch=PX]` | A renderer laid terminal node PATH out to a C by R grid (`uit_term_resize`): `resize` if it changed, and in pty mode the program's TIOCSWINSZ |
 
 ## Proposed: formats the spec leaves open
 
