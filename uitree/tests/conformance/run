@@ -19,6 +19,10 @@
 #	     replays it into an empty tree and compares the two at the end; a
 #	     test passes only if they agree
 #
+# A script with a "# view: linux" line runs with $LINUXROOT, an Alpine
+# tree (tools/linuxroot, or Alpine's minirootfs), at #L, and is skipped
+# without it.
+#
 # UITREE_HEADLESS defaults to ../../core/zig-out/bin/uitree-headless, from
 # this directory. Exit status 0 when every test that ran passed. Actual
 # outputs and diffs are kept in ./out/, which git ignores.
@@ -67,10 +71,21 @@ for t; do
 		fail=$((fail + 1))
 		continue
 	fi
+	# A script marked "# view: linux" runs with the Alpine tree at #L
+	# ($LINUXROOT), as rc in the Plan 9 view, and is skipped without one.
+	cmd="rc ./$t.rc"
+	if grep -q '^# view: linux' "$t.rc"; then
+		if [ -z "${LINUXROOT:-}" ]; then
+			echo "skip $t (no LINUXROOT)"
+			skip=$((skip + 1))
+			continue
+		fi
+		cmd="-d $LINUXROOT:#L -e ui=/mnt/ui /9/bin/rc ./$t.rc"
+	fi
 	if [ -n "$timeout_cmd" ]; then
-		"$timeout_cmd" "$secs" "$host" $render rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
+		"$timeout_cmd" "$secs" "$host" $render $cmd >"out/$t.out" 2>"out/$t.stderr"
 	else
-		"$host" $render rc "./$t.rc" >"out/$t.out" 2>"out/$t.stderr"
+		"$host" $render $cmd >"out/$t.out" 2>"out/$t.stderr"
 	fi
 	echo "exit=$?" >>"out/$t.out"
 

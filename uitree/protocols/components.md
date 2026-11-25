@@ -248,10 +248,25 @@ It has two modes.
 
 - **Pty mode.** `set sh pty=on` makes the host open a pseudo-terminal pair
   inside the app's machine and hold the master; `tty` then reads the
-  slave's path (`/dev/pts/0`). The app starts its program on the slave
-  as a session leader, and `isatty` is true for it. `out` and `keys` are
-  unused. Resizes reach the program as `TIOCSWINSZ` and `SIGWINCH`; when
-  the program closes the slave the node sends `hangup`.
+  slave's path in the Linux view (`/dev/pts/0`; `#τ/0` from Plan 9). The
+  app starts its program on the slave as a session leader with it as the
+  controlling terminal, and `isatty` is true for it:
+
+  ```rc
+  echo 'set sh pty=on' >$ui/win/main/ctl
+  tty=`{cat $ui/win/main/sh/tty}
+  '#L/bin/sh' -c 'exec setsid -c sh <'$tty' >'$tty' 2>&1' &
+  ```
+
+  `out` and `keys` are unused: keys go to the master, through the pair's
+  line discipline (so Ctrl-C is `SIGINT`), and the program's output is
+  drawn, with the master not read while the node's buffer is full.
+  Resizes reach the program as `TIOCSWINSZ` and `SIGWINCH`. Each time the
+  program side's last open of the slave closes, the node sends `hangup`;
+  another program can open it again. `pty=off`, or removing the node,
+  closes the master, which sends the program `SIGHUP`. A host with no
+  machine for the app (an app on a remote 9P connection) leaves `tty`
+  empty.
 
 The rest is the same in both modes:
 

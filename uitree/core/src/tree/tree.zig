@@ -690,6 +690,9 @@ pub const Tree = struct {
                 any = true;
             };
             if (!std.mem.eql(Handle, on.children.items, nn.children.items)) any = true;
+            // Pty mode follows the prop (term.zig): on opens a pair, off
+            // closes its master.
+            if (!props_only and on.ty == nn.ty and on.isOn("pty") != nn.isOn("pty")) t.termPty(nn);
             if (any and !props_only) if (new.winOfRoot(nn.root)) |w| try t.addDirty(w.nameStr());
         }
         if (!props_only) {
@@ -1248,6 +1251,12 @@ pub const Tree = struct {
         if (!std.mem.eql(u8, n.ty.name, termm.type_name)) return;
         const sb = std.fmt.parseInt(u32, std.mem.trim(u8, n.value("scrollback"), " \t\r\n"), 10) catch 10_000;
         try t.terms.add(n.id, .{ .scrollback = sb });
+        t.termPty(n);
+    }
+
+    fn termPty(t: *Tree, n: *const Node) void {
+        if (!std.mem.eql(u8, n.ty.name, termm.type_name)) return;
+        t.terms.setPty(n.id, n.isOn("pty"));
     }
 
     /// Once per pump, after the ops: feeds every terminal what its program

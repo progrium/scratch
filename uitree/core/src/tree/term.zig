@@ -22,6 +22,16 @@
 //! A 9P read of a cached value first waits for the pump that feeds what
 //! was written before it (`sync`), so `echo hi >out; cat screen` reads
 //! `hi` though the write returned as soon as its bytes were buffered.
+//!
+//! Pty mode (`pty=on`, T6). The app's machine holds a pseudoterminal pair
+//! for the node, through `Terms.pty_host` (core/src/machine/, over
+//! h9.Machine's host ptys): the pair's reader thread writes the program's
+//! output into the same bounded `out` buffer, so a full buffer stops the
+//! master being read and the program's writes wait (backpressure); keys go
+//! to the master instead of `keys`; a resize is the pair's TIOCSWINSZ.
+//! `tty` reads the slave's path. When the program's side closes, the node
+//! sends `hangup`; turning `pty` off or removing the node closes the
+//! master, which sends the program SIGHUP.
 
 const std = @import("std");
 const engine = @import("../term/engine.zig");
@@ -50,6 +60,34 @@ pub fn isLive(name: []const u8) bool {
 
 pub const Error = error{ OutOfMemory, Gone };
 
+/// Where pty mode's pairs come from: the app's machine (machine/root.zig
+/// sets it while the app runs in h9). Owner thread.
+pub const PtyHost = struct {
+    ctx: *anyopaque,
+    open: *const fn (ctx: *anyopaque, sink: PtySink, size: engine.Size) anyerror!PtyConn,
+};
+
+/// What a pair calls with the program's side, on the pair's reader thread
+/// (`release` on any thread, once, after the last of the others).
+pub const PtySink = struct {
+    ctx: *anyopaque,
+    data: *const fn (ctx: *anyopaque, bytes: []const u8) void,
+    hangup: *const fn (ctx: *anyopaque) void,
+    release: *const fn (ctx: *anyopaque) void,
+};
+
+/// An open pair, held by its terminal. Owner thread.
+pub const PtyConn = struct {
+    ctx: *anyopaque,
+    /// The slave's path, as the program opens it.
+    tty: []const u8,
+    /// Bytes for the program, as typed; never blocks.
+    write: *const fn (ctx: *anyopaque, bytes: []const u8) void,
+    resize: *const fn (ctx: *anyopaque, size: engine.Size) void,
+    /// Closes the master (SIGHUP to the program) and releases the pair.
+    close: *const fn (ctx: *anyopaque) void,
+};
+
 pub const Term = struct {
     terms: *Terms,
     h: Handle,
@@ -70,6 +108,8 @@ pub const Term = struct {
     /// Whether a window's focus was on the node at the last pump, for
     /// focus reports (DECSET 1004).
     focused: bool = false,
+    /// Pty mode's pair, while `pty` is on and the machine gave one.
+    pty: ?PtyConn = null,
 
     // ---- under mu
     mu: Io.Mutex = .init,
@@ -89,6 +129,10 @@ pub const Term = struct {
     cwd: std.ArrayList(u8) = .empty,
     cols: u16 = 0,
     rows: u16 = 0,
+    /// The pair's slave, in pty mode.
+    tty: std.ArrayList(u8) = .empty,
+    /// The program's side of the pair closed; the next pump sends `hangup`.
+    hung_up: bool = false,
 
     fn gpa(t: *const Term) Allocator {
         return t.terms.gpa;
@@ -119,6 +163,7 @@ pub const Term = struct {
         t.selection.deinit(g);
         t.title.deinit(g);
         t.cwd.deinit(g);
+        t.tty.deinit(g);
         g.destroy(t);
     }
 
@@ -174,7 +219,7 @@ pub const Term = struct {
         if (eq(u8, name, "rows")) return try std.fmt.allocPrint(a, "{d}\n", .{t.rows});
         if (eq(u8, name, "title")) return try line(a, t.title.items);
         if (eq(u8, name, "cwd")) return try line(a, t.cwd.items);
-        if (eq(u8, name, "tty")) return ""; // pty mode (T6) sets it
+        if (eq(u8, name, "tty")) return try line(a, t.tty.items);
         return null;
     }
 
@@ -189,6 +234,8 @@ pub const Term = struct {
     /// open `keys` reader.
     pub fn sendKeys(t: *Term, bytes: []const u8) void {
         if (bytes.len == 0) return;
+        // In pty mode the program reads the master, not `keys`.
+        if (t.pty) |p| return p.write(p.ctx, bytes);
         t.lock();
         defer t.unlock();
         for (t.readers.items) |r| {
@@ -272,7 +319,65 @@ pub const Term = struct {
         t.cond.broadcast(t.io());
     }
 
+    // ------------------------------------------------------------ pty
+
+    /// Owner: pty mode on or off, as the node's `pty` says. Turning it on
+    /// opens a pair at the engine's size; off closes the master.
+    fn setPty(t: *Term, on: bool) void {
+        if (!on) return t.closePty();
+        if (t.pty != null) return;
+        const host = t.terms.pty_host orelse return;
+        // The pair's reference, released by `ptyRelease`.
+        _ = t.ref();
+        const p = host.open(host.ctx, .{ .ctx = t, .data = ptyData, .hangup = ptyHangup, .release = ptyRelease }, t.eng.size()) catch {
+            t.unref();
+            return;
+        };
+        t.pty = p;
+        t.lock();
+        t.hung_up = false;
+        t.unlock();
+        t.setText(&t.tty, p.tty);
+        t.bump();
+    }
+
+    fn closePty(t: *Term) void {
+        const p = t.pty orelse return;
+        t.pty = null;
+        p.close(p.ctx);
+        t.setText(&t.tty, "");
+        t.bump();
+    }
+
+    fn ptyData(ctx: *anyopaque, bytes: []const u8) void {
+        const t: *Term = @ptrCast(@alignCast(ctx));
+        // Blocks while `out` is full: the master isn't read meanwhile.
+        t.write(bytes) catch {};
+    }
+
+    fn ptyHangup(ctx: *anyopaque) void {
+        const t: *Term = @ptrCast(@alignCast(ctx));
+        t.lock();
+        t.hung_up = true;
+        t.want += 1;
+        t.unlock();
+        t.terms.wakeOwner();
+    }
+
+    fn ptyRelease(ctx: *anyopaque) void {
+        const t: *Term = @ptrCast(@alignCast(ctx));
+        t.unref();
+    }
+
+    fn takeHangup(t: *Term) bool {
+        t.lock();
+        defer t.unlock();
+        defer t.hung_up = false;
+        return t.hung_up;
+    }
+
     fn deinitOwner(t: *Term) void {
+        t.closePty();
         const g = t.gpa();
         t.eng.deinit();
         t.dirty.deinit(g);
@@ -367,6 +472,9 @@ pub const Terms = struct {
     /// False in a replica's tree (render/replica.zig): its terminals are
     /// drawn from the stream's records, not parsed here.
     enabled: bool = true,
+    /// Where pty mode's pairs come from; null when the app isn't running
+    /// in a machine this core holds (`pty=on` then leaves `tty` empty).
+    pty_host: ?PtyHost = null,
 
     pub fn init(gpa: Allocator, io: Io) Terms {
         return .{ .gpa = gpa, .io = io };
@@ -438,7 +546,23 @@ pub const Terms = struct {
     /// renderer to draw until the tree goes.
     pub fn shutDown(ts: *Terms) void {
         ts.down = true;
-        for (ts.map.values()) |t| t.close();
+        for (ts.map.values()) |t| {
+            t.closePty();
+            t.close();
+        }
+    }
+
+    /// Owner: a terminal's `pty` prop is `on` (or not).
+    pub fn setPty(ts: *Terms, h: Handle, on: bool) void {
+        const t = ts.owned(h) orelse return;
+        t.setPty(on and !ts.down);
+    }
+
+    /// Owner: the machine is going (uit_destroy): every pair closes and
+    /// no new one opens.
+    pub fn dropPtys(ts: *Terms) void {
+        ts.pty_host = null;
+        for (ts.map.values()) |t| t.closePty();
     }
 
     // ------------------------------------------------------------ pump
@@ -458,6 +582,7 @@ pub const Terms = struct {
                 try ctx.termEvent(t.h, "title", &.{});
             }
             if (t.events.cwd) |s| t.setText(&t.cwd, t.events.str(s));
+            if (t.takeHangup()) try ctx.termEvent(t.h, "hangup", &.{});
             // OSC 52: the program copies. The tree puts it on the
             // clipboard as it would a client's `clip` write.
             for (t.events.clips.items) |cl| try ctx.termClip(t.h, cl.target, t.events.str(cl.data));
@@ -584,6 +709,8 @@ pub const Terms = struct {
         const before = t.eng.size();
         try t.eng.resize(sz);
         const after = t.eng.size();
+        // TIOCSWINSZ: SIGWINCH for the program if the size changed.
+        if (t.pty) |p| p.resize(p.ctx, after);
         t.bump();
         return before.cols != after.cols or before.rows != after.rows;
     }

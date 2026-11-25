@@ -557,6 +557,8 @@ export fn uit_run_machine(c: *Core, args: ?*const UitMachineArgs) c_int {
         c.err_len = if (std.fmt.bufPrint(&c.err_buf, "machine: {t}", .{e})) |s| s.len else |_| 0;
         return UIT_EIO;
     };
+    // Terminal nodes' pty mode opens its pairs in this machine.
+    if (comptime machine.available) c.tree.terms.pty_host = c.runner.?.ptyHost();
     return UIT_OK;
 }
 
@@ -711,6 +713,8 @@ pub export fn uit_destroy(c: *Core) void {
     uit_shutdown(c);
     c.stopping.store(true, .release);
     if (c.timer) |t| t.join();
+    // Pty mode's pairs are the machine's: closed before it goes.
+    c.tree.terms.dropPtys();
     if (c.runner) |r| r.join();
     // Hangs up every connection and waits for them: nothing holds a
     // subscription or a snapshot after this.

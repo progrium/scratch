@@ -417,6 +417,8 @@ pub fn main(init: std.process.Init) !u8 {
         const sock = host.privatePath() catch |e| return fail("serve: {t}", .{e});
         runner = core.machine.Runner.start(gpa, &margs, sock, &h, Headless.onExit) catch |e|
             return fail("{s}: {t}", .{ opts.argv[0], e });
+        // Terminal nodes' pty mode opens its pairs in the app's machine.
+        if (core.machine.available) t.terms.pty_host = runner.?.ptyHost();
     }
 
     // The owner loop: pump when woken or when inject lines wait, until the
@@ -450,6 +452,8 @@ pub fn main(init: std.process.Init) !u8 {
         k.destroy();
     }
     host.destroy();
+    // Pty mode's pairs are the machine's: closed before it goes.
+    t.terms.dropPtys();
     if (runner) |r| r.join();
     t.destroy();
     cat.deinit();
