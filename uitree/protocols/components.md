@@ -152,17 +152,20 @@ buffer is `w×scale` by `h×scale` device pixels, and its ops and hits are
 in node space, the only place decimals are allowed.
 
 Types not in any profile are **host extras**. They are listed in
-`types/` like any other, with no `profile=` on their `type` line. uitreefs
+`types/` like any other, with no `profile=` on their `type` line. uitree
 has many (`editor`, `diff`, `markdown`, `chart`, `dock`, `dock-panel`,
 `date-picker`, `color-picker`, `message-list`, ...). A host may also
-publish a type ahead of the spec under an `x.` name (`x.uitreefs.dock`).
+publish a type ahead of the spec under an `x.` name (`x.uitree.dock`).
 When the spec adopts an extra, it moves into a profile in a minor
 version.
 
 ### New in this spec
 
-Four types in the profiles above don't exist in uitreefs today. Three
-come from 9/UX and the toolkit-go proposal; `terminal` came later.
+Four types in the profiles above weren't in uitreefs, uitree's
+predecessor. Three come from 9/UX and the toolkit-go proposal; `terminal`
+came later. uitree's core has descriptors for all four; its renderers
+draw `terminal` (and `web`, the GPUI one natively), not yet `icon-view`
+or `console`.
 
 **`icon-view`** (`desktop`). Icons at free positions, as in a Finder
 window. The host does selection, rubber-banding and dragging icons, so

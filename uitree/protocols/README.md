@@ -35,10 +35,10 @@ rest are optional, and a host says which it implements in `version`
 
 Which hosts are expected to implement what:
 
-| Layer | uitreefs (Electron alternative) | 9/UX (libux on 9front) |
+| Layer | uitree (Electron alternative) | 9/UX (libux on 9front) |
 | --- | --- | --- |
 | Core | yes | yes |
-| Components | `core` `canvas` `form` `data` `overlay` `web` profiles, plus extras | `core` `canvas` `form` `desktop`, then `data` and `overlay` |
+| Components | `core` `canvas` `form` `data` `overlay` `web` profiles and the `terminal` type, plus extras | `core` `canvas` `form` `desktop`, then `data` and `overlay` |
 | Shell | yes, through toolkit-go | windows, dialogs, notify; no tray |
 | Session | no: the platform window manager does it | yes, served by the rio fork |
 | Policy | optional: off for one client, on when a second attaches | yes, through uxd |
@@ -126,7 +126,11 @@ a layer's major version must not use that layer.
 Each layer will get a conformance suite: scripts that attach to a host
 over 9P and check the files, verbs, events and errors this spec
 describes, and a fake host for testing clients, following 9/UX's rule of
-a fake per protocol. Neither exists yet.
+a fake per protocol. The core, components and transfer layers have one,
+[tests/conformance](../tests/conformance/), which uitree's headless host
+passes; the shell, session, policy and render layers don't yet (render's
+round trip is checked under that suite with `run -r`), and there is no
+fake host.
 
 ## Prior art and sources
 

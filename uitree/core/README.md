@@ -4,6 +4,32 @@ The uitree core in Zig: `libuitcore.a`, `include/uitcore.h` and
 `uitree-headless`. [../README.md](../README.md) has the build commands and
 [../ARCHITECTURE.md](../ARCHITECTURE.md) how the parts fit.
 
+## Where things are
+
+```
+include/uitcore.h  the C ABI (version 9), the only way a renderer reaches the core
+src/abi.zig        its implementation
+src/proto/         the line grammar: tokens, ctl, style, events, errors, documents, data lines
+src/types/         descriptors, the Catalog, style words, theme tokens, named themes
+src/tree/          nodes, ops, batches, snapshots, the event bus, requests, trace;
+                   term.zig is the terminal node's buffer, streams and verbs
+src/term/          the terminal engine: engine.zig (the interface), ghostty.zig, plain.zig
+src/ninep/         the 9P server, transports, $ui as an Fs (ns.zig), /debug
+src/machine/       h9: start, mount $ui, exit status, hangup, pty pairs;
+                   web.zig is the browser's machine in a Worker
+src/render/        the renderer tree (protocols/render.md): stream, hub, replica, dial
+src/remote/        uitree-remote, a host that only serves renderers (zig build remote)
+src/headless/      uitree-headless, the conformance host (its /debug is ninep/debug.zig)
+src/web.zig        the browser as the core's platform (wasm32-wasi)
+types/             the descriptor files, embedded into the core
+tests/             libghostty-vt's smoke test
+```
+
+`zig build` steps: `test` (unit tests), `remote` (`uitree-remote`),
+`smoke` (the libghostty-vt smoke test below), `check-wire` (the vendored
+`wire.zig` matches the hyper9 submodule). `-Dh9=true` links hyper9 into
+`libuitcore.a` and the binaries; `-Dterminal` picks the terminal engine.
+
 ## The terminal engine
 
 The `terminal` node keeps its VT state in the core, on
@@ -97,9 +123,10 @@ fetched there. CI's builds include it and are slightly larger.
 | `uitcore.wasm`, gzip -9 | 243 KB | 536 KB | +293 KB |
 
 `uitcore.wasm` exports every symbol (`rdynamic`), so it keeps all of
-libghostty-vt's C API. A renderer's module keeps what the core calls, and
-until the engine calls it (workstream T2), `uitree-tui.wasm` is the same
-size with either engine.
+libghostty-vt's C API. A renderer's module keeps only what the core's
+engine (`src/term/ghostty.zig`) calls; `uitree-tui.wasm` and the GPUI
+module have not been measured with the engine wired in yet, and the
+sizes in [web/README.md](../web/README.md#size-and-speed) predate it.
 
 Parse throughput in wasm (`vt_bench`: 16 MB of `ls --color`-style lines,
 SGR colors and plain text, into one 80x24 terminal, after a 1 MB warm-up):

@@ -20,7 +20,8 @@ interface I3).
 
 ## Where the descriptors come from
 
-80 types are uitreefs's `catalog` crate, renamed to 0.2. `icon-view`,
+85 types. 80 are the `catalog` crate of uitreefs (uitree's predecessor,
+now removed), renamed to 0.2. `icon-view`,
 `console`, `terminal` and `web` are copied from components.md § New in
 this spec. `terminal` belongs to the terminal node's contracts (T1): a
 change to it is a change to a frozen contract.

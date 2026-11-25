@@ -227,7 +227,11 @@ Still not working, or not covered:
 
 ## Size and speed
 
-What a page downloads, from this build: ReleaseSmall Zig, Rust in Cargo's
+What a page downloads, from this build (measured before libghostty-vt
+became the core's terminal engine: with it, each module that links the
+core grows by up to the `uitcore.wasm` difference in
+[core/README.md](../core/README.md#size-and-speed), 293 KB gzip at most,
+less once dead code is dropped): ReleaseSmall Zig, Rust in Cargo's
 `web` profile (opt-level `z`, fat LTO, one codegen unit), names stripped.
 gzip is `gzip -9`, brotli is quality 11, as the build writes them beside
 each file.

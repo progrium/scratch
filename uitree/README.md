@@ -13,11 +13,17 @@ How the work is split is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```
 protocols/        the spec, draft 0.2
-core/             Zig: libuitcore.a, include/uitcore.h, uitree-headless
+core/             Zig: libuitcore.a, include/uitcore.h, uitree-headless,
+                  uitree-remote
   types/          the component catalog as descriptor files
 renderer/gpui/    Rust: the GPUI host, linked against libuitcore.a
 renderer/tui/     Zig: a terminal host on libvaxis and Yoga
+renderer/toy-py/  Python: a toy renderer over the render layer's 9P tree
+web/              both renderers and the core in the browser (wasm)
+apps/topframe/    Topframe, a fullscreen web overlay, as a uitree app
 tests/conformance the 0.2 conformance suite, run against uitree-headless
+bench/latency/    counter-click latency across seven setups
+tools/            zig-pin, ghostty-vt (libghostty-vt's build), linuxroot, gforth
 third_party/      hyper9 (submodule)
 ```
 
@@ -55,6 +61,13 @@ in pty mode, where htop and Neovim run; flagged `linux` in the list, since
 it needs `$LINUXROOT` at `#L`) and `go-repl` (a shell in Go in stream
 mode). `renderer/tui/tools/shoot.sh terminal` and `repl` record them.
 
+The hyper9 submodule is pinned at
+[4253a11](https://github.com/progrium/hyper9/commit/4253a11dc9fe910a1c3da5b1966b9618d5222ca8),
+on hyper9's `claude/project-thread-t4k14b` branch rather than its main:
+that is [hyper9#303](https://github.com/progrium/hyper9/pull/303), the
+pty pairs that the terminal node's pty mode needs, kept on Zig 0.16. It
+moves back to hyper9's main once uitree moves to Zig 0.17.
+
 `H9ROOT` is a 9front root with `rc` in it: in `third_party/hyper9`,
 `scripts/fetch.sh isoamd64`, then
 `zig build isoroot -- .local/9front/9front-11952.amd64.iso .local/9front/root-amd64`.
@@ -71,8 +84,12 @@ mode). `renderer/tui/tools/shoot.sh terminal` and `repl` record them.
   host tests where the core serves 9P, which is not Windows yet), signed
   on macOS, then every example under Xvfb from the `uitree` binary with
   screenshots as an artifact.
+- `.github/workflows/uitree-web.yml`: the browser build
+  (`zig build web -Dterminal=ghostty` in `web/`) and its headless
+  Chromium cases on both renderers ([web/README.md](web/README.md)).
 
-Status: every workstream has landed on `uitree`. Conformance on
+Status: every workstream has landed on `main`, including the terminal
+node's (T0 to T8). Conformance on
 `uitree-headless`: 33 pass (the transfer layer: typed drags, file drops
 as handles under `$ui/file/`, and the typed clipboard; tooltips; the
 `terminal` node in stream mode, pty mode and its input). The terminal

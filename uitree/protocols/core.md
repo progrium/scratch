@@ -276,7 +276,7 @@ text-left text-center text-right truncate
 `absolute` with `left=` and `top=` places a node by coordinates, so
 rectangle-based layouts (classic dialog resources) still have a form.
 A host may accept many more words (GPUI's whole `Styled` vocabulary, for
-uitreefs), always in the dashed spelling: uitreefs maps `flex-col` to GPUI's
+uitree), always in the dashed spelling: uitree maps `flex-col` to GPUI's
 `flex_col`. The portable words follow Tailwind's class names where one
 exists.
 
@@ -732,7 +732,7 @@ Hosts must accept at least these. A host may allow more.
 
 ```text
 uitree 1.0
-host uitreefs 0.3
+host uitree-headless 0.2
 layer core 1.0
 layer components 1.0
 layer shell 1.0
@@ -761,8 +761,8 @@ window positions in desktop space). Readers ignore kinds they don't know.
 3. **Shadowed window files.** A child named `title` hides the window's
    `title` file. Is a `.win/` directory cleaner?
 4. **`@name` and `@asset`.** The same sigil names a node and an asset.
-5. **Portable style words.** Is the list above enough to lay out the 24
-   uitreefs examples on a libdraw host?
+5. **Portable style words.** Is the list above enough to lay out uitree's
+   examples (ported from uitreefs) on a libdraw host?
 6. **Echoes from verbs.** Which client verbs send their event with
    `via=ctl` (a window's `close` does; a button's `click`?), and which
    send none (an overlay's `open` and `close`)? The conformance suite
