@@ -209,7 +209,7 @@ fn note_unsupported(what: &str, e: &uitcore::Error) {
     static SAID: AtomicBool = AtomicBool::new(false);
     if e.code == sys::UIT_ENOTSUP {
         if !SAID.swap(true, Ordering::Relaxed) {
-            eprintln!("uitree: terminal: this core has no terminal engine yet ({what}: {e})");
+            eprintln!("uitree: terminal: this core has no terminal engine yet ({what})");
         }
     } else {
         eprintln!("uitree: terminal: {what}: {e}");
