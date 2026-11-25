@@ -163,6 +163,13 @@ layer's Open questions. Carried-over items from uitreefs's GAPS.md that
     which the `plain` engine skips; 31 leaves them to the libghostty-vt
     build. `resize` needs a renderer's layout (uit_term_resize), which
     headless has none of.
+29l. **Terminal input (32).** Pointer input has no file of its own: the
+    suite drives it with render.md's `term-*` lines on `/debug/inject`.
+    The copy keystroke is `ctrl-shift-c` (and `cmd-c` on hosts whose
+    command key is super); `ctrl-c` stays the program's. Focus reports
+    follow the window's `focus` file, since headless has no window focus
+    of its own. OSC 52 takes `c` and `s` and drops `p` (no primary
+    selection), and its trace line is `osc52 path=P len=N`.
 
 ## Against hyper9 and h9
 

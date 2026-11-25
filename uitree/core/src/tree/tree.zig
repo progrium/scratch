@@ -273,6 +273,9 @@ pub const Tree = struct {
     /// Terminal nodes' engines and streams (term.zig). Not tree state:
     /// 9P threads write `out` and read `keys` directly.
     terms: termm.Terms,
+    /// OSC 52 writes a pump's terminals made, put on the clipboard once
+    /// the pump has fed them all. Text in `log.arena`.
+    term_clips: std.ArrayList(struct { h: Handle, text: []const u8 }) = .empty,
 
     /// A tree with the default `main` window, hidden. The tree must not
     /// move: streams point at its bus.
@@ -311,6 +314,7 @@ pub const Tree = struct {
         t.log.arena.deinit();
         t.files.deinit();
         t.terms.deinit();
+        t.term_clips.deinit(t.gpa);
         t.drag_ops.deinit(t.gpa);
     }
 
@@ -1251,7 +1255,47 @@ pub const Tree = struct {
     /// `changes().terms`. Owner thread.
     pub fn pumpTerms(t: *Tree) Error!void {
         if (t.terms.count() == 0) return;
+        defer t.term_clips.clearRetainingCapacity();
         try t.terms.pump(t.log.arena.allocator(), t, &t.log.terms);
+        for (t.term_clips.items) |x| try t.termClipAs(x.h, "osc52", x.text);
+    }
+
+    /// term.zig's `Terms.pump`: a program's OSC 52 write. Only the
+    /// clipboard (`c`) and the default selection (`s`, what most programs
+    /// send) reach it; uitree has no primary selection. The text is held
+    /// to the limit of a client's `clip` write, and a longer one dropped.
+    pub fn termClip(t: *Tree, h: Handle, target: u8, text: []const u8) Error!void {
+        if (target != 'c' and target != 's') return;
+        if (text.len > proto.limits.text_prop) return;
+        const a = t.log.arena.allocator();
+        try t.term_clips.append(t.gpa, .{ .h = h, .text = try a.dupe(u8, text) });
+    }
+
+    /// term.zig's `Terms.pump`: whether a window's focus is on `h`.
+    pub fn termFocused(t: *Tree, h: Handle) bool {
+        for (t.st.wins.items) |w| if (w.focus == h) return true;
+        return false;
+    }
+
+    /// The clipboard becomes `text`, as a client's `clip` write makes it:
+    /// a `clip` event, the clipboard host command, and a trace line saying
+    /// which terminal it came from and why (`osc52 path=win/main/sh len=N`,
+    /// or `copy` for the user's copy keystroke).
+    fn termClipAs(t: *Tree, h: Handle, why: []const u8, text: []const u8) Error!void {
+        if (t.st.gone or t.st.node(h) == null) return;
+        return t.mutate(struct {
+            fn f(tx: *Tx, x: struct { Handle, []const u8, []const u8 }) Error!void {
+                const p = try tx.fullPath(x[0]);
+                try tx.trace.append(tx.a, try std.fmt.allocPrint(tx.a, "{s} path={s} len={d}", .{ x[1], p, x[2].len }));
+                try tx.setClipboard(&.{.{ .ty = "text", .val = x[2] }});
+            }
+        }.f, .{ h, why, text });
+    }
+
+    /// uit_term_paste: the user pasted into the terminal.
+    pub fn termPaste(t: *Tree, h: Handle, text: []const u8) Error!void {
+        if (!t.isTerm(h)) return t.setErr(.bad_value, "not a terminal");
+        return t.terms.paste(h, text);
     }
 
     /// term.zig's `Terms.pump` sends node events through this.
@@ -1317,7 +1361,32 @@ pub const Tree = struct {
     fn termKey(t: *Tree, at: Handle, stroke: []const u8) Error!bool {
         if (!t.isTerm(at)) return false;
         const k = engine.parseStroke(stroke, if (std.mem.eql(u8, t.cfg.cmdkey, "cmd") or std.mem.eql(u8, t.cfg.cmdkey, "super")) .super else .ctrl) orelse return false;
+        if (isCopy(k)) {
+            // Copy: the selection goes on the clipboard, which reaches the
+            // renderer's as a host command. With nothing selected, cmd-c
+            // does nothing and ctrl-shift-c is still taken, as in other
+            // terminals.
+            var arena: std.heap.ArenaAllocator = .init(t.gpa);
+            defer arena.deinit();
+            const sel = try t.terms.selectionText(arena.allocator(), at);
+            if (sel.len > 0) try t.termClipAs(at, "copy", sel);
+            return true;
+        }
         return t.terms.key(at, k);
+    }
+
+    /// The terminal's copy keystroke: cmd-c where the command key is
+    /// super (macOS), and ctrl-shift-c everywhere, since ctrl-c is the
+    /// program's interrupt.
+    fn isCopy(k: engine.Key) bool {
+        const c = switch (k.code) {
+            .char => |c| c,
+            .named => return false,
+        };
+        if (c != 'c' and c != 'C') return false;
+        const m = k.mods;
+        if (m.super and !m.ctrl and !m.alt) return true;
+        return m.ctrl and m.shift and !m.alt and !m.super;
     }
 };
 

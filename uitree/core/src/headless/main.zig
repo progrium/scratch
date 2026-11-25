@@ -288,6 +288,33 @@ const Headless = struct {
             },
             .menu => |m| t.menuAction(m.item) catch |x| return h.treeErr(err, x),
             .appearance => |ap| t.systemDark(ap.dark) catch |x| return h.treeErr(err, x),
+            .term => |c| {
+                const in = (core.render.term.parseInput(c) catch return err.set("bad syntax")) orelse
+                    return err.print("unknown command: {s}", .{c.verb});
+                switch (in) {
+                    .resize => |x| {
+                        const n = try h.node(a, x.win, x.node, err);
+                        t.termResize(n, x.cols, x.rows, x.cell_w_px, x.cell_h_px) catch |e| return h.treeErr(err, e);
+                    },
+                    .mouse => |x| {
+                        const n = try h.node(a, x.win, x.node, err);
+                        const m = abi.termMouseOf(x.m) orelse return err.set("bad value");
+                        _ = t.termMouse(n, m) catch |e| return h.treeErr(err, e);
+                    },
+                    .scroll => |x| {
+                        const n = try h.node(a, x.win, x.node, err);
+                        _ = t.termScroll(n, x.lines) catch |e| return h.treeErr(err, e);
+                    },
+                    .text => |x| {
+                        const n = try h.node(a, x.win, x.node, err);
+                        t.termText(n, x.text) catch |e| return h.treeErr(err, e);
+                    },
+                    .paste => |x| {
+                        const n = try h.node(a, x.win, x.node, err);
+                        t.termPaste(n, x.text) catch |e| return h.treeErr(err, e);
+                    },
+                }
+            },
         }
     }
 

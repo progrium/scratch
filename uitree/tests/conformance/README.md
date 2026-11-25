@@ -171,6 +171,7 @@ fails the write with the usual phrases.
 | `key win=W stroke=KEYS [node=PATH]` | The user pressed KEYS in window W: the host resolves `keys` with the focused node's contexts (or PATH's, as if it had focus) and sends `action ID PATH via=key win=W`; with no binding, a focused `terminal` gets the stroke on `keys`, and otherwise nothing happens |
 | `menu item=ID` | The user chose the menu item with that ID: `action ID - via=menu`, or the item's role |
 | `appearance mode=light\|dark` | The operating system's appearance changed |
+| `term-mouse`, `term-scroll`, `term-text`, `term-paste`, `term-resize` | A terminal node's input, in render.md's `term-*` input lines (`win=W node=PATH`, then the line's attributes), as the renderer's `uit_term_*` calls send it |
 
 ## Proposed: formats the spec leaves open
 

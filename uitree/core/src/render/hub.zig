@@ -414,6 +414,10 @@ pub const Hub = struct {
                     const n = try h.node(a, x.win, x.node, err);
                     try h.check(abi.uit_term_text(c, n, UitStr.of(x.text)), err);
                 },
+                .paste => |x| {
+                    const n = try h.node(a, x.win, x.node, err);
+                    try h.check(abi.uit_term_paste(c, n, UitStr.of(x.text)), err);
+                },
             }
             return;
         }
@@ -452,6 +456,8 @@ pub const Hub = struct {
             },
             .tick => return err.set("permission denied: tick is the headless host's"),
             .drag => return err.set("bad syntax: drag start|drop|end"),
+            // `term-*` lines are taken above.
+            .term => return err.set("bad syntax"),
         }
     }
 

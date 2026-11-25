@@ -269,10 +269,23 @@ The rest is the same in both modes:
   number of lines (negative is back into history). New output snaps the
   view back to the bottom.
 - `bell` is BEL from the program. OSC 52 clipboard writes become
-  clipboard host commands, gated like any other clipboard write.
+  clipboard host commands, gated like any other clipboard write: the
+  same size limit as `clip`, a `clip` event, and a trace line naming the
+  terminal. Only the clipboard (`c`) and the default selection (`s`)
+  are taken; reads (`?`) are refused.
 - Keys go to the terminal while it has focus, after the app's own
   bindings. Mouse input is reported to the program when it enabled a
-  mouse mode, and selects text otherwise.
+  mouse mode, and selects text otherwise: a drag selects cells, a double
+  press words, a triple press lines. The wheel is reported under a mouse
+  mode, sent as arrow keys in the alternate screen when the program asked
+  for alternate scroll, and otherwise scrolls back into history.
+- Copy and paste are the user's: with text selected, the copy keystroke
+  (`cmd-c` where the command key is super, `ctrl-shift-c` everywhere)
+  puts the selection on the clipboard instead of reaching the program,
+  and the renderer's paste keystroke sends its clipboard as `paste` does.
+  Typing or pasting snaps the view back to the bottom.
+- When the program asked for focus reports, it hears when a window's
+  focus comes to the node or leaves it.
 
 **`web`** (`web`). A web view as a node, so a window can mix native nodes
 and a page. `window main url=...` in the [shell layer](shell.md) is

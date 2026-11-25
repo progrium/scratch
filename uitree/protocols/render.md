@@ -274,6 +274,10 @@ term-resize win=main node=sh cols=80 rows=24 cw=16 ch=34
 term-mouse win=main node=sh action=press button=left col=4 row=2 mods=shift,ctrl clicks=2
 term-scroll win=main node=sh lines=-3
 term-text win=main node=sh text=日本語
+term-paste win=main node=sh text=<<END
+two
+lines
+END
 ```
 
 ## Snapshot and resync
@@ -320,6 +324,7 @@ headless host and the renderer tree share one parser:
 | `term-mouse win=W node=PATH action=A button=B col=C row=R [mods=M] [clicks=N]` | `uit_term_mouse` |
 | `term-scroll win=W node=PATH lines=N` | `uit_term_scroll` |
 | `term-text win=W node=PATH text=V` | `uit_term_text` |
+| `term-paste win=W node=PATH text=V` | `uit_term_paste` |
 
 `node=` is window-relative with `win=`, as in events. `request` takes an
 `id` the renderer picks, because a write can't return the seq the C ABI

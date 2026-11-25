@@ -59,6 +59,10 @@ pub const Inject = union(enum) {
     key: struct { win: []const u8, stroke: []const u8, node: ?[]const u8 = null },
     menu: struct { item: []const u8 },
     appearance: struct { dark: bool },
+    /// A terminal's input, as render.md's `term-*` lines (render/term.zig
+    /// parses it): `term-mouse`, `term-scroll`, `term-text`, `term-paste`,
+    /// `term-resize`.
+    term: proto.Ctl,
 };
 
 /// Parses one inject line. Strings point into `arena` (or `line`).
@@ -83,6 +87,7 @@ pub fn parse(arena: Allocator, line: []const u8, err: *Err) fsmod.Error!Inject {
         };
         return ev;
     }
+    if (std.mem.startsWith(u8, verb, "term-")) return .{ .term = c };
     if (c.words.len > 0 and !std.mem.eql(u8, verb, "tick")) return err.print("bad syntax: {s} takes only attributes", .{verb});
     if (std.mem.eql(u8, verb, "mirror")) {
         return .{ .mirror = .{
@@ -255,6 +260,7 @@ test "parse inject lines" {
     try t.expectEqualStrings("cmd-s", (try parse(a, "key win=main stroke=cmd-s", &err)).key.stroke);
     try t.expectEqualStrings("save", (try parse(a, "menu item=save", &err)).menu.item);
     _ = try parse(a, "frame", &err);
+    try t.expectEqualStrings("term-mouse", (try parse(a, "term-mouse win=main node=sh action=press button=left col=1 row=2", &err)).term.verb);
 
     try t.expectError(error.Failed, parse(a, "warp x=1", &err));
     try t.expectEqualStrings("unknown command: warp", err.text());

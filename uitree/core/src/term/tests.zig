@@ -325,7 +325,7 @@ test "mouse: none without a mouse mode, SGR when the program asks" {
         defer aw.deinit();
         try tt.expect(!try h.e.encodeMouse(.{ .action = .press, .button = .left, .col = 2, .row = 3 }, &aw.writer));
         try tt.expect(!h.e.modes().mouse);
-        if (!isPlain(T)) {
+        {
             try h.e.feed("\x1b[?1000h\x1b[?1006h");
             try tt.expect(h.e.modes().mouse);
             try tt.expect(try h.e.encodeMouse(.{ .action = .press, .button = .left, .col = 2, .row = 3 }, &aw.writer));
@@ -350,7 +350,7 @@ test "paste and focus" {
         aw.clearRetainingCapacity();
         try h.e.encodeFocus(true, &aw.writer);
         try tt.expectEqualStrings("", aw.written());
-        if (!isPlain(T)) {
+        {
             try h.e.feed("\x1b[?2004h\x1b[?1004h");
             try tt.expect(h.e.modes().bracketed_paste and h.e.modes().focus_reports);
             try h.e.encodePaste("ls\nrm", &aw.writer);
@@ -372,14 +372,19 @@ test "events: bell, title, cwd, OSC 52" {
         try tt.expectEqual(@as(u32, 2), h.ev.bell);
         try h.e.takeEvents(&h.ev);
         try tt.expect(!h.ev.any());
+        // OSC 52, which the stand-in keeps too.
+        try h.e.feed("\x1b]52;c;aGVsbG8=\x07\x1b]52;c;?\x07");
+        try h.e.takeEvents(&h.ev);
+        try tt.expectEqual(@as(usize, 1), h.ev.clips.items.len);
+        try tt.expectEqual(@as(u8, 'c'), h.ev.clips.items[0].target);
+        try tt.expectEqualStrings("hello", h.ev.str(h.ev.clips.items[0].data));
+        try h.e.takeEvents(&h.ev);
+        try tt.expect(!h.ev.any());
         if (!isPlain(T)) {
-            try h.e.feed("\x1b]0;first\x07\x1b]2;my title\x1b\\\x1b]7;file://host/tmp/x\x07\x1b]52;c;aGVsbG8=\x07\x1b]52;c;?\x07");
+            try h.e.feed("\x1b]0;first\x07\x1b]2;my title\x1b\\\x1b]7;file://host/tmp/x\x07");
             try h.e.takeEvents(&h.ev);
             try tt.expectEqualStrings("my title", h.ev.str(h.ev.title.?));
             try tt.expectEqualStrings("file://host/tmp/x", h.ev.str(h.ev.cwd.?));
-            try tt.expectEqual(@as(usize, 1), h.ev.clips.items.len);
-            try tt.expectEqual(@as(u8, 'c'), h.ev.clips.items[0].target);
-            try tt.expectEqualStrings("hello", h.ev.str(h.ev.clips.items[0].data));
             try h.e.takeEvents(&h.ev);
             try tt.expect(!h.ev.any());
             // A device attributes query is answered.
@@ -478,4 +483,32 @@ test "reset clears screen, history and modes" {
         try h.e.takeDirty(&h.dirty);
         try tt.expect(h.dirty.all);
     }
+}
+
+test "the stand-in's modes: X10 reports, button and any-event tracking, paste end markers" {
+    var p = try Plain.init(tt.allocator, .{});
+    defer p.deinit();
+    var aw: Writer.Allocating = .init(tt.allocator);
+    defer aw.deinit();
+    const w = &aw.writer;
+    // X10 bytes without 1006: release is button 3.
+    try p.feed("\x1b[?1000h");
+    try tt.expect(try p.encodeMouse(.{ .action = .press, .button = .left, .col = 0, .row = 1 }, w));
+    try tt.expect(try p.encodeMouse(.{ .action = .release, .button = .left, .col = 0, .row = 1 }, w));
+    try tt.expectEqualStrings("\x1b[M !\"\x1b[M#!\"", aw.written());
+    aw.clearRetainingCapacity();
+    // 1002 reports drags; 1003 every move.
+    try p.feed("\x1b[?1002;1006h");
+    try tt.expect(try p.encodeMouse(.{ .action = .move, .col = 1, .row = 1 }, w));
+    try tt.expect(try p.encodeMouse(.{ .action = .move, .button = .right, .col = 1, .row = 1 }, w));
+    try p.feed("\x1b[?1003h");
+    try tt.expect(try p.encodeMouse(.{ .action = .move, .col = 2, .row = 1, .mods = .{ .shift = true } }, w));
+    try tt.expectEqualStrings("\x1b[<34;2;2M\x1b[<39;3;2M", aw.written());
+    aw.clearRetainingCapacity();
+    try p.feed("\x1b[?1003l");
+    try tt.expect(!try p.encodeMouse(.{ .action = .press, .button = .left, .col = 0, .row = 0 }, w));
+    // A paste can't end the bracket early.
+    try p.feed("\x1b[?2004h");
+    try p.encodePaste("a\x1b[201~b", w);
+    try tt.expectEqualStrings("\x1b[200~ab\x1b[201~", aw.written());
 }

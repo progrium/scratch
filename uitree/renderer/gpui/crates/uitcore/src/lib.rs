@@ -749,6 +749,11 @@ impl Core {
         self.check(unsafe { sys::uit_term_text(self.raw, n, s(t)) })
     }
 
+    /// The user pasted: bracketed when the program asked.
+    pub fn term_paste(&self, n: Node, t: &str) -> Result<(), Error> {
+        self.check(unsafe { sys::uit_term_paste(self.raw, n, s(t)) })
+    }
+
     pub fn wake(&self) {
         unsafe { sys::uit_wake_renderer(self.raw) }
     }

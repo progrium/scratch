@@ -666,6 +666,8 @@ ctl path=win/main/ctl cmd='new text a text=hi'   one per command line of a ctl w
 write path=win/main/a/text value=Hello          a file write
 mkdir path=win/main/b
 remove path=win/main/b
+osc52 path=win/main/sh len=12                    a terminal's program copied (components.md § terminal)
+copy path=win/main/sh len=5                      the user copied a terminal's selection
 batch timeout
 error path=win/main/a/style err='unknown style word: flexx'
 ```
