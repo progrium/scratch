@@ -35,6 +35,7 @@ pub const Source = struct {
         termMouse: *const fn (*anyopaque, Node, core.TermMouse) bool,
         termScroll: *const fn (*anyopaque, Node, i32) void,
         termText: *const fn (*anyopaque, Node, []const u8) void,
+        termPaste: *const fn (*anyopaque, Node, []const u8) void,
     };
 
     pub fn windowRoot(s: Source, win: []const u8) Node {
@@ -109,6 +110,9 @@ pub const Source = struct {
     }
     pub fn termText(s: Source, n: Node, t: []const u8) void {
         s.vt.termText(s.ptr, n, t);
+    }
+    pub fn termPaste(s: Source, n: Node, t: []const u8) void {
+        s.vt.termPaste(s.ptr, n, t);
     }
 
     /// Text of a prop with one trailing newline dropped (files end in one).
@@ -214,6 +218,7 @@ const core_vt: Source.VTable = .{
     .termMouse = core_term_vt.mouse,
     .termScroll = core_term_vt.scroll,
     .termText = core_term_vt.text,
+    .termPaste = core_term_vt.paste,
 };
 
 const core_term_vt = struct {
@@ -237,6 +242,9 @@ const core_term_vt = struct {
     }
     fn text(p: *anyopaque, n: Node, t: []const u8) void {
         K(p).termText(n, t) catch |e| std.log.warn("term text: {t}", .{e});
+    }
+    fn paste(p: *anyopaque, n: Node, t: []const u8) void {
+        K(p).termPaste(n, t) catch |e| std.log.warn("term paste: {t}", .{e});
     }
 };
 
@@ -554,6 +562,12 @@ pub const Fake = struct {
             fn f(p: *anyopaque, n: Node, t: []const u8) void {
                 const fk = F(p);
                 fk.log.print(fk.a, "term-text {s} {s}\n", .{ fk.nodes.items[n].path, t }) catch {};
+            }
+        }.f,
+        .termPaste = struct {
+            fn f(p: *anyopaque, n: Node, t: []const u8) void {
+                const fk = F(p);
+                fk.log.print(fk.a, "term-paste {s} {s}\n", .{ fk.nodes.items[n].path, t }) catch {};
             }
         }.f,
     };

@@ -360,6 +360,11 @@ pub const Core = struct {
     pub fn termText(k: Core, n: Node, text: []const u8) Error!void {
         try check(c.uit_term_text(k.p, n, str(text)));
     }
+
+    /// The user pasted: bracketed when the program asked.
+    pub fn termPaste(k: Core, n: Node, text: []const u8) Error!void {
+        try check(c.uit_term_paste(k.p, n, str(text)));
+    }
 };
 
 /// Plan 9 words: blanks separate, '' quotes, '' inside quotes is one '.
