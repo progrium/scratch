@@ -450,6 +450,11 @@ pub const Hub = struct {
                 if (!primary) return;
                 try h.check(abi.uit_system_dark(c, @intFromBool(ap.dark)), err);
             },
+            .term_resize => |r| {
+                if (!primary) return;
+                const n = try h.node(a, r.win, r.node, err);
+                try h.check(abi.uit_term_resize(c, n, r.cols, r.rows, r.cw, r.ch), err);
+            },
             .tick => return err.set("permission denied: tick is the headless host's"),
             .drag => return err.set("bad syntax: drag start|drop|end"),
         }

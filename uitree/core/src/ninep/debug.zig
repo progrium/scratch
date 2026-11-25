@@ -59,6 +59,9 @@ pub const Inject = union(enum) {
     key: struct { win: []const u8, stroke: []const u8, node: ?[]const u8 = null },
     menu: struct { item: []const u8 },
     appearance: struct { dark: bool },
+    /// The grid a renderer laid terminal node PATH out to, as
+    /// uit_term_resize: `term-resize win=W node=PATH cols=C rows=R [cw=PX ch=PX]`.
+    term_resize: struct { win: []const u8, node: []const u8, cols: u32, rows: u32, cw: u32 = 0, ch: u32 = 0 },
 };
 
 /// Parses one inject line. Strings point into `arena` (or `line`).
@@ -140,6 +143,22 @@ pub fn parse(arena: Allocator, line: []const u8, err: *Err) fsmod.Error!Inject {
     }
     if (std.mem.eql(u8, verb, "menu")) {
         return .{ .menu = .{ .item = c.attr("item") orelse return err.set("bad syntax: menu needs item=") } };
+    }
+    if (std.mem.eql(u8, verb, "term-resize")) {
+        const n = struct {
+            fn f(e: *Err, v: ?[]const u8, what: []const u8) fsmod.Error!u32 {
+                const s = v orelse return e.print("bad syntax: term-resize needs {s}=", .{what});
+                return std.fmt.parseInt(u32, s, 10) catch e.print("bad value: {s}", .{s});
+            }
+        }.f;
+        return .{ .term_resize = .{
+            .win = c.attr("win") orelse return err.set("bad syntax: term-resize needs win="),
+            .node = c.attr("node") orelse return err.set("bad syntax: term-resize needs node="),
+            .cols = try n(err, c.attr("cols"), "cols"),
+            .rows = try n(err, c.attr("rows"), "rows"),
+            .cw = if (c.attr("cw")) |v| try n(err, v, "cw") else 0,
+            .ch = if (c.attr("ch")) |v| try n(err, v, "ch") else 0,
+        } };
     }
     if (std.mem.eql(u8, verb, "appearance")) {
         const m = c.attr("mode") orelse return err.set("bad syntax: appearance needs mode=");

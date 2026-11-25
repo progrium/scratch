@@ -65,8 +65,19 @@ jobs:
           . scripts/pins.sh
           zig build isoroot -- ".local/9front/9front-$NINEFRONT_RELEASE.amd64.iso" .local/9front/root-amd64
           rm -f .local/9front/*.iso
+      # The cases marked "# view: linux" (32-pty) run busybox from Alpine's
+      # minirootfs at #L; LINUXROOT is set for them only, since the
+      # example clients' Linux runs need tools/linuxroot's fuller tree.
+      - name: Alpine minirootfs for the Linux-view cases
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/alpine.tgz" https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/alpine-minirootfs-3.22.8-x86_64.tar.gz
+          echo "2d7f46af9b7e86ad64ebeba3fe9b75b62dd5b259e708afb2ab21268f627696e5  $RUNNER_TEMP/alpine.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/alpine"
+          tar xzf "$RUNNER_TEMP/alpine.tgz" -C "$RUNNER_TEMP/alpine"
       - name: conformance
         working-directory: uitree/tests/conformance
+        env:
+          LINUXROOT: ${{ runner.temp }}/alpine
         run: ./run -r -t 120
       - name: example clients (tree-building phase)
         working-directory: uitree/tests/conformance

@@ -1,0 +1,107 @@
+#!/bin/rc
+# 32-pty: components.md § terminal, pty mode. `pty=on` makes the host open
+# a pseudoterminal pair in the app's machine and hold its master; `tty`
+# reads the slave's path, and the app starts a program on it as a session
+# leader. The program sees a terminal (isatty, `stty size` is the node's
+# grid); a resize reaches it as SIGWINCH; its output is drawn and reads
+# back as `screen`; when its side closes the node sends `hangup`; turning
+# `pty` off closes the master, which sends it SIGHUP. Each program takes
+# the terminal as its controlling one (setsid -c steals it, as root may on
+# Linux), so the one that waits for SIGWINCH and SIGHUP starts last.
+#
+# The program is Alpine's busybox sh in the Linux view, so this needs
+# $LINUXROOT (run says so); the script itself is rc in the Plan 9 view.
+# needs: T6
+# view: linux
+. ./lib.rc
+if(! test -d $k/types/terminal) {
+	echo skip: no terminal type
+	exit
+}
+
+# waitfor TEXT: until the screen shows TEXT, for up to 10 seconds.
+fn waitfor {
+	_n=0
+	while(! grep -s $1 $t/screen && ! ~ $_n 100) {
+		sleep 0.1
+		_n=`{echo $_n | awk '{ print $1 + 1 }'}
+	}
+	if(~ $_n 100) echo timeout waiting for $1
+}
+# lsh SCRIPT: SCRIPT in Alpine's sh, a session leader with the slave as
+# its controlling terminal and its stdin, stdout and stderr (setsid -c).
+fn lsh {
+	'#L/bin/sh' -c 'exec setsid -c sh -c '''^$1^''' <'^$tty^' >'^$tty^' 2>&1'
+}
+
+mainwin
+r=$k/win/main
+t=$r/sh
+
+echo '# pty=on: tty is the slave'
+w $r/ctl new terminal sh pty'='on
+val $t/tty
+tty=`{cat $t/tty}
+
+echo '# a program on it sees a terminal the size of the grid'
+lsh 'tty; [ -t 0 ] && [ -t 1 ] && echo isatty; stty size; echo done'
+waitfor done
+val $t/screen
+
+echo '# typed keys reach the program through the master'
+w $t/ctl reset
+lsh 'read line; echo got $line' &
+sleep 0.5
+for(s in h i ctrl-j) inj key win'='main stroke'='$s node'='sh
+waitfor 'got hi'
+grep got $t/screen
+
+echo '# the line discipline: ctrl-c is SIGINT for the foreground program'
+w $t/ctl reset
+lsh 'trap "echo interrupted; exit" INT; echo waiting; while :; do sleep 0.1; done' &
+waitfor waiting
+inj key win'='main stroke'='ctrl-c node'='sh
+waitfor interrupted
+grep interrupted $t/screen
+
+echo '# output past the bounded buffer: the master waits while it is full'
+w $t/ctl reset
+lsh 'i=0; while [ $i -lt 3000 ]; do echo line $i of output to fill the buffer; i=$((i+1)); done; echo end'
+waitfor end
+grep 'line 299[89] ' $t/screen
+
+echo '# a resize is TIOCSWINSZ: the program gets SIGWINCH'
+rm -f /tmp/pty-hup
+w $t/ctl reset
+lsh 'trap "stty size" WINCH; trap "echo hup >/9/tmp/pty-hup; exit" HUP; echo ready; while :; do sleep 0.1; done' &
+waitfor ready
+{
+	inj term-resize win'='main node'='sh cols'='100 rows'='30
+	waitfor '30 100'
+	evs 'win=main'
+} <[3]$r/events
+val $t/screen $t/cols $t/rows
+
+echo '# pty=off closes the master: the program gets SIGHUP'
+w $r/ctl set sh pty'='off
+val $t/tty
+_n=0
+while(! test -e /tmp/pty-hup && ! ~ $_n 50) {
+	sleep 0.1
+	_n=`{echo $_n | awk '{ print $1 + 1 }'}
+}
+cat /tmp/pty-hup
+
+echo '# the program closing its side sends hangup'
+w $r/ctl set sh pty'='on
+tty=`{cat $t/tty}
+{
+	lsh 'echo bye'
+	waitfor bye
+	sleep 0.2
+	evs 'win=main' 'node=sh'
+} <[3]$t/events
+
+echo '# gone with its node'
+w $r/ctl delete sh
+exists $t/tty
