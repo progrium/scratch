@@ -109,6 +109,14 @@ sources() {
 # Apple's name for an architecture, for ld -arch.
 macarch() { case $1 in aarch64 | arm64) echo arm64 ;; *) echo "$1" ;; esac; }
 
+# applerel ARCH: $a's members as the one object $o, with Apple's ld, which
+# wants the architecture and platform spelled out for -r. The minimum
+# macOS is Zig's default one; the SDK version is only recorded.
+applerel() {
+	sdk=$(xcrun --show-sdk-version 2>/dev/null || echo 15.0)
+	ld -r -arch "$1" -platform_version macos 13.0 "$sdk" -all_load "$a" -o "$o"
+}
+
 case "${1:-}" in
 build)
 	[ $# -eq 4 ] || die "usage: tools/ghostty-vt build TARGET OPTIMIZE OUT"
@@ -176,8 +184,8 @@ build)
 			# object's layout doesn't change), which core/build.zig
 			# defines with 0.17's signature.
 			perl -0777 -pi -e 's/__extendxftf2/__vt_extxftf2/g' "$o" ;;
-		*-macos* | *-ios*) ld -r -arch "$(macarch "${target%%-*}")" -all_load "$a" -o "$o" ;;
-		native*) if [ "$(uname -s)" = Darwin ]; then ld -r -arch "$(macarch "$(uname -m)")" -all_load "$a" -o "$o"
+		*-macos*) applerel "$(macarch "${target%%-*}")" ;;
+		native*) if [ "$(uname -s)" = Darwin ]; then applerel "$(macarch "$(uname -m)")"
 			else "$z" ld.lld -r --whole-archive "$a" -o "$o"; fi ;;
 		*) "$z" ld.lld -r --whole-archive "$a" -o "$o" ;;
 		esac || die "can't make lib/ghostty-vt.o"
