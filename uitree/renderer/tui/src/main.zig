@@ -173,6 +173,12 @@ pub fn main(init: std.process.Init) !u8 {
     defer loop.stop();
     try vx.enterAltScreen(writer);
     try vx.queryTerminal(writer, .fromSeconds(1));
+    // A terminal without in-band resize reports a new size with SIGWINCH
+    // only: without this handler the window never resized there (xterm,
+    // tmux 3.4).
+    const signal_resize = !vx.state.in_band_resize;
+    if (signal_resize) try loop.installResizeHandler();
+    defer if (signal_resize) loop.uninstallResizeHandler();
     try vx.setMouseMode(writer, true);
     if (log_fd >= 0) redirectStderr(log_fd);
 
