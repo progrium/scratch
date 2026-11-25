@@ -52,6 +52,11 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y binaryen brotli
       - uses: actions/setup-node@v4
         with: { node-version: 24 }
+      # libghostty-vt for wasm, and the Zig 0.17 that builds it (tools/ghostty-vt).
+      - uses: actions/cache@v4
+        with:
+          path: uitree/.local
+          key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
       - uses: actions/cache@v4
         id: root
         with:

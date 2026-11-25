@@ -4,8 +4,15 @@
 //! constant against them.
 //!
 //! Environment: `ZIG` (default `zig`, 0.16), `UITCORE_OPTIMIZE` (default
-//! ReleaseSafe), `UITCORE_LIB_DIR` (skip zig build and link a prebuilt
+//! ReleaseSafe), `UITCORE_TERMINAL` (the core's terminal engine, `ghostty`
+//! or `plain`: core/build.zig's -Dterminal, whose default is ghostty but on
+//! Windows), `UITCORE_LIB_DIR` (skip zig build and link a prebuilt
 //! libuitcore.a and libkern.a from there).
+//!
+//! With the ghostty engine, libghostty-vt's objects are inside
+//! libuitcore.a (core/build.zig), so the link line doesn't change. Its
+//! first build fetches and builds libghostty-vt with Zig 0.17
+//! (uitree/tools/ghostty-vt), kept in uitree/.local after that.
 
 use std::env;
 use std::path::PathBuf;
@@ -22,7 +29,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=ZIG");
     println!("cargo:rerun-if-env-changed=UITCORE_OPTIMIZE");
     println!("cargo:rerun-if-env-changed=UITCORE_LIB_DIR");
-    for d in ["src", "build.zig", "build.zig.zon", "types"] {
+    println!("cargo:rerun-if-env-changed=UITCORE_TERMINAL");
+    for d in ["src", "build.zig", "build.zig.zon", "types", "../tools/ghostty-vt"] {
         println!("cargo:rerun-if-changed={}", core.join(d).display());
     }
 
@@ -52,6 +60,7 @@ fn main() {
             // a cached build then dies with SIGILL on an older runner.
             .arg("-Dcpu=baseline")
             .arg(format!("-Dh9={h9}"))
+            .args(terminal())
             .arg("--prefix")
             .arg(&prefix)
             .arg("--cache-dir")
@@ -145,6 +154,7 @@ fn web(core: &std::path::Path) {
         let st = Command::new(&zig)
             .current_dir(core)
             .args(["build", "-Dtarget=wasm32-wasi", &format!("-Doptimize={optimize}")])
+            .args(terminal())
             .arg("--prefix")
             .arg(&prefix)
             .arg("--cache-dir")
@@ -206,6 +216,11 @@ fn web(core: &std::path::Path) {
     for l in ["uitcore", "h9coro", "wasi-c", "zigc"] {
         println!("cargo:rustc-link-lib=static:-bundle={l}");
     }
+}
+
+/// `-Dterminal=...` from UITCORE_TERMINAL, or nothing for the core's default.
+fn terminal() -> Option<String> {
+    env::var("UITCORE_TERMINAL").ok().filter(|t| !t.is_empty()).map(|t| format!("-Dterminal={t}"))
 }
 
 /// Cargo's target triple as Zig spells it; `native` for the host.

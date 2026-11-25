@@ -5,6 +5,13 @@ name: uitree-core
 # with apps in h9, and the terminal renderer's tests. The Zig pin is
 # uitree/core/build.zig.zon's minimum_zig_version (uitree/tools/zig-pin);
 # the pin job fails if renderer/tui or the hyper9 submodule disagree.
+#
+# The terminal engine (uitree/core/README.md): the core builds with
+# libghostty-vt (-Dterminal=ghostty, which uitree/tools/ghostty-vt builds
+# with its own Zig 0.17, cached in uitree/.local) and with the plain
+# stand-in (-Dterminal=plain). The vt job runs libghostty-vt's smoke test
+# through libuitcore.a on x86_64 and aarch64 Linux, macOS, and wasm32 in
+# Node and Chromium.
 
 on:
   push:
@@ -39,9 +46,17 @@ jobs:
         with: { submodules: true }
       - uses: mlugg/setup-zig@v2
         with: { version: "${{ needs.pin.outputs.zig }}" }
+      # libghostty-vt and the Zig 0.17 that builds it (tools/ghostty-vt).
+      - uses: actions/cache@v4
+        with:
+          path: uitree/.local
+          key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
       - name: zig build test
         working-directory: uitree/core
         run: zig build test --summary all
+      - name: zig build test -Dterminal=plain
+        working-directory: uitree/core
+        run: zig build test -Dterminal=plain --summary all
       - name: zig build -Dh9=true
         working-directory: uitree/core
         run: zig build -Dh9=true
@@ -86,5 +101,69 @@ jobs:
         with: { submodules: true }
       - uses: mlugg/setup-zig@v2
         with: { version: "${{ needs.pin.outputs.zig }}" }
+      # libghostty-vt and the Zig 0.17 that builds it (tools/ghostty-vt).
+      - uses: actions/cache@v4
+        with:
+          path: uitree/.local
+          key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
       - working-directory: uitree/renderer/tui
         run: zig build test --summary all
+      - working-directory: uitree/renderer/tui
+        run: zig build test -Dterminal=plain --summary all
+      - name: uitree-tui links (ghostty, plain, wasm32-wasi)
+        working-directory: uitree/renderer/tui
+        run: |
+          zig build -Dh9=false
+          zig build -Dh9=false -Dterminal=plain
+          zig build -Dh9=false -Dtarget=wasm32-wasi -Doptimize=ReleaseSmall
+
+  vt:
+    name: libghostty-vt (${{ matrix.name }})
+    needs: pin
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86_64-linux, os: ubuntu-latest }
+          - { name: aarch64-linux, os: ubuntu-latest, args: "-Dtarget=aarch64-linux-musl -fqemu" }
+          - { name: aarch64-macos, os: macos-latest }
+          - { name: wasm32, os: ubuntu-latest, args: "-Dtarget=wasm32-wasi -Doptimize=ReleaseSmall" }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: uitree/core
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: mlugg/setup-zig@v2
+        with: { version: "${{ needs.pin.outputs.zig }}" }
+      # libghostty-vt and the Zig 0.17 that builds it (tools/ghostty-vt).
+      - uses: actions/cache@v4
+        with:
+          path: uitree/.local
+          key: uitree-ghostty-vt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('uitree/tools/ghostty-vt') }}
+      - if: matrix.name == 'aarch64-linux'
+        run: sudo apt-get update && sudo apt-get install -y qemu-user
+      # On wasm32 this only builds zig-out/web/vt-smoke.wasm.
+      - name: zig build smoke
+        run: zig build smoke ${{ matrix.args }} --summary all
+      - name: libuitcore.a for the target, both engines
+        run: |
+          zig build ${{ matrix.args }}
+          ls -l zig-out/lib zig-out/web 2>/dev/null || true
+          zig build ${{ matrix.args }} -Dterminal=plain --prefix "$RUNNER_TEMP/plain"
+          ls -l "$RUNNER_TEMP/plain/lib" "$RUNNER_TEMP/plain/web" 2>/dev/null || true
+      - if: matrix.name == 'aarch64-linux'
+        name: aarch64-linux-gnu too (links only)
+        run: zig build -Dtarget=aarch64-linux-gnu
+      - if: matrix.name == 'wasm32'
+        uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - if: matrix.name == 'wasm32'
+        name: Playwright's Chromium
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - if: matrix.name == 'wasm32'
+        name: the smoke test in Node and Chromium
+        run: node tests/vt-smoke.mjs zig-out/web/vt-smoke.wasm
