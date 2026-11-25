@@ -1,0 +1,21 @@
+type    terminal  tier=component  profile=desktop  since=1.0
+prop    pty         bool    default=off
+prop    tty         text    readonly
+prop    screen      text    file readonly
+prop    selection   text    file readonly
+prop    cols        number  readonly
+prop    rows        number  readonly
+prop    title       text    readonly
+prop    cwd         text    readonly
+prop    scrollback  number  default=10000  min=0
+file    out   format=bytes  stream
+file    keys  format=bytes  stream  readonly
+verb    write     TEXT                class=edit
+verb    paste     TEXT                class=keys
+verb    reset                         class=edit
+verb    scroll    top|bottom|LINES    class=activate
+event   resize    kind=state   attrs=cols,rows
+event   title     kind=state
+event   bell      kind=action
+event   hangup    kind=action
+child   none

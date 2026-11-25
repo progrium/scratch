@@ -84,7 +84,7 @@ export fn tui_pump() i32 {
     // Every input call wakes the core, uit_frame_drawn included, so a
     // pump that changed nothing mustn't draw (and call it) again: main.zig
     // does, and spins at a pump per frame while idle.
-    const changed = ch.n_dirty + ch.n_created + ch.n_removed + ch.n_props + ch.n_cmds > 0 or first;
+    const changed = ch.n_dirty + ch.n_created + ch.n_removed + ch.n_props + ch.n_cmds + ch.n_terms > 0 or first;
     first = false;
     if (changed) redraw(false);
     return if (ch.exited != 0) 1 else 0;
@@ -181,7 +181,15 @@ fn emit(g: *const gridmod.Grid) !void {
                 if (a.bold) try w.writeAll(";1");
                 if (a.dim) try w.writeAll(";2");
                 if (a.italic) try w.writeAll(";3");
-                if (a.underline) try w.writeAll(";4");
+                if (a.underline) try w.print(";4:{d}", .{@as(u8, switch (a.ul_style) {
+                    .single => 1,
+                    .double => 2,
+                    .curly => 3,
+                    .dotted => 4,
+                    .dashed => 5,
+                })});
+                if (a.underline) if (cell.ul_color) |u| try w.print(";58:2::{d}:{d}:{d}", .{ (u >> 16) & 0xff, (u >> 8) & 0xff, u & 0xff });
+                if (a.blink) try w.writeAll(";5");
                 if (a.reverse) try w.writeAll(";7");
                 if (a.strike) try w.writeAll(";9");
                 try w.writeAll("m");
@@ -191,11 +199,20 @@ fn emit(g: *const gridmod.Grid) !void {
         }
     }
     try w.writeAll("\x1b[0m");
-    if (g.cursor) |cur| try w.print("\x1b[{d};{d}H\x1b[5 q\x1b[?25h", .{ cur.y + 1, cur.x + 1 });
+    if (g.cursor) |cur| {
+        // DECSCUSR: 1/2 block, 3/4 underline, 5/6 bar (blinking/steady).
+        const base: u8 = switch (cur.shape) {
+            .block => 1,
+            .underline => 3,
+            .bar => 5,
+        };
+        const shape = base + @intFromBool(!cur.blink);
+        try w.print("\x1b[{d};{d}H\x1b[{d} q\x1b[?25h", .{ cur.y + 1, cur.x + 1, shape });
+    }
 }
 
 fn sameStyle(a: gridmod.Cell, b: gridmod.Cell) bool {
-    return a.fg == b.fg and a.bg == b.bg and @as(u8, @bitCast(a.attrs)) == @as(u8, @bitCast(b.attrs));
+    return a.fg == b.fg and a.bg == b.bg and @as(u16, @bitCast(a.attrs)) == @as(u16, @bitCast(b.attrs)) and std.meta.eql(a.ul_color, b.ul_color);
 }
 
 fn many(comptime T: type, p: [*c]const T, n: usize) []const T {

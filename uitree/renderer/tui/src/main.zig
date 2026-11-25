@@ -173,6 +173,12 @@ pub fn main(init: std.process.Init) !u8 {
     defer loop.stop();
     try vx.enterAltScreen(writer);
     try vx.queryTerminal(writer, .fromSeconds(1));
+    // A terminal without in-band resize reports a new size with SIGWINCH
+    // only: without this handler the window never resized there (xterm,
+    // tmux 3.4).
+    const signal_resize = !vx.state.in_band_resize;
+    if (signal_resize) try loop.installResizeHandler();
+    defer if (signal_resize) loop.uninstallResizeHandler();
     try vx.setMouseMode(writer, true);
     if (log_fd >= 0) redirectStderr(log_fd);
 
@@ -188,6 +194,7 @@ pub fn main(init: std.process.Init) !u8 {
 
     var grid: ?gridmod.Grid = null;
     defer if (grid) |*g| g.deinit(gpa);
+    var clicks: Clicks = .{};
     var status: u8 = 0;
     var exit_text: []const u8 = "";
     var exit_buf: [256]u8 = undefined;
@@ -201,6 +208,12 @@ pub fn main(init: std.process.Init) !u8 {
                     try vx.resize(gpa, writer, ws);
                     if (grid) |*g| g.deinit(gpa);
                     grid = try gridmod.Grid.init(gpa, ws.cols, ws.rows);
+                    // A terminal node tells its program the cell's size
+                    // in pixels, when the terminal reports one.
+                    ui.cell_px = if (ws.cols > 0 and ws.rows > 0 and ws.x_pixel > 0 and ws.y_pixel > 0)
+                        .{ ws.x_pixel / ws.cols, ws.y_pixel / ws.rows }
+                    else
+                        .{ 0, 0 };
                     redraw = true;
                 },
                 .key_press => |key| switch (ui.onKey(translateKey(key))) {
@@ -211,7 +224,9 @@ pub fn main(init: std.process.Init) !u8 {
                     else => redraw = true,
                 },
                 .mouse => |m| {
-                    if (translateMouse(m)) |mm| {
+                    if (translateMouse(m)) |mm0| {
+                        var mm = mm0;
+                        if (mm.kind == .press) mm.clicks = clicks.press(io, mm.x, mm.y);
                         if (ui.onMouse(mm)) redraw = true;
                     }
                     if (ui.tipPending()) |gen| {
@@ -250,7 +265,7 @@ pub fn main(init: std.process.Init) !u8 {
                     // draw (and call it) again, or the host spins at a
                     // pump per frame while idle. The first frame comes
                     // from the winsize event.
-                    if (ch.n_dirty + ch.n_created + ch.n_removed + ch.n_props + ch.n_cmds > 0) redraw = true;
+                    if (ch.n_dirty + ch.n_created + ch.n_removed + ch.n_props + ch.n_cmds + ch.n_terms > 0) redraw = true;
                 },
                 else => {},
             }
@@ -275,6 +290,25 @@ pub fn main(init: std.process.Init) !u8 {
     if (exit_text.len > 0) std.debug.print("uitree-tui: {s}: {s}\n", .{ if (remote) |x| x else argv[0], exit_text });
     return status;
 }
+
+/// Counts presses on one cell within the double-click time: 1, 2, 3, then
+/// 1 again (a terminal selects a word on 2 and a line on 3).
+const Clicks = struct {
+    at: ?std.Io.Timestamp = null,
+    x: i32 = 0,
+    y: i32 = 0,
+    n: u8 = 0,
+
+    fn press(c: *Clicks, io: std.Io, x: i32, y: i32) u8 {
+        const now = std.Io.Clock.awake.now(io);
+        const quick = if (c.at) |t| t.durationTo(now).toMilliseconds() < 400 else false;
+        c.n = if (quick and x == c.x and y == c.y and c.n < 3) c.n + 1 else 1;
+        c.at = now;
+        c.x = x;
+        c.y = y;
+        return c.n;
+    }
+};
 
 fn many(comptime T: type, p: [*c]const T, n: usize) []const T {
     if (n == 0 or p == null) return &.{};
@@ -317,7 +351,15 @@ fn blit(vx: *vaxis.Vaxis, g: *const gridmod.Grid, depth: colormod.Depth) void {
                     .bold = cell.attrs.bold,
                     .dim = cell.attrs.dim,
                     .italic = cell.attrs.italic,
-                    .ul_style = if (cell.attrs.underline) .single else .off,
+                    .ul = if (cell.ul_color) |u| termColor(depth, (u << 8) | 0xff) else .default,
+                    .ul_style = if (!cell.attrs.underline) .off else switch (cell.attrs.ul_style) {
+                        .single => .single,
+                        .double => .double,
+                        .curly => .curly,
+                        .dotted => .dotted,
+                        .dashed => .dashed,
+                    },
+                    .blink = cell.attrs.blink,
                     .strikethrough = cell.attrs.strike,
                     .reverse = cell.attrs.reverse,
                 },
@@ -327,7 +369,11 @@ fn blit(vx: *vaxis.Vaxis, g: *const gridmod.Grid, depth: colormod.Depth) void {
     }
     if (g.cursor) |cur| {
         win.showCursor(cur.x, cur.y);
-        win.setCursorShape(.beam_blink);
+        win.setCursorShape(switch (cur.shape) {
+            .bar => if (cur.blink) .beam_blink else .beam,
+            .block => if (cur.blink) .block_blink else .block,
+            .underline => if (cur.blink) .underline_blink else .underline,
+        });
     } else win.hideCursor();
 }
 

@@ -10,15 +10,25 @@ const std = @import("std");
 const unicode = @import("vaxis").unicode;
 const gwidth = @import("vaxis").gwidth;
 
-pub const Attrs = packed struct(u8) {
+pub const Attrs = packed struct(u16) {
     bold: bool = false,
     dim: bool = false,
     italic: bool = false,
     underline: bool = false,
     strike: bool = false,
     reverse: bool = false,
-    _pad: u2 = 0,
+    blink: bool = false,
+    /// The underline's look when `underline` is set (a terminal node's
+    /// cells; everything else draws single).
+    ul_style: UlStyle = .single,
+    _pad: u6 = 0,
 };
+
+pub const UlStyle = enum(u3) { single, double, curly, dotted, dashed };
+
+/// The terminal cursor's look (a terminal node's own cursor; an input's
+/// caret is a blinking bar).
+pub const CursorShape = enum { bar, block, underline };
 
 pub const Cell = struct {
     /// The grapheme; "" for the right half of a wide character.
@@ -28,6 +38,8 @@ pub const Cell = struct {
     attrs: Attrs = .{},
     /// A hyperlink target (link's href), or "".
     link: []const u8 = "",
+    /// The underline's color (0xRRGGBB), when not the glyph's.
+    ul_color: ?u32 = null,
 };
 
 pub const Rect = struct {
@@ -78,8 +90,9 @@ pub const Grid = struct {
     w: u16,
     h: u16,
     cells: []Cell,
-    /// Where the terminal cursor goes (an input's caret), if anywhere.
-    cursor: ?struct { x: u16, y: u16 } = null,
+    /// Where the terminal cursor goes (an input's caret, a terminal
+    /// node's cursor), if anywhere.
+    cursor: ?struct { x: u16, y: u16, shape: CursorShape = .bar, blink: bool = true } = null,
 
     pub fn init(a: std.mem.Allocator, w: u16, h: u16) !Grid {
         const cells = try a.alloc(Cell, @as(usize, w) * h);
@@ -129,6 +142,7 @@ pub const Grid = struct {
                 cell.ch = " ";
                 cell.attrs = .{};
                 cell.link = "";
+                cell.ul_color = null;
             }
         }
     }
@@ -139,6 +153,8 @@ pub const Grid = struct {
         link: []const u8 = "",
         /// Override the background under the glyph (0xRRGGBBAA), if set.
         bg: ?u32 = null,
+        /// The underline's color (0xRRGGBBAA), when not the glyph's.
+        ul_color: ?u32 = null,
     };
 
     /// Puts one grapheme at (x, y) if it lies inside clip.
@@ -154,6 +170,7 @@ pub const Grid = struct {
         cell.fg = blend(pen.fg, cell.bg);
         cell.attrs = pen.attrs;
         cell.link = pen.link;
+        cell.ul_color = if (pen.ul_color) |u| blend(u, cell.bg) else null;
         const wd = width(ch);
         if (wd == 2) {
             if (clip.contains(x + 1, y)) if (g.at(x + 1, y)) |r| {

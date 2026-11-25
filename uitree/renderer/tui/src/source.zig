@@ -28,6 +28,13 @@ pub const Source = struct {
         mirror: *const fn (*anyopaque, Node, []const u8, []const u8) void,
         key: *const fn (*anyopaque, []const u8, []const u8, Node) bool,
         bounds: *const fn (*anyopaque, Node, [4]f32) void,
+        termRows: *const fn (*anyopaque, Node, u32, u32) []const core.TermRow,
+        termStyles: *const fn (*anyopaque, Node) []const core.TermStyle,
+        termCursor: *const fn (*anyopaque, Node) ?core.TermCursor,
+        termResize: *const fn (*anyopaque, Node, [4]u32) void,
+        termMouse: *const fn (*anyopaque, Node, core.TermMouse) bool,
+        termScroll: *const fn (*anyopaque, Node, i32) void,
+        termText: *const fn (*anyopaque, Node, []const u8) void,
     };
 
     pub fn windowRoot(s: Source, win: []const u8) Node {
@@ -73,6 +80,35 @@ pub const Source = struct {
 
     pub fn bounds(s: Source, n: Node, x: f32, y: f32, w: f32, h: f32) void {
         s.vt.bounds(s.ptr, n, .{ x, y, w, h });
+    }
+
+    // A terminal node's screen (uitcore.h § Terminal nodes). Reads are
+    // empty or null when the core can't answer yet.
+
+    /// Viewport rows first..first+count-1 that the core has.
+    pub fn termRows(s: Source, n: Node, first: u32, count: u32) []const core.TermRow {
+        return s.vt.termRows(s.ptr, n, first, count);
+    }
+    pub fn termStyles(s: Source, n: Node) []const core.TermStyle {
+        return s.vt.termStyles(s.ptr, n);
+    }
+    pub fn termCursor(s: Source, n: Node) ?core.TermCursor {
+        return s.vt.termCursor(s.ptr, n);
+    }
+    /// The grid that fits the node's box, and a cell's size in device
+    /// pixels (0 when the terminal didn't say).
+    pub fn termResize(s: Source, n: Node, cols: u32, rows: u32, cell_w: u32, cell_h: u32) void {
+        s.vt.termResize(s.ptr, n, .{ cols, rows, cell_w, cell_h });
+    }
+    /// True when the program took it (a mouse mode is on).
+    pub fn termMouse(s: Source, n: Node, m: core.TermMouse) bool {
+        return s.vt.termMouse(s.ptr, n, m);
+    }
+    pub fn termScroll(s: Source, n: Node, by: i32) void {
+        s.vt.termScroll(s.ptr, n, by);
+    }
+    pub fn termText(s: Source, n: Node, t: []const u8) void {
+        s.vt.termText(s.ptr, n, t);
     }
 
     /// Text of a prop with one trailing newline dropped (files end in one).
@@ -171,6 +207,37 @@ const core_vt: Source.VTable = .{
             K(p).bounds(n, r[0], r[1], r[2], r[3]);
         }
     }.f,
+    .termRows = core_term_vt.rows,
+    .termStyles = core_term_vt.styles,
+    .termCursor = core_term_vt.cursor,
+    .termResize = core_term_vt.resize,
+    .termMouse = core_term_vt.mouse,
+    .termScroll = core_term_vt.scroll,
+    .termText = core_term_vt.text,
+};
+
+const core_term_vt = struct {
+    fn rows(p: *anyopaque, n: Node, first: u32, count: u32) []const core.TermRow {
+        return K(p).termRows(n, first, count);
+    }
+    fn styles(p: *anyopaque, n: Node) []const core.TermStyle {
+        return K(p).termStyles(n);
+    }
+    fn cursor(p: *anyopaque, n: Node) ?core.TermCursor {
+        return K(p).termCursor(n);
+    }
+    fn resize(p: *anyopaque, n: Node, v: [4]u32) void {
+        K(p).termResize(n, v[0], v[1], v[2], v[3]) catch |e| std.log.warn("term resize: {t}", .{e});
+    }
+    fn mouse(p: *anyopaque, n: Node, m: core.TermMouse) bool {
+        return K(p).termMouse(n, m);
+    }
+    fn scroll(p: *anyopaque, n: Node, lines: i32) void {
+        K(p).termScroll(n, lines) catch |e| std.log.warn("term scroll: {t}", .{e});
+    }
+    fn text(p: *anyopaque, n: Node, t: []const u8) void {
+        K(p).termText(n, t) catch |e| std.log.warn("term text: {t}", .{e});
+    }
 };
 
 pub fn fromCore(k: core.Core) Source {
@@ -189,6 +256,16 @@ pub const Fake = struct {
     texts: std.StringHashMapUnmanaged([]const u8) = .empty,
     /// What the UI sent, one line per call: `emit click inc`, `mirror n value x`.
     log: std.ArrayList(u8) = .empty,
+    /// Terminal nodes' screens, as the core would hand them over.
+    terms: std.AutoHashMapUnmanaged(Node, FTerm) = .empty,
+    /// What termMouse answers: a program with a mouse mode on.
+    term_mouse_mode: bool = false,
+
+    pub const FTerm = struct {
+        rows: std.ArrayList(core.TermRow) = .empty,
+        styles: std.ArrayList(core.TermStyle) = .empty,
+        cursor: core.TermCursor = std.mem.zeroes(core.TermCursor),
+    };
 
     pub const FNode = struct {
         name: []const u8,
@@ -293,6 +370,43 @@ pub const Fake = struct {
         return out.items;
     }
 
+    /// Gives the terminal node at path a screen: `text`'s lines as runs in
+    /// style 0 (trailing blanks dropped, as the core does), styles after
+    /// the default one, and the cursor at (cx, cy) in a cols×rows grid.
+    /// Use termRun to add styled runs.
+    pub fn term(f: *Fake, path: []const u8, text: []const u8, styles: []const core.TermStyle, cx: u32, cy: u32, cols: u32, rows: u32) !void {
+        const n = f.lookup(path) orelse return error.NotFound;
+        var t: FTerm = .{};
+        try t.styles.append(f.a, std.mem.zeroes(core.TermStyle));
+        try t.styles.appendSlice(f.a, styles);
+        var it = std.mem.splitScalar(u8, text, '\n');
+        var y: u32 = 0;
+        while (it.next()) |line0| : (y += 1) {
+            if (y >= rows) break;
+            const line = std.mem.trimEnd(u8, line0, " ");
+            const runs = try f.a.alloc(core.TermRun, if (line.len > 0) 1 else 0);
+            if (line.len > 0) runs[0] = .{ .col = 0, .width = @import("grid.zig").width(line), .style = 0, .selected = 0, .text = core.str(line) };
+            try t.rows.append(f.a, .{ .y = y, .runs = runs.ptr, .n_runs = runs.len });
+        }
+        while (y < rows) : (y += 1) try t.rows.append(f.a, .{ .y = y, .runs = null, .n_runs = 0 });
+        t.cursor = .{ .x = cx, .y = cy, .shape = c.UIT_TERM_CURSOR_BLOCK, .visible = 1, .blink = 0, .cols = cols, .rows = rows };
+        try f.terms.put(f.a, n, t);
+    }
+
+    /// Replaces row y of a terminal set up with `term` by these runs.
+    pub fn termRow(f: *Fake, path: []const u8, y: u32, runs: []const core.TermRun) !void {
+        const n = f.lookup(path) orelse return error.NotFound;
+        const t = f.terms.getPtr(n) orelse return error.NotFound;
+        const copy = try f.a.dupe(core.TermRun, runs);
+        t.rows.items[y] = .{ .y = y, .runs = copy.ptr, .n_runs = copy.len };
+    }
+
+    pub fn termCursorAt(f: *Fake, path: []const u8, cur: core.TermCursor) !void {
+        const n = f.lookup(path) orelse return error.NotFound;
+        const t = f.terms.getPtr(n) orelse return error.NotFound;
+        t.cursor = cur;
+    }
+
     pub fn source(f: *Fake) Source {
         return .{ .ptr = f, .vt = &fake_vt };
     }
@@ -385,6 +499,61 @@ pub const Fake = struct {
         .bounds = struct {
             fn f(p: *anyopaque, n: Node, r: [4]f32) void {
                 F(p).nodes.items[n].bounds = r;
+            }
+        }.f,
+        .termRows = struct {
+            fn f(p: *anyopaque, n: Node, first: u32, count: u32) []const core.TermRow {
+                const t = F(p).terms.getPtr(n) orelse return &.{};
+                const rows = t.rows.items;
+                const lo = @min(first, rows.len);
+                const hi = @min(@as(usize, first) + count, rows.len);
+                return rows[lo..hi];
+            }
+        }.f,
+        .termStyles = struct {
+            fn f(p: *anyopaque, n: Node) []const core.TermStyle {
+                const t = F(p).terms.getPtr(n) orelse return &.{};
+                return t.styles.items;
+            }
+        }.f,
+        .termCursor = struct {
+            fn f(p: *anyopaque, n: Node) ?core.TermCursor {
+                const t = F(p).terms.getPtr(n) orelse return null;
+                return t.cursor;
+            }
+        }.f,
+        .termResize = struct {
+            fn f(p: *anyopaque, n: Node, v: [4]u32) void {
+                const fk = F(p);
+                fk.log.print(fk.a, "term-resize {s} {d} {d} {d} {d}\n", .{ fk.nodes.items[n].path, v[0], v[1], v[2], v[3] }) catch {};
+                if (fk.terms.getPtr(n)) |t| {
+                    t.cursor.cols = v[0];
+                    t.cursor.rows = v[1];
+                }
+            }
+        }.f,
+        .termMouse = struct {
+            fn f(p: *anyopaque, n: Node, m: core.TermMouse) bool {
+                const fk = F(p);
+                const act = switch (m.action) {
+                    c.UIT_TERM_PRESS => "press",
+                    c.UIT_TERM_RELEASE => "release",
+                    else => "move",
+                };
+                fk.log.print(fk.a, "term-mouse {s} {s} {d} {d},{d} clicks={d}\n", .{ fk.nodes.items[n].path, act, m.button, m.col, m.row, m.clicks }) catch {};
+                return fk.term_mouse_mode;
+            }
+        }.f,
+        .termScroll = struct {
+            fn f(p: *anyopaque, n: Node, lines: i32) void {
+                const fk = F(p);
+                fk.log.print(fk.a, "term-scroll {s} {d}\n", .{ fk.nodes.items[n].path, lines }) catch {};
+            }
+        }.f,
+        .termText = struct {
+            fn f(p: *anyopaque, n: Node, t: []const u8) void {
+                const fk = F(p);
+                fk.log.print(fk.a, "term-text {s} {s}\n", .{ fk.nodes.items[n].path, t }) catch {};
             }
         }.f,
     };
