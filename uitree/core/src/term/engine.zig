@@ -362,12 +362,18 @@ pub const Events = struct {
     bell: u32 = 0,
     /// OSC 52 writes, in order. Reads (`?`) are refused and not listed.
     clips: std.ArrayList(Clip) = .empty,
+    /// Bytes the program asked the terminal to send back, in order: answers
+    /// to device attribute, cursor position and mode queries (DA, DSR,
+    /// DECRQM, XTVERSION). They go to the program's input, the `keys`
+    /// stream, as if typed. Programs such as vim wait for some of them.
+    reply: ?Span = null,
     buf: std.ArrayList(u8) = .empty,
 
     pub fn clear(e: *Events) void {
         e.title = null;
         e.cwd = null;
         e.bell = 0;
+        e.reply = null;
         e.clips.clearRetainingCapacity();
         e.buf.clearRetainingCapacity();
     }
@@ -384,7 +390,7 @@ pub const Events = struct {
         return .{ .start = start, .len = @intCast(s.len) };
     }
     pub fn any(e: *const Events) bool {
-        return e.title != null or e.cwd != null or e.bell > 0 or e.clips.items.len > 0;
+        return e.title != null or e.cwd != null or e.bell > 0 or e.clips.items.len > 0 or e.reply != null;
     }
 };
 
@@ -414,7 +420,7 @@ pub const Events = struct {
 ///   select(*T, Selection) void
 ///   screenText(*T, *Writer) !void       the `screen` file (below)
 ///   selectionText(*T, *Writer) !void    the `selection` file
-///   takeEvents(*T, *Events) Error!void  title, cwd, bell, OSC 52
+///   takeEvents(*T, *Events) Error!void  title, cwd, bell, OSC 52, replies
 ///
 /// `screenText` is the viewport as plain text: one line per row, each
 /// ending in `\n`, trailing blanks of each row and trailing blank rows left
@@ -456,6 +462,8 @@ pub fn conform(comptime T: type) void {
 
 test {
     _ = plain;
+    _ = @import("tests.zig");
+    if (backend == .ghostty) _ = @import("ghostty.zig");
 }
 
 test "parseStroke" {
