@@ -16,7 +16,8 @@ and tell the workstreams it affects.
   produces a protocol error, and never decides whether a write is valid.
 - **The core never sees a GPUI or terminal type.** Its only knowledge of a
   renderer is descriptor text: the types the renderer registers at
-  `uit_create`.
+  `uit_create`. (A `terminal` *node* is different: its VT state is the
+  core's, below.)
 - **Spec 0.2 is the target**, not uitreefs's current behavior. Where
   uitreefs and [protocols/](protocols/) differ, follow the spec and note
   it in the PR. Port tests, then code.
@@ -46,6 +47,47 @@ a WASI, and `uit`: the app's machine in a Worker and its `$ui`
 connections, which the core serves as `UitConn`s, ABI 6) and calls
 nothing in the core but `uitcore.h` and the coroutine entry.
 
+## The terminal node
+
+A `terminal` node ([components.md § terminal](protocols/components.md))
+keeps its screen in the core, so `screen` reads the same on every
+renderer and with none, and the renderers only draw cells:
+
+```
+program ──out (stream mode) or the pty master (pty mode)──▶ bounded buffer
+   ▲                                                          │ one feed per uit_pump
+   │ keys, encoded by the engine                              ▼
+   └──── keys file or master ◀── uit_key / uit_term_*  ◀── engine (core/src/term/)
+                                                              │ dirty rows, styles, cursor
+                                                              ▼
+            GPUI, uitree-tui (linked)  ◀── uit_term_rows / _styles / _cursor (ABI 9)
+            uitree-tui --remote, web   ◀── term, term-styles, term-rows records (render.md)
+```
+
+- **The engine** sits behind `core/src/term/engine.zig`: libghostty-vt
+  (`ghostty.zig`, the default) or a plain-text stand-in (`plain.zig`,
+  `-Dterminal=plain`). Nothing else in the core touches libghostty-vt.
+  It is built by [tools/ghostty-vt](tools/ghostty-vt) with its own Zig
+  0.17 and linked into `libuitcore.a` as one object
+  ([core/README.md](core/README.md#the-terminal-engine)).
+- **Threads.** Writers of `out` and the pty reader thread (h9's host
+  ptys, `core/src/machine/`) only append to the node's bounded buffer,
+  and wait while it is full; the owner thread feeds the engine once per
+  pump. So rule 1 holds: only the owner thread touches the engine.
+- **Input.** Keys reach a focused terminal through `uit_key` after the
+  app's own bindings, and the engine encodes them (cursor keys mode,
+  kitty keys). Mouse, wheel, paste, focus and IME text have their own
+  `uit_term_*` calls; the engine decides between a mouse report, a
+  selection and scrollback.
+- **Pty mode** opens a pair in the app's h9 machine only, never a host
+  pty, and the app starts its program on `tty` itself.
+
+The demos are [examples/rc/terminal.rc](tests/conformance/examples/rc/terminal.rc)
+(Alpine's sh, htop and Neovim in pty mode) and
+[examples/go/repl](tests/conformance/examples/go/repl) (a shell in Go in
+stream mode), in [examples/list](tests/conformance/examples/list) with
+the rest.
+
 ## Layout and who owns it
 
 Each directory has one owning workstream. Touch another's directory only
@@ -59,7 +101,8 @@ through a PR it reviews, or a one-line change you call out in yours.
 | `core/src/types/`, `core/types/` | W1 types | Descriptor parser, `Catalog`, every type's `spec`, `style-words`, `theme-tokens` |
 | `core/src/tree/` | W3 tree | Nodes, handles, ops, batches, snapshots, bus, requests, trace, the op queue |
 | `core/src/ninep/`, `core/src/headless/` | W4 serve | 9P server, transports, `/debug`, `uitree-headless`, CLI |
-| `core/src/machine/` | W0 spike, then W4 | h9 lifecycle: start, mount `$ui`, exit status, hangup |
+| `core/src/machine/` | W0 spike, then W4 | h9 lifecycle: start, mount `$ui`, exit status, hangup, pty pairs for terminal nodes |
+| `core/src/term/`, `core/src/tree/term.zig`, `tools/ghostty-vt` | T2, T3 | The terminal engine (libghostty-vt or plain) and the node's files, buffer and verbs |
 | `core/src/spike/` | W0 spike | Throwaway minimal tree; deleted when W3 lands |
 | `renderer/gpui/` | W0 spike, then W6 | The GPUI host (Rust) |
 | `renderer/gpui/tools/style-gen/` | W1 types | Generator for the style dispatch table and `style-words` |

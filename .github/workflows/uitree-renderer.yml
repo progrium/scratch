@@ -6,7 +6,9 @@ name: uitree-renderer
 # Windows (SPIKE.md). macOS binaries are signed with hyper9's
 # h9.entitlements by renderer/gpui/tools/sign, the renderer's post-build
 # step. On Linux the examples run under Xvfb from the uitree binary, with
-# screenshots uploaded as an artifact.
+# screenshots uploaded as an artifact, and so do the terminal node's demos
+# (tools/shoot-terminal: sh, htop and Neovim in pty mode on Alpine, and a
+# shell in Go in stream mode), driven with xdotool.
 
 on:
   push:
@@ -131,3 +133,58 @@ jobs:
         with:
           name: example-screenshots
           path: ${{ runner.temp }}/shots/
+
+  terminal:
+    name: terminal demos under Xvfb (Linux)
+    needs: [pin, gpui]
+    runs-on: ubuntu-latest
+    env:
+      H9ROOT: ${{ github.workspace }}/uitree/third_party/hyper9/.local/9front/root-amd64
+      LINUXROOT: ${{ github.workspace }}/uitree/.local/linuxroot
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+      - uses: mlugg/setup-zig@v2
+        with: { version: "${{ needs.pin.outputs.zig }}" }
+      - uses: actions/download-artifact@v4
+        with:
+          name: uitree-Linux
+          path: uitree/renderer/gpui/target/release
+      - run: chmod +x target/release/uitree
+      - run: sudo apt-get update && sudo apt-get install -y xvfb xdotool imagemagick mesa-vulkan-drivers libvulkan1 libxkbcommon-x11-0 libxcb1 libx11-xcb1 libfontconfig1 libfreetype6 libwayland-client0 libwebkit2gtk-4.1-0 libgtk-3-0 fonts-dejavu-core
+      - name: Let the runner open /dev/kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: actions/cache@v4
+        id: root
+        with:
+          path: uitree/third_party/hyper9/.local/9front/root-amd64
+          key: uitree-root-amd64-${{ hashFiles('uitree/third_party/hyper9/scripts/pins.sh', 'uitree/third_party/hyper9/tools/isoroot.zig') }}
+      - name: 9front amd64 root from the ISO
+        if: steps.root.outputs.cache-hit != 'true'
+        working-directory: uitree/third_party/hyper9
+        run: |
+          scripts/fetch.sh isoamd64
+          . scripts/pins.sh
+          zig build isoroot -- ".local/9front/9front-$NINEFRONT_RELEASE.amd64.iso" .local/9front/root-amd64
+          rm -f .local/9front/*.iso
+      # The Alpine tree with htop and Neovim (tools/linuxroot).
+      - uses: actions/cache@v4
+        id: linuxroot
+        with:
+          path: uitree/.local/linuxroot
+          key: uitree-linuxroot-${{ hashFiles('uitree/tools/linuxroot') }}
+      - if: steps.linuxroot.outputs.cache-hit != 'true'
+        working-directory: uitree
+        # apk sets owners, so as root; then the runner's, for the cache.
+        run: |
+          sudo tools/linuxroot "$LINUXROOT"
+          sudo chown -R "$(id -u):$(id -g)" "$LINUXROOT"
+      - run: tools/shoot-terminal "$RUNNER_TEMP/terminal-shots"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-screenshots
+          path: ${{ runner.temp }}/terminal-shots/

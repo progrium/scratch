@@ -159,7 +159,13 @@ terminal renderer in the browser link `libuitcore.a`.
 signin, settings, csvview, files) and `tour/tour.rc`, which uses what
 none of them does (tabs, checkbox, textarea, the clipboard, a link, a
 tooltip, a toast, a popover, markdown, an editor, an image, a file drop
-and a menu bar).
+and a menu bar). `repl` is the `terminal` node's stream-mode demo, the Go
+program in `examples/go/repl` built for plan9/386 (`zig build` runs
+`go build`; `-Drepl=false` skips it). The pty-mode demo
+(`rc/terminal.rc`: sh, htop and Neovim) doesn't run in the browser: it
+needs Linux programs and a pty pair whose master the core holds, and
+h9's browser host has neither (its CPU is 386 and its machine runs in
+a Worker, apart from the core).
 
 `test/run.mjs` drives them in headless Chromium on both renderers:
 
@@ -171,12 +177,14 @@ node test/run.mjs                 # on zig-out/ as built: --only APP,... --rende
 `probe.js` is a 9P client of the page's core, a connection of its own
 beside the app's: a case finds a node by its `bounds` file, acts with
 the real mouse and keyboard, and checks the tree (`test/cases.mjs`).
-24 cases pass: clicks, key bindings, typing, Enter, exit status, field
+25 cases pass: clicks, key bindings, typing, Enter, exit status, field
 errors, a secret input, dialogs, sidebar pages, switch, number-input,
 the select popup, radio-group, slider, theme mode and name, table
 filter, sheet, context menu, alert dialog, checkbox, textarea, the
 clipboard both ways, tabs, markdown, editor and image, popover, toast,
-tooltip, links, the menu bar, and a file dropped from the page. The terminal renderer draws a subset
+tooltip, links, the menu bar, a file dropped from the page, and a
+`terminal` node in stream mode (`repl`, the Go shell from
+examples/go/repl built for plan9/386: keys in, cells out, history). The terminal renderer draws a subset
 of the components (no tables, sheets, sidebars or menus), so the cases
 for those run on GPUI only.
 

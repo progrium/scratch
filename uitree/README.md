@@ -50,6 +50,11 @@ run on a 9front root; the Linux ones (jq onward in the list) run with
 [tools/linuxroot](tools/linuxroot) (and [tools/gforth](tools/gforth) for
 Forth) builds, and are skipped without it.
 
+Two more show the `terminal` node: `terminal` (rc starting Alpine's sh
+in pty mode, where htop and Neovim run; flagged `linux` in the list, since
+it needs `$LINUXROOT` at `#L`) and `go-repl` (a shell in Go in stream
+mode). `renderer/tui/tools/shoot.sh terminal` and `repl` record them.
+
 `H9ROOT` is a 9front root with `rc` in it: in `third_party/hyper9`,
 `scripts/fetch.sh isoamd64`, then
 `zig build isoroot -- .local/9front/9front-11952.amd64.iso .local/9front/root-amd64`.
@@ -68,6 +73,8 @@ Forth) builds, and are skipped without it.
   screenshots as an artifact.
 
 Status: every workstream has landed on `uitree`. Conformance on
-`uitree-headless`: 31 pass (the transfer layer: typed drags, file drops
+`uitree-headless`: 33 pass (the transfer layer: typed drags, file drops
 as handles under `$ui/file/`, and the typed clipboard; tooltips; the
-`terminal` node in stream mode).
+`terminal` node in stream mode, pty mode and its input). The terminal
+node is integrated on all three renderers, with libghostty-vt as its
+engine.

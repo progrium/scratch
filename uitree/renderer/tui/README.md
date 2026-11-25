@@ -156,7 +156,8 @@ is 120×40, so the larger windows (life's 576-point board) are cut off at
 the bottom.
 
 [examples/](examples/) also has counter, hello, signin and todo in the 0.2
-spelling. Each was run under h9 on the 9front 11952 amd64 root in xterm,
+spelling; terminal and repl are the terminal node's demos from the
+examples list. Each was run under h9 on the 9front 11952 amd64 root in xterm,
 driven by [tools/shoot.sh](tools/shoot.sh) (Xvfb, xterm and tmux, which
 sends the keys and SGR mouse reports), which also records the
 screenshots and GIFs in [examples/screenshots/](examples/screenshots/).
@@ -167,6 +168,8 @@ screenshots and GIFs in [examples/screenshots/](examples/screenshots/).
 | hello | a `tree` document, input + primary button sharing a tag, Enter submits, reading `value` | [hello.png](examples/screenshots/hello.png), [hello-greeted.png](examples/screenshots/hello-greeted.png), [hello.gif](examples/screenshots/hello.gif) |
 | signin | form and fields, `required`, field errors, a secret input, a link, a dialog in `over/` opened with `open` | [signin.png](examples/screenshots/signin.png), [signin-errors.png](examples/screenshots/signin-errors.png), [signin-welcome.png](examples/screenshots/signin-welcome.png), [signin.gif](examples/screenshots/signin.gif) |
 | todo | new and delete per item, checkbox `change`, tabs filtering through `order`, scroll, empty state, `hover:` rows | [todo.png](examples/screenshots/todo.png), [todo-items.png](examples/screenshots/todo-items.png), [todo-active.png](examples/screenshots/todo-active.png), [todo-cleared.png](examples/screenshots/todo-cleared.png), [todo.gif](examples/screenshots/todo.gif) |
+| terminal | the `terminal` node in pty mode with libghostty-vt: Alpine's sh with `ls --color`, htop, Neovim, `stty size` and `tty` ([rc/terminal.rc](../../tests/conformance/examples/rc/terminal.rc), with `$LINUXROOT`) | [terminal.png](examples/screenshots/terminal.png), [terminal-ls.png](examples/screenshots/terminal-ls.png), [terminal-htop.png](examples/screenshots/terminal-htop.png), [terminal-vim.png](examples/screenshots/terminal-vim.png), [terminal-vim-edit.png](examples/screenshots/terminal-vim-edit.png), [terminal-stty.png](examples/screenshots/terminal-stty.png), [terminal.gif](examples/screenshots/terminal.gif) |
+| repl | the `terminal` node in stream mode: a shell in Go that does its own echo, line editing and history, colors and SGR attributes ([go/repl](../../tests/conformance/examples/go/repl)) | [repl.png](examples/screenshots/repl.png), [repl-ls.png](examples/screenshots/repl-ls.png), [repl-colors.png](examples/screenshots/repl-colors.png), [repl-history.png](examples/screenshots/repl-history.png), [repl.gif](examples/screenshots/repl.gif) |
 
 They follow uitreefs's versions, except that todo's delete buttons are
 always shown: `group-hover` is a uitreefs extra that 0.2 doesn't have.

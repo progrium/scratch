@@ -50,6 +50,17 @@
  *    text (`bad value: read-only`). Panics abort on both sides; nothing
  *    unwinds across this boundary.
  *
+ * Linking: a renderer links libuitcore.a and nothing else of the core's.
+ * `zig build` in core/ makes it for the target; with -Dh9=true it holds
+ * hyper9 (the apps' machines), and with -Dterminal=ghostty (the default,
+ * but on Windows) it holds libghostty-vt 1.0.2, the terminal node's
+ * engine, as one relocatable object that tools/ghostty-vt builds with its
+ * own Zig 0.17. libghostty-vt's C++ calls only libc, so no C++ library
+ * goes on the link line for it. -Dterminal=plain links a plain-text
+ * stand-in instead, for a build without Zig 0.17 or Ghostty's tarballs
+ * (core/README.md, "The terminal engine"). The ABI is the same with
+ * either: only what a terminal's cells look like differs.
+ *
  * Strings are UTF-8, not NUL-terminated, and may be empty ({NULL, 0}).
  * Paths are window-relative unless a function says otherwise, as in
  * protocols/core.md § Paths: `.` is a window's root, `f/ok` a node in it.

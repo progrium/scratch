@@ -12,8 +12,8 @@
 # host refused shows up as a diff. Times of day (HH:MM) are masked. An
 # example flagged nogolden has live data: only its errors are checked.
 #
-# Linux examples need $LINUXROOT, the Alpine tree tools/linuxroot (and
-# tools/gforth) make, and are skipped without it; the Go ones need go on
+# Linux examples, and those flagged linux, need $LINUXROOT, the Alpine
+# tree tools/linuxroot (and tools/gforth) make, and are skipped without it; the Go ones need go on
 # the host. UITREE_HEADLESS as for run.
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -59,8 +59,16 @@ while IFS='|' read -r name dir title view flags cmd; do
 		# tree-phase's linux runs the command with the Alpine sh.
 		"$host" -d "$linux:#L" -e ui=/mnt/ui /9/bin/rc tree-phase.rc "examples/$dir" linux "$cmd" >"$out.raw" 2>"$out.stderr"
 	else
-		eval "set -- $cmd"
-		"$host" rc tree-phase.rc "examples/$dir" "$@" >"$out.raw" 2>"$out.stderr"
+		# A Plan 9 command that starts Linux programs (flag linux) gets
+		# the Alpine tree at #L too, which makes the machine's root view
+		# Linux: rc is /9/bin/rc there, and $ui is set for the Plan 9 view.
+		set -- rc
+		case ",$flags," in *,linux,*)
+			if [ -z "$linux" ]; then echo "skip $name (no LINUXROOT)"; continue; fi
+			set -- -d "$linux:#L" -e ui=/mnt/ui /9/bin/rc
+		esac
+		eval "set -- \"\$@\" tree-phase.rc \"examples/\$dir\" $cmd"
+		"$host" "$@" >"$out.raw" 2>"$out.stderr"
 	fi
 	sed 's/\([^0-9]\)[0-9][0-9]:[0-9][0-9]\([^0-9]\|$\)/\1HH:MM\2/g' "$out.raw" >"$out"
 	grep '^uitree: ' "$out.stderr" >>"$out"

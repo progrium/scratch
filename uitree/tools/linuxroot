@@ -1,9 +1,13 @@
 #!/bin/bash
 # linuxroot [DIR]: make the Alpine root the Linux examples run on:
 # PostScript, COBOL, jq, Lua, Node, Python, Ruby and Scheme (tools/gforth adds
-# Forth, which Alpine does not package). This has
-# ghostscript, gnucobol (with gcc and musl-dev for cobc),
-# jq, GNU sed, and bash for sh/progress.sh, from Alpine edge (gnucobol is only in edge/testing).
+# Forth, which Alpine does not package), and the terminal demos'
+# full-screen programs. This has ghostscript, gnucobol (with gcc and
+# musl-dev for cobc), jq, GNU sed, bash for sh/progress.sh, and htop,
+# vim, Neovim and the terminfo they need for rc/terminal.rc, from Alpine
+# edge (gnucobol is only in edge/testing). vim hangs in h9 as yet (h9 has
+# no timer_create, and vim waits forever on the timer thread musl starts
+# for it), so the demo's editor is Neovim.
 # Uses apk.static on the host, so it needs no Alpine and no root inside h9.
 set -e
 UITREE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -15,6 +19,7 @@ curl -sL $E/main/x86_64/apk-tools-static-$v.apk | tar xz -C $T 2>/dev/null
 mkdir -p "$DIR"
 $T/sbin/apk.static --root "$DIR" --initdb --allow-untrusted --no-cache \
 	-X $E/main -X $E/community -X $E/testing \
-	add alpine-base ghostscript jq gnucobol gcc musl-dev sed lua5.4 nodejs python3 ruby chibi-scheme bash coreutils
+	add alpine-base ghostscript jq gnucobol gcc musl-dev sed lua5.4 nodejs python3 ruby chibi-scheme bash coreutils \
+	htop vim neovim ncurses-terminfo-base
 rm -rf $T
 echo "$DIR"

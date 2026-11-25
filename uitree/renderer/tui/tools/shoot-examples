@@ -53,7 +53,17 @@ while IFS='|' read -r name dir title view flags cmd; do
 		secs=$((wait_secs * 2))
 		run="$(q "$bin") --log $(q "$log") -t $(q "$title") -d $(q "$linux:#L") sh -c $(q "$cmd")"
 	else
-		run="$(q "$bin") --log $(q "$log") -t $(q "$title") $cmd"
+		# flag linux: a Plan 9 command that starts Linux programs from #L.
+		d=
+		case ",$flags," in *,linux,*)
+			[ -n "$linux" ] || { echo "skip $name (no LINUXROOT)"; continue; }
+			secs=$((wait_secs * 2))
+			# The machine's root view is then Linux: rc is /9/bin/rc,
+			# and $ui is set for the Plan 9 view.
+			d="-d $(q "$linux:#L") -e ui=/mnt/ui "
+			cmd=$(echo "$cmd" | sed 's|^rc |/9/bin/rc |')
+		esac
+		run="$(q "$bin") --log $(q "$log") -t $(q "$title") $d$cmd"
 	fi
 	rm -f "$log"
 	T new-session -d -s ui -x "$cols" -y "$rows" \

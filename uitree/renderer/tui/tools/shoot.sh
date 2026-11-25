@@ -2,11 +2,15 @@
 # shoot.sh: run an example in a real terminal (xterm on Xvfb, through
 # tmux so keys and mouse can be scripted) and record screenshots and a GIF.
 #
-#	tools/shoot.sh NAME          counter, hello, signin or todo
+#	tools/shoot.sh NAME          counter, hello, signin, todo,
+#	                             terminal or repl
 #
 # Needs Xvfb, xterm, tmux and ImageMagick, a built zig-out/bin/uitree-tui,
-# and $H9ROOT naming a 9front root (see README.md). Writes
-# examples/screenshots/NAME*.png and NAME.gif.
+# and $H9ROOT naming a 9front root (see README.md); terminal (sh, htop and
+# Neovim in a pty-mode terminal node) needs $LINUXROOT from
+# ../../tools/linuxroot, and repl (a shell in Go in a stream-mode one)
+# needs go.
+# Writes examples/screenshots/NAME*.png and NAME.gif.
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
 out=$here/examples/screenshots
@@ -17,10 +21,10 @@ sock=uitree-shoot-$$
 disp=:${DISPLAY_NUM:-77}
 T() { tmux -L "$sock" "$@"; }
 
-start() { # cols rows title script [flags]
+start() { # cols rows title script [flags [dir [prog]]]
 	cols=$1 rows=$2
 	T new-session -d -s ui -x "$1" -y "$2" \
-		"cd '$here/examples' && TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 '$here/zig-out/bin/uitree-tui' $5 -t '$3' rc $4; sleep 600"
+		"cd '${6:-$here/examples}' && TERM=xterm-256color COLORTERM=truecolor LANG=C.UTF-8 '$here/zig-out/bin/uitree-tui' $5 -t '$3' ${7:-rc} $4; sleep 600"
 	T set -t ui status off
 	Xvfb "$disp" -screen 0 1600x1200x24 >/dev/null 2>&1 &
 	xvfb=$!
@@ -99,8 +103,37 @@ todo)
 	gif todo
 	rm -f "$here/examples/todo.txt"
 	;;
+terminal)
+	: "${LINUXROOT:?terminal: set LINUXROOT (../../tools/linuxroot)}"
+	# rc in the Plan 9 view with Alpine at #L, as tools/shoot-examples
+	# runs an example flagged linux.
+	start 100 30 Terminal terminal.rc "-d '$LINUXROOT:#L' -e ui=/mnt/ui" \
+		"$here/../../tests/conformance/examples/rc" /9/bin/rc
+	sleep 4; frame terminal
+	type 'ls --color=always -l /etc | head -12'; frame; keys Enter; frame terminal-ls
+	type 'htop'; keys Enter; sleep 3; frame; sleep 2; frame terminal-htop
+	keys F5; sleep 2; frame; keys q; frame
+	type 'nvim /etc/motd'; keys Enter; sleep 3; frame terminal-vim
+	keys G o; type 'Typed in Neovim, in a uitree terminal node.'; frame
+	keys Escape; type ':set number'; keys Enter; type ':split'; keys Enter; frame terminal-vim-edit
+	type ':qa!'; keys Enter; frame
+	type 'stty size; tty'; keys Enter; frame terminal-stty
+	gif terminal
+	;;
+repl)
+	(cd "$here/../../tests/conformance/examples/go/repl" &&
+		GOOS=plan9 GOARCH=amd64 CGO_ENABLED=0 go build -o repl .)
+	start 90 28 repl '' '' "$here/../../tests/conformance/examples/go/repl" ./repl
+	sleep 2; frame repl
+	type 'ls /bin'; frame; keys Enter; frame repl-ls
+	type 'colors'; keys Enter; frame repl-colors
+	type 'calc (1+2)*14'; keys Enter; frame
+	keys Up; frame; keys BSpace BSpace; type '100'; frame
+	keys Enter; frame repl-history
+	gif repl
+	;;
 *)
-	echo "usage: $0 counter|hello|signin|todo" >&2
+	echo "usage: $0 counter|hello|signin|todo|terminal|repl" >&2
 	exit 2
 	;;
 esac

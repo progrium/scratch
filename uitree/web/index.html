@@ -61,7 +61,7 @@ const show = () => {
   }
   for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-pressed', String(b.dataset.r === shown));
   // The app's own program, as the machine runs it.
-  const f = apps[k].files[0];
+  const f = apps[k].source ?? apps[k].files[0];
   document.getElementById('srcname').textContent = `Source: ${f}`;
   fetch(`apps/${k}/${f}`).then((r) => r.text()).then((t) => { if (pick.value === k) document.getElementById('src').textContent = t; });
 };
