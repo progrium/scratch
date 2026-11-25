@@ -1,73 +1,250 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>uitree in the browser</title>
+<title>uitree components</title>
 <style>
-  :root { --bg: #f6f6f4; --fg: #1c1c1a; --muted: #6b6b66; --line: #dcdcd6; --panel: #fff; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ececea; --muted: #9a9a94; --line: #34342f; --panel: #1f1f1d; } }
-  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
-  main { max-width: 1800px; margin: 0 auto; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  p { margin: 0 0 16px; color: var(--muted); max-width: 70ch; }
-  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 16px; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
-  h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
-  iframe { width: 100%; height: 640px; border: 0; display: block; background: #fff; border-radius: 4px; }
-  pre { font: 12px/1.5 ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; margin: 8px 0 0; }
-  .src { margin-top: 16px; }
-  .tabs { display: none; gap: 4px; margin: 0 0 12px; }
-  .tabs button { font: inherit; font-size: 14px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); }
+  :root { --bg: #f6f6f4; --fg: #1c1c1a; --muted: #6b6b66; --line: #dcdcd6; --panel: #fff; --hi: #e9e9e4; --warn: #9a5b00; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ececea; --muted: #9a9a94; --line: #34342f; --panel: #1f1f1d; --hi: #2a2a27; --warn: #e0a548; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, sans-serif; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 1; }
+  header h1 { font-size: 16px; margin: 0; flex: 1 1 auto; white-space: nowrap; }
+  header h1 small { font-weight: 400; color: var(--muted); }
+  header a { color: var(--muted); font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 13px; padding: 4px 12px; border: 0; background: transparent; color: var(--fg); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  label.ctl { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+  select { font: inherit; font-size: 13px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); max-width: 200px; }
+  .wrap { display: grid; grid-template-columns: 220px minmax(0, 1fr); max-width: 1600px; margin: 0 auto; }
+  nav { border-right: 1px solid var(--line); padding: 12px 8px; height: calc(100vh - 57px); position: sticky; top: 57px; overflow-y: auto; }
+  nav input { width: 100%; font: inherit; font-size: 13px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); margin-bottom: 8px; }
+  nav h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 12px 8px 4px; }
+  nav a { display: block; padding: 3px 8px; border-radius: 5px; color: var(--fg); text-decoration: none; font-size: 13px; }
+  nav a:hover { background: var(--hi); }
+  nav a[aria-current="page"] { background: var(--fg); color: var(--bg); }
+  nav a .x { float: right; color: var(--warn); font-size: 11px; }
+  nav a[aria-current="page"] .x { color: inherit; }
+  #pickm { display: none; width: 100%; max-width: none; margin-bottom: 8px; }
+  main { padding: 16px; min-width: 0; }
+  main h2 { margin: 0; font-size: 20px; }
+  .desc { color: var(--muted); margin: 2px 0 8px; max-width: 80ch; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+  .chips code { font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--hi); }
+  .chips code.no { color: var(--warn); text-decoration: line-through; }
+  .chips .note { font-size: 12px; color: var(--warn); }
+  .stage { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; position: relative; }
+  .stage iframe { display: block; width: 100%; height: min(640px, 70vh); border: 0; }
+  .stage .busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #6b6b66; font-size: 13px; background: rgba(255, 255, 255, .85); pointer-events: none; }
+  .stage .busy[hidden] { display: none; }
+  .tabs { display: flex; gap: 4px; margin: 12px 0 6px; }
+  .tabs button { font: inherit; font-size: 13px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); cursor: pointer; }
   .tabs button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
-  /* One column: one renderer at a time (see the script). */
-  .one .tabs { display: flex; }
-  .one section[data-r]:not(.on) { display: none; }
-  .src pre { color: var(--fg); max-height: 480px; overflow: auto; }
-</style>
-<main>
-  <h1>uitree in the browser</h1>
-  <p>Each example twice, each copy in its own h9 machine in a Web Worker (h9's browser host, its own 386 CPU), with <code>$ui</code> served by the uitree core in wasm on the page. Left: the GPUI renderer on gpui_web's canvas. Right: the terminal renderer drawing into xterm.js. On a narrow screen, one at a time.</p>
-  <p><label>Example <select id="pick"></select></label> <a id="g1" target="_blank">GPUI alone</a> · <a id="t1" target="_blank">terminal alone</a></p>
-  <div class="tabs"><button data-r="gpui">GPUI</button><button data-r="tui">Terminal</button></div>
-  <div class="row">
-    <section data-r="gpui"><h2>GPUI (gpui_web on WebGL2)</h2><iframe id="gpui" title="GPUI renderer"></iframe></section>
-    <section data-r="tui"><h2>Terminal (Yoga layout, xterm.js)</h2><iframe id="tui" title="Terminal renderer"></iframe></section>
-  </div>
-  <section class="src"><h2 id="srcname">Source</h2><pre id="src"></pre></section>
-</main>
-<script type="module">
-import { apps } from './apps.js';
-const pick = document.getElementById('pick');
-for (const [k, a] of Object.entries(apps)) pick.add(new Option(`${k} (${a.title})`, k));
-// When the two renderers don't fit side by side (a phone, a narrow
-// window), only one runs: each is a whole wasm renderer and an h9 machine,
-// together about 550 MB in WebKit, more than iOS lets a tab have (Safari
-// kills the page and reloads it until it gives up). The other's iframe is
-// emptied, which frees its memory.
-const one = matchMedia('(max-width: 1087px)');
-let shown = 'gpui';
-const show = () => {
-  const k = pick.value;
-  history.replaceState(null, '', `?app=${k}`);
-  document.body.classList.toggle('one', one.matches);
-  for (const [id, page, link] of [['gpui', 'gpui.html', 'g1'], ['tui', 'tui.html', 't1']]) {
-    const url = `${page}?app=${k}`;
-    const run = !one.matches || id === shown;
-    const f = document.getElementById(id);
-    // Shown before it loads: xterm.js can't open in a hidden element.
-    f.closest('section').classList.toggle('on', run);
-    const want = run ? new URL(url, location.href).href : 'about:blank';
-    if (f.src !== want) f.src = want;
-    document.getElementById(link).href = url;
+  pre { margin: 0; font: 12px/1.5 ui-monospace, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 320px; overflow: auto; white-space: pre; }
+  #err { color: #c22; white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+  @media (max-width: 760px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav { display: none; }
+    #pickm { display: block; }
+    header h1 { flex-basis: 100%; }
   }
-  for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-pressed', String(b.dataset.r === shown));
-  // The app's own program, as the machine runs it.
-  const f = apps[k].source ?? apps[k].files[0];
-  document.getElementById('srcname').textContent = `Source: ${f}`;
-  fetch(`apps/${k}/${f}`).then((r) => r.text()).then((t) => { if (pick.value === k) document.getElementById('src').textContent = t; });
+</style>
+<header>
+  <h1>uitree components <small>on both renderers, in the browser</small></h1>
+  <span class="seg" id="rend" role="group" aria-label="Renderer"><button data-r="gpui" title="The GPUI renderer on gpui_web's canvas">GUI</button><button data-r="tui" title="The terminal renderer, cells in xterm.js">TUI</button></span>
+  <span class="seg" id="mode" role="group" aria-label="Theme mode"><button data-m="light">Light</button><button data-m="dark">Dark</button></span>
+  <label class="ctl">Theme <select id="theme"><option value="">Default</option></select></label>
+  <a href="examples.html">Example apps</a>
+</header>
+<div class="wrap">
+  <nav><input id="filter" type="search" placeholder="Filter components" aria-label="Filter components"><div id="list"></div></nav>
+  <main>
+    <select id="pickm" aria-label="Component"></select>
+    <h2 id="title"></h2>
+    <p class="desc" id="desc"></p>
+    <div class="chips" id="chips"></div>
+    <div class="stage"><iframe id="view" title="The renderer"></iframe><div class="busy" id="busy">Starting the renderer…</div></div>
+    <div id="err"></div>
+    <div class="tabs" id="tabs"><button data-t="events">Events</button><button data-t="doc">Document</button><button data-t="spec">Descriptors</button></div>
+    <pre id="out"></pre>
+  </main>
+</div>
+<script type="module">
+// The gallery: every component in core/types, a story each (stories.js),
+// drawn by one renderer at a time in an iframe (gpui.html or tui.html
+// running gallery/gallery.rc). The page writes each story into the window
+// through its own $ui connection (gallery.js, probe.js), so switching
+// stories is a few writes, not a new machine; switching renderers loads
+// the other page and writes the story again.
+import { stories, groups } from './stories.js';
+import { storyTypes, catalog, show, react } from './gallery.js';
+import './cache.js';
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const state = {
+  story: stories.find((s) => s.id === params.get('c')) ?? stories[0],
+  r: params.get('r') === 'tui' ? 'tui' : 'gpui',
+  mode: params.get('mode') === 'dark' ? 'dark' : 'light',
+  theme: params.get('theme') ?? '',
+  tab: 'events',
 };
-pick.value = new URLSearchParams(location.search).get('app') ?? 'counter';
-pick.onchange = show;
-one.addEventListener('change', show);
-for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => { shown = b.dataset.r; show(); };
-show();
+let ui = null, has = null, last = null, gen = 0, events = [], specs = {};
+
+// The list, by group; ⊘ marks a story with a type the current renderer lacks.
+function drawList() {
+  const f = $('filter').value.trim().toLowerCase();
+  const list = $('list');
+  list.textContent = '';
+  $('pickm').textContent = '';
+  for (const [g, name] of groups) {
+    const ss = stories.filter((s) => s.group === g && (!f || s.title.toLowerCase().includes(f) || storyTypes(s).some((t) => t.includes(f))));
+    if (!ss.length) continue;
+    const h = document.createElement('h3');
+    h.textContent = name;
+    list.append(h);
+    const og = document.createElement('optgroup');
+    og.label = name;
+    for (const s of ss) {
+      const a = document.createElement('a');
+      a.href = `?c=${s.id}`;
+      a.textContent = s.title;
+      if (has && storyTypes(s).some((t) => !has.has(t))) { const x = document.createElement('span'); x.className = 'x'; x.textContent = '⊘'; x.title = 'Some of it isn\'t drawn by this renderer'; a.append(x); }
+      if (s === state.story) a.setAttribute('aria-current', 'page');
+      a.onclick = (e) => { e.preventDefault(); pick(s); };
+      list.append(a);
+      og.append(new Option(s.title, s.id, false, s === state.story));
+    }
+    $('pickm').append(og);
+  }
+}
+
+function sync() {
+  const q = new URLSearchParams({ c: state.story.id });
+  if (state.r !== 'gpui') q.set('r', state.r);
+  if (state.mode !== 'light') q.set('mode', state.mode);
+  if (state.theme) q.set('theme', state.theme);
+  history.replaceState(null, '', `?${q}`);
+  for (const b of $('rend').children) b.setAttribute('aria-pressed', String(b.dataset.r === state.r));
+  for (const b of $('mode').children) b.setAttribute('aria-pressed', String(b.dataset.m === state.mode));
+  for (const b of $('tabs').children) b.setAttribute('aria-pressed', String(b.dataset.t === state.tab));
+  $('theme').value = state.theme;
+}
+
+function drawHead(p) {
+  const s = state.story;
+  $('title').textContent = s.title;
+  $('desc').textContent = s.desc;
+  const chips = $('chips');
+  chips.textContent = '';
+  for (const t of storyTypes(s).filter((t) => !['div', 'text', 'icon'].includes(t) || ['div', 'text', 'icon'].includes(s.id))) {
+    const c = document.createElement('code');
+    c.textContent = t;
+    if (has && !has.has(t)) { c.className = 'no'; c.title = 'Not drawn by this renderer yet'; }
+    chips.append(c);
+  }
+  if (p?.missing.length) {
+    const n = document.createElement('span');
+    n.className = 'note';
+    n.textContent = `The ${state.r === 'tui' ? 'terminal' : 'GPUI'} renderer doesn't draw ${p.missing.join(', ')} yet.`;
+    chips.append(n);
+  }
+}
+
+async function drawOut() {
+  const out = $('out');
+  if (state.tab === 'events') {
+    out.textContent = events.length ? events.join('\n') : 'Events the story sends show up here, newest last. Click, type, toggle.';
+    out.scrollTop = out.scrollHeight;
+  } else if (state.tab === 'doc') {
+    out.textContent = last?.plan ? last.plan.doc + (last.plan.over ? `\n# over/ctl\n${last.plan.over}\n` : '') : '';
+  } else {
+    const ts = storyTypes(state.story).filter((t) => !['div', 'text', 'icon'].includes(t) || t === state.story.id);
+    out.textContent = (await Promise.all(ts.map(async (t) => {
+      if (!(t in specs)) specs[t] = ui ? await ui.read(`types/${t}/spec`).catch(() => null) : null;
+      return specs[t] ?? `# ${t}: no descriptor`;
+    }))).join('\n');
+  }
+}
+
+async function render() {
+  sync();
+  drawList();
+  drawHead();
+  if (!ui) { drawOut(); return; }
+  const my = gen;
+  $('err').textContent = '';
+  events = [];
+  const p = await show(ui, state.story, has, { last });
+  if (my !== gen) return;
+  last = { overlays: p.overlays, plan: p };
+  drawHead(p);
+  if (p.errors.length) $('err').textContent = p.errors.join('\n');
+  drawOut();
+}
+
+function pick(s) { state.story = s; render(); }
+
+async function theme() {
+  if (!ui) return;
+  await ui.write('theme/mode', state.mode).catch(() => {});
+  await ui.write('theme/name', state.theme).catch((e) => { $('err').textContent = `theme ${state.theme}: ${e.message}`; });
+}
+
+// One renderer at a time, in the iframe. A new one gets the theme and the
+// current story once its app prints `ready`.
+async function load() {
+  const my = ++gen;
+  ui = null; has = null; last = null;
+  $('busy').hidden = false;
+  $('busy').textContent = `Starting the ${state.r === 'tui' ? 'terminal' : 'GPUI'} renderer…`;
+  const f = $('view');
+  f.src = `${state.r}.html?app=gallery`;
+  render();
+  const w = () => f.contentWindow;
+  let seen = 0, carry = '';
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 100));
+    if (my !== gen) return;
+    if (w()?.probe && w().appLog?.join('').includes('ready')) break;
+  }
+  ui = await w().probe();
+  has = await catalog(ui, state.r);
+  const names = (await ui.read('theme/names').catch(() => '')).split('\n').filter(Boolean)
+    .map((l) => (l.startsWith("'") ? l.slice(1, l.indexOf("'", 1)) : l.split(/\s+/)[0]));
+  const sel = $('theme');
+  if (sel.options.length === 1) for (const n of names) sel.add(new Option(n, n));
+  await theme();
+  if (my !== gen) return;
+  $('busy').hidden = true;
+  await render();
+  // The app prints each event; show them, and open what the buttons ask for.
+  const tick = () => {
+    if (my !== gen) return;
+    const log = w()?.appLog ?? [];
+    for (; seen < log.length; seen++) {
+      const parts = (carry + log[seen]).split('\n');
+      carry = parts.pop();
+      for (const l of parts) {
+        if (!l.trim() || l === 'ready' || l.startsWith('h9: ')) continue;
+        events.push(l);
+        if (events.length > 200) events.shift();
+        react(ui, l);
+      }
+      if (state.tab === 'events') drawOut();
+    }
+    setTimeout(tick, 150);
+  };
+  tick();
+}
+
+$('filter').oninput = drawList;
+$('pickm').onchange = () => pick(stories.find((s) => s.id === $('pickm').value));
+for (const b of $('rend').children) b.onclick = () => { if (state.r !== b.dataset.r) { state.r = b.dataset.r; load(); } };
+for (const b of $('mode').children) b.onclick = () => { state.mode = b.dataset.m; sync(); theme(); };
+for (const b of $('tabs').children) b.onclick = () => { state.tab = b.dataset.t; sync(); drawOut(); };
+$('theme').onchange = () => { state.theme = $('theme').value; sync(); theme(); };
+if (state.theme) $('theme').add(new Option(state.theme, state.theme));
+load();
 </script>

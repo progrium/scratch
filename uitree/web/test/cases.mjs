@@ -234,4 +234,37 @@ cases.push(
       await t.until('colors', async () => /bold faint italic/.test(await screen()));
     },
   },
+  {
+    app: 'gallery', name: 'every story in the component gallery is accepted',
+    async run(t) {
+      await t.until('the app is up', () => t.page.evaluate(() => window.appLog.join('').includes('ready')));
+      // index.html's own path (gallery.js): each story's tree, files and
+      // overlays, written in turn; a section with a type this renderer
+      // doesn't build is a note, so every write must succeed.
+      // gallery.js's list of what the terminal renderer draws is its types.zig's.
+      const zig = (await import('node:fs')).readFileSync(new URL('../../renderer/tui/types/types.zig', import.meta.url), 'utf8');
+      const names = [...zig.slice(zig.indexOf('names'), zig.indexOf('};')).matchAll(/"([a-z-]+)"/g)].map((m) => m[1]).sort();
+      const listed = await t.page.evaluate(async () => [...(await import('./gallery.js')).drawn.tui].sort());
+      await t.eq('gallery.js drawn.tui', listed.join(' '), names.join(' '));
+      const bad = await t.page.evaluate(async (renderer) => {
+        const g = await import('./gallery.js');
+        const { stories } = await import('./stories.js');
+        const has = await g.catalog(window.ui, renderer);
+        const out = [];
+        let last = null;
+        for (const s of stories) {
+          last = await g.show(window.ui, s, has, { last });
+          if (last.errors.length) out.push(`${s.id}: ${last.errors.join('; ')}`);
+        }
+        return out;
+      }, t.renderer);
+      if (bad.length) throw new Error(bad.join('\n'));
+      await t.page.evaluate(async (renderer) => {
+        const g = await import('./gallery.js');
+        const { stories } = await import('./stories.js');
+        window.galleryLast = await g.show(window.ui, stories.find((s) => s.id === 'button'), await g.catalog(window.ui, renderer));
+      }, t.renderer);
+      await t.node('s/v/s0/b/primary');
+    },
+  },
 );

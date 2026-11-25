@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uitree in the browser</title>
+<style>
+  :root { --bg: #f6f6f4; --fg: #1c1c1a; --muted: #6b6b66; --line: #dcdcd6; --panel: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ececea; --muted: #9a9a94; --line: #34342f; --panel: #1f1f1d; } }
+  body { margin: 0; padding: 24px 16px; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 1800px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: var(--muted); max-width: 70ch; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 16px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+  h2 { font-size: 14px; margin: 0 0 8px; font-weight: 600; }
+  iframe { width: 100%; height: 640px; border: 0; display: block; background: #fff; border-radius: 4px; }
+  pre { font: 12px/1.5 ui-monospace, monospace; color: var(--muted); white-space: pre-wrap; margin: 8px 0 0; }
+  .src { margin-top: 16px; }
+  .tabs { display: none; gap: 4px; margin: 0 0 12px; }
+  .tabs button { font: inherit; font-size: 14px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); }
+  .tabs button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  /* One column: one renderer at a time (see the script). */
+  .one .tabs { display: flex; }
+  .one section[data-r]:not(.on) { display: none; }
+  .src pre { color: var(--fg); max-height: 480px; overflow: auto; }
+</style>
+<main>
+  <h1>uitree in the browser</h1>
+  <p><a href="./">Component gallery</a> · example apps</p>
+  <p>Each example twice, each copy in its own h9 machine in a Web Worker (h9's browser host, its own 386 CPU), with <code>$ui</code> served by the uitree core in wasm on the page. Left: the GPUI renderer on gpui_web's canvas. Right: the terminal renderer drawing into xterm.js. On a narrow screen, one at a time.</p>
+  <p><label>Example <select id="pick"></select></label> <a id="g1" target="_blank">GPUI alone</a> · <a id="t1" target="_blank">terminal alone</a></p>
+  <div class="tabs"><button data-r="gpui">GPUI</button><button data-r="tui">Terminal</button></div>
+  <div class="row">
+    <section data-r="gpui"><h2>GPUI (gpui_web on WebGL2)</h2><iframe id="gpui" title="GPUI renderer"></iframe></section>
+    <section data-r="tui"><h2>Terminal (Yoga layout, xterm.js)</h2><iframe id="tui" title="Terminal renderer"></iframe></section>
+  </div>
+  <section class="src"><h2 id="srcname">Source</h2><pre id="src"></pre></section>
+</main>
+<script type="module">
+import { apps } from './apps.js';
+const pick = document.getElementById('pick');
+for (const [k, a] of Object.entries(apps)) if (!a.hidden) pick.add(new Option(`${k} (${a.title})`, k));
+// When the two renderers don't fit side by side (a phone, a narrow
+// window), only one runs: each is a whole wasm renderer and an h9 machine,
+// together about 550 MB in WebKit, more than iOS lets a tab have (Safari
+// kills the page and reloads it until it gives up). The other's iframe is
+// emptied, which frees its memory.
+const one = matchMedia('(max-width: 1087px)');
+let shown = 'gpui';
+const show = () => {
+  const k = pick.value;
+  history.replaceState(null, '', `?app=${k}`);
+  document.body.classList.toggle('one', one.matches);
+  for (const [id, page, link] of [['gpui', 'gpui.html', 'g1'], ['tui', 'tui.html', 't1']]) {
+    const url = `${page}?app=${k}`;
+    const run = !one.matches || id === shown;
+    const f = document.getElementById(id);
+    // Shown before it loads: xterm.js can't open in a hidden element.
+    f.closest('section').classList.toggle('on', run);
+    const want = run ? new URL(url, location.href).href : 'about:blank';
+    if (f.src !== want) f.src = want;
+    document.getElementById(link).href = url;
+  }
+  for (const b of document.querySelectorAll('.tabs button')) b.setAttribute('aria-pressed', String(b.dataset.r === shown));
+  // The app's own program, as the machine runs it.
+  const f = apps[k].source ?? apps[k].files[0];
+  document.getElementById('srcname').textContent = `Source: ${f}`;
+  fetch(`apps/${k}/${f}`).then((r) => r.text()).then((t) => { if (pick.value === k) document.getElementById('src').textContent = t; });
+};
+pick.value = new URLSearchParams(location.search).get('app') ?? 'counter';
+pick.onchange = show;
+one.addEventListener('change', show);
+for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => { shown = b.dataset.r; show(); };
+show();
+</script>

@@ -1,0 +1,13 @@
+#!/bin/rc
+# gallery.rc: the app behind the component gallery (index.html). The page
+# writes each story's tree itself, through a $ui connection of its own
+# (probe.js), so this only names the window and prints every event, one
+# line each: the page shows them, and opens the overlays and toasts the
+# stories' buttons ask for.
+#
+#	uitree -t Components rc gallery.rc
+ui=$ui
+if(~ $#ui 0) ui=/mnt/ui
+echo 'set . title=Components' >$ui/win/main/ctl
+echo ready
+cat $ui/events | while(ev=`{read}) echo $ev
