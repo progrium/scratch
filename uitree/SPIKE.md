@@ -1,5 +1,9 @@
 # W0 spike: the counter through the Zig C ABI
 
+*A record of the W0 spike (the counter through the C ABI), kept as
+written. The current state is in [README.md](README.md) and
+[ARCHITECTURE.md](ARCHITECTURE.md).*
+
 **Go.** The counter runs end to end on Linux with the tree in Zig and the
 window in Rust/GPUI, talking only through `uitcore.h`. Reading a
 2,000-node tree through the ABI costs 0.5 ms a frame, half the 1 ms gate.

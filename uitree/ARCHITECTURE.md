@@ -18,9 +18,9 @@ and tell the workstreams it affects.
   renderer is descriptor text: the types the renderer registers at
   `uit_create`. (A `terminal` *node* is different: its VT state is the
   core's, below.)
-- **Spec 0.2 is the target**, not uitreefs's current behavior. Where
-  uitreefs and [protocols/](protocols/) differ, follow the spec and note
-  it in the PR. Port tests, then code.
+- **Spec 0.2 is the target**, not the behavior of uitreefs (uitree's
+  predecessor, now removed). Where uitreefs did something else, follow
+  the spec and note it in the PR. Port tests, then code.
 - **Apps run in h9.** The core calls hyper9's `h9.Machine` directly as a
   Zig dependency. No C shim, no Rust wrapper.
 
@@ -103,11 +103,14 @@ through a PR it reviews, or a one-line change you call out in yours.
 | `core/src/ninep/`, `core/src/headless/` | W4 serve | 9P server, transports, `/debug`, `uitree-headless`, CLI |
 | `core/src/machine/` | W0 spike, then W4 | h9 lifecycle: start, mount `$ui`, exit status, hangup, pty pairs for terminal nodes |
 | `core/src/term/`, `core/src/tree/term.zig`, `tools/ghostty-vt` | T2, T3 | The terminal engine (libghostty-vt or plain) and the node's files, buffer and verbs |
-| `core/src/spike/` | W0 spike | Throwaway minimal tree; deleted when W3 lands |
+| `core/src/render/`, `core/src/remote/` | render.md | The renderer tree, its change stream and replica, and `uitree-remote` |
+| `core/src/web.zig`, `core/src/machine/web.zig`, `web/` | web | The browser as the core's platform, and the browser build of both renderers |
 | `renderer/gpui/` | W0 spike, then W6 | The GPUI host (Rust) |
 | `renderer/gpui/tools/style-gen/` | W1 types | Generator for the style dispatch table and `style-words` |
 | `renderer/tui/` | W7 tui | The terminal host (Zig, libvaxis + Yoga) |
 | `tests/conformance/` | W5 conformance | The 0.2 suite and its runner |
+| `renderer/toy-py/` | render.md | A toy renderer in Python over the renderer tree |
+| `apps/topframe/` | Topframe | Topframe as a uitree app |
 | `.github/workflows/uitree-*.yml` | W8 integration | CI |
 
 ## Interfaces between workstreams
@@ -203,8 +206,8 @@ units.
 
 ## Working on a workstream
 
-- Branch from `uitree`, open PRs into `uitree`. Keep them small and land
-  often; rebase on `uitree` before each PR.
+- Branch from `main`, open PRs into `main`. Keep them small and land
+  often; rebase on `main` before each PR.
 - `zig build test` in `core/` must pass on every PR (CI runs it).
 - If you are blocked on another workstream's interface, stub it in your
   own directory behind the agreed signature and say so in the PR.

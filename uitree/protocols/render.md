@@ -454,7 +454,7 @@ the `uit_*` input calls, and the encoder reads what a renderer reads. ABI
 ABI 9 adds the terminal calls the `term` records and `term-*` input lines
 carry ([§ Terminals](#terminals)): `uit_term_rows`, `uit_term_styles`,
 `uit_term_cursor`, `uit_term_resize`, `uit_term_mouse`, `uit_term_scroll`,
-`uit_term_text` and `UitChanges.terms`.
+`uit_term_text`, `uit_term_paste` and `UitChanges.terms`.
 
 Nothing in `$ui` changes.
 

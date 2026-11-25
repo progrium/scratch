@@ -19,8 +19,12 @@ crates/uitcore/        the safe wrapper: borrowed reads, UitChanges, input
 crates/host/           components, materialize, style dispatch (from uitreefs/crates/host);
                        build.rs embeds core/types/*/spec, style-words, theme-tokens, themes
 crates/uitree/         ~50-line main: create the core, hand control to GPUI
+crates/web/            uitree_web.wasm: the same host in the browser (../../web/)
 tools/style-gen/       from uitreefs/crates/style/gen; emits the dispatch table
                        here and core/types/style-words, theme-tokens, themes (W1)
+tools/shoot-examples   every example under Xvfb, a screenshot each
+tools/shoot-terminal   the terminal node's demos under Xvfb, screenshots and a GIF
+tools/sign             macOS: sign a build with h9.entitlements
 ```
 
 Build and run (Linux needs `libxkbcommon-dev libxkbcommon-x11-dev`, and
@@ -32,6 +36,18 @@ cargo build --release -p uitree
 cd examples && H9ROOT=/path/to/9front/root ../target/release/uitree -t Counter rc counter.rc
 ../target/release/uitree --bench 2000        # FFI cost per frame
 ```
+
+`uitree [-k] [-t TITLE] [--root DIR] [-d SRC[:DST]]... [-e NAME=VALUE]...
+[-C DIR] [--net MODE] [--h9 FLAG]... [--bench N] PROG [ARGS...]`: `-k`
+keeps the window open after the program exits, `-d` adds an h9 mount
+(`-d $LINUXROOT:#L` for a Linux view), `-e` sets an environment
+variable, `-C` is the app's working directory, `--net` is h9's network
+policy (`outbound`, the default, `enable` to let the app serve on the
+host's ports, as Topframe does, or `disable`), and `--h9` passes another
+h9 sandbox flag (only `--net-allow=PATTERN` is taken so far).
+`UITREE_RENDER_LISTEN=ADDR` also serves the renderer tree
+([render.md](../../protocols/render.md)), so `uitree-tui --remote ADDR`
+can mirror the window.
 
 On macOS, h9 needs the `com.apple.security.hypervisor` entitlement:
 `tools/sign target/release/uitree` signs a build with hyper9's
@@ -90,9 +106,9 @@ refuses comes back as a `WriteError` with its 0.2 error word. Events come back b
 reading `events` over 9P. Paths are 0.2 (`win/main/f/ok`).
 
 `tests.rs` covers the host and the element tier; `components/*/tests.rs`
-and `canvas/render_tests.rs` cover each component group: 99 tests, all
-passing on W3's core. They are the uitreefs render tests in the 0.2
-spelling. Where 0.2 decides differently, the test follows the spec and
+and `canvas/render_tests.rs` cover each component group, and
+`components/terminal/tests.rs` the terminal: 133 tests in all. Most are
+the uitreefs render tests in the 0.2 spelling. Where 0.2 decides differently, the test follows the spec and
 says so in a comment:
 
 - Variants and sizes are bare words on `new`/`set` (`button b primary`),
@@ -110,7 +126,7 @@ The gallery stories the tests load are copied, converted to 0.2, into
 
 ## Examples
 
-All 30 examples in
+All 32 examples in
 [tests/conformance/examples/list](../../tests/conformance/examples/list)
 (uitreefs's examples, ported: rc apps and awk, C, COBOL, Forth, Go, jq,
 Lua, Node, PostScript, Python, Ruby, Scheme, sed and sh clients) run in h9
@@ -119,6 +135,48 @@ once its tree is built; the Linux clients need `$LINUXROOT`
 (`../../tools/linuxroot`) and run with `-d $LINUXROOT:#L`, which
 `uitree -d SRC[:DST]` and `-e NAME=VALUE` pass to h9 for any app.
 Screenshots: [examples/screenshots/](examples/screenshots/).
+
+## The `terminal` node
+
+`terminal` (components.md § terminal), in
+`crates/host/src/components/terminal/`, draws the cells the core's
+engine (libghostty-vt) keeps, through ABI 9 (uitcore.h § Terminal
+nodes). The renderer never parses the program's output.
+
+- **Cells.** `Grid` keeps a copy of the viewport as runs per row, with the
+  style table and the cursor. A pump's `UitChanges.terms` marks rows
+  dirty, and only those are re-read and reshaped. The painter is a hand
+  port of gpui-ghostty's `TerminalTextElement` (Apache-2.0): background
+  quads per run, the selection, text shaped at the mono font's cell width
+  (wide characters as their own piece), box-drawing characters as quads,
+  the IME composition, and the cursor (block, hollow when unfocused, bar,
+  underline). Bold, italic, faint, inverse, invisible, strike, overline and
+  the underline kinds map to GPUI text runs.
+- **Size.** A cell is the advance of `M` in the theme's mono font; the grid
+  that fits the layout box goes to `uit_term_resize`, with the cell in
+  device pixels, whenever either changes.
+- **Keys.** Text (shift at most, a printable key) goes to the program with
+  `uit_term_text`, unless an app binding in `$ui/keys` takes it; anything
+  else (enter, arrows, ctrl-c, alt-x) goes through the window's `uit_key`,
+  which the core encodes under the program's modes. Tab and shift-tab are
+  bound in the terminal's key context so GPUI Kit's `Root` doesn't take
+  them. IME commits arrive through the input handler as `uit_term_text`.
+- **Mouse.** Presses, releases and moves go to `uit_term_mouse` by cell,
+  the wheel to `uit_term_scroll` in lines; the core decides between a
+  mouse report, a selection and scrollback.
+- **Copy and paste.** The copy keystroke (cmd-c on macOS, ctrl-shift-c)
+  reaches the core through `uit_key`: with text selected it puts the
+  selection on the clipboard, which comes back as `UIT_CMD_CLIPBOARD`.
+  Paste (cmd-v, ctrl-shift-v, shift-insert) reads the platform clipboard
+  and sends it with `uit_term_paste`, bracketed when the program asked.
+
+`tools/shoot-terminal [OUTDIR] [terminal|repl]` drives the demos under
+Xvfb with xdotool: `terminal` (`examples/rc/terminal.rc`, Alpine's sh
+in pty mode, needs `$LINUXROOT`) and `repl` (`examples/go/repl`, stream
+mode, needs `go`).
+
+![ls --color in the terminal node, GPUI on Linux](../../web/screenshots/terminal-ls-color.png)
+![Neovim in the terminal node, GPUI on Linux](../../web/screenshots/terminal-nvim.png)
 
 ## The `web` node
 
@@ -160,7 +218,9 @@ the screen's RGBA visual (wry leaves it 24-bit, which draws black there).
 ## What the core does not offer yet
 
 - The clipboard has no ABI call to read the platform's text back, so the
-  host only writes it.
+  host only writes the app's clipboard. (A `terminal`'s paste is the
+  renderer's own: it reads the platform clipboard and hands the text to
+  `uit_term_paste`.)
 - The `message-list`, diagnostics and completion line formats are not in
   components.md 0.2; the host parses them from the prop text as uitreefs
   did.

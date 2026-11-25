@@ -22,6 +22,12 @@ cd ../../third_party/hyper9 && scripts/fetch.sh isoamd64 &&
   zig build isoroot -- .local/9front/9front-11952.amd64.iso .local/9front/rootamd64
 ```
 
+`-d SRC[:DST]` adds an h9 mount (`-d $LINUXROOT:#L` for the Linux
+examples) and `-e NAME=VALUE` sets a variable in the app's environment.
+`--remote ADDR [--role primary|mirror|view]` draws an app another core
+runs instead of starting one, as a 9P client of its renderer tree
+([render.md](../../protocols/render.md)).
+
 Ctrl-C or Ctrl-Q closes the window (only Ctrl-Q while a `terminal` node
 has focus: its program gets Ctrl-C). The app's output and the host's log
 go to `--log FILE` (default `/tmp/uitree-tui.log`), since the terminal
@@ -57,6 +63,7 @@ app's `theme/name Catppuccin` picks the same colors here as on GPUI.
 | `core` (all) | `div` `text` `styled-text` `img` `svg` `icon` `scroll` `spacer` |
 | `form` (all) | `button` `checkbox` `radio-group` `switch` `select` `input` `textarea` `number-input` `slider` `form` `field` |
 | extras the examples need | `link` `tabs` `tab` `empty` `separator` `badge` `kbd` `progress` `spinner` `alert` `dialog` |
+| `desktop`, `web` | `terminal`; `web` (a box naming the page) |
 | what the ported uitreefs examples use | `grid` `toolbar` `button-group` `toggle` `status-bar` `title-bar` `table` `list` `tree` `canvas` `chart` `description-list` `sidebar` `sidebar-group` `sidebar-item` `group-box` `avatar` `editor` `markdown` `sheet` `alert-dialog` `resizable` `panel` `dock` `dock-panel` `message-list` `collapsible` `accordion` `accordion-item` `breadcrumb` `dropdown-button` `tag` |
 
 Any other type the core accepts is drawn as a plain container of its
@@ -112,6 +119,7 @@ families and text sizes are accepted and not drawn.
 | `scroll` | clips and scrolls with the wheel |
 | `empty`, `alert`, `badge`, `kbd`, `separator`, `spinner`, `icon` | glyphs: `▭ Nothing to do`, a bordered box, ` 3 `, ` ⌘K `, `───`, `⠋`, `×` |
 | `img`, `svg` | `[image name]`, dim |
+| `web` | a rounded box with `[web URL]` (or `[web: inline html]`), dim: there is no page engine in a terminal |
 | `terminal` | the core's cells (`uit_term_rows`, `uit_term_styles`, `uit_term_cursor`) copied into its box: colors at the terminal's depth, bold, faint, italic, the five underline styles and their color, strike, blink, inverse (swapped here), invisible, the selection tinted with `selection`, and its cursor as the real one (shape and blink) while focused, a reversed cell otherwise. Grows and stretches by default; the grid inside border and padding goes to the core with `uit_term_resize` whenever it changes, with the cell's pixel size when the terminal reports one. While focused every key but Ctrl-Q goes through `uit_key` (IME text through `uit_term_text`); a press focuses it, and presses, drags, releases (1 to 3 clicks) and the wheel go to `uit_term_mouse` and `uit_term_scroll`. A bracketed paste from the outer terminal goes to it whole with `uit_term_paste`, and the app's clipboard (a copy of the selection, OSC 52 from the program) goes out to the outer terminal's as OSC 52. Linked or `--remote`, the calls are the same |
 | any node's `tooltip` file | one row in popover colors above the node (below it on the top row), 500 ms after the pointer rests on it, hidden when the pointer leaves or presses; nothing is sent to the client. The `tooltip` overlay type isn't registered (no `overlay` profile) |
 | `grid` | rows of `cols` cells sharing the width, `gap` between |
@@ -146,12 +154,13 @@ Each drawn node's rect goes to `uit_bounds` in window points, for its
 
 ## Examples
 
-All 30 of the shared examples in
+All 32 of the shared examples in
 [tests/conformance/examples/list](../../tests/conformance/examples/list)
 (the uitreefs examples, ported) run here too.
 [tools/shoot-examples](tools/shoot-examples) runs each in xterm under
 Xvfb and screenshots it once its tree is built, as GPUI's does; the shots
-are in [examples/screenshots/ci/](examples/screenshots/ci/). The terminal
+are in [examples/screenshots/ci/](examples/screenshots/ci/) (taken before
+`terminal` and `go-repl` joined the list; their shots are below). The terminal
 is 120×40, so the larger windows (life's 576-point board) are cut off at
 the bottom.
 
@@ -181,6 +190,8 @@ labels with a dropdown, and `dropdown-button` and `context-menu` have
 none either), popovers anchored to their node (they are centered),
 dragging a `resizable` divider or a dock panel, keyboard navigation in
 tables, lists and trees, canvas `pixels`, syntax highlighting, several windows (only `main` is drawn),
-`styled-text` runs, drag and drop, the clipboard, mouse-wheel scrolling of
+`styled-text` runs, drag and drop, reading the clipboard (the app's
+clipboard is written out as OSC 52, but nothing reads the outer
+terminal's back except a bracketed paste into a `terminal`), mouse-wheel scrolling of
 inputs, soft wrapping in a textarea, and a spinner that spins (it needs a
 timer in the loop).

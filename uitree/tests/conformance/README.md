@@ -8,12 +8,14 @@ interface I5 in [ARCHITECTURE.md](../../ARCHITECTURE.md). Ported from
 `code=` words, the `name key path` event head, `$ui/types`, and the
 0.2 forms of windows, requests, batches, theme, keys, menus and transfer.
 
-None of it has run yet: the host doesn't exist. The goldens are written
-from the spec, and where the spec doesn't pin the text they follow the
-proposals below. [GAPS.md](GAPS.md) lists every one of those places. When
-`uitree-headless` first runs the suite, expect a round of diffs that are
-the suite's mistakes, the host's, or a gap being decided, and settle each
-on purpose: fix the golden, the host, or the spec.
+`uitree-headless` passes all 33 scripts, in CI
+(`.github/workflows/uitree-core.yml`), and `./run -r` passes them again
+with the render layer's round trip checked
+([render.md § Status](../../protocols/render.md#status)). The goldens
+were written from the spec before the host existed, and where the spec
+doesn't pin the text they follow the proposals below.
+[GAPS.md](GAPS.md) lists every one of those places. When a diff
+appears, settle it on purpose: fix the golden, the host, or the spec.
 
 ```sh
 cd uitree/core && zig build            # zig-out/bin/uitree-headless
@@ -40,7 +42,8 @@ appends `exit=N`, removes `seq=`, and diffs against `NN-name.out`. If
 standard error, cut after the error phrase. A script whose first line is
 `skip: ...` is counted as skipped: it needs a layer or profile the host
 doesn't claim in `version`. Results go to `out/`, which git ignores. Each
-PR into `uitree` says which scripts it makes pass.
+PR says which scripts it makes pass. `-r` runs every script under
+`uitree-headless --check-render`.
 
 A script with a `# view: linux` line (32-pty) runs Linux programs: `run`
 gives it `$LINUXROOT` at `#L` and runs it as `/9/bin/rc` in the Plan 9
@@ -83,11 +86,12 @@ for these (CI uses it); busybox has `setsid`, `stty` and `tty`.
 | 30-tooltips | core § Node files, § Overlays (tooltips), components § Tooltips | profile overlay |
 | 31-terminal | components § terminal (stream mode), core § Stream files | type terminal |
 | 32-pty | components § terminal (pty mode) | type terminal, h9 with ptys, `$LINUXROOT` |
+| 33-terminal-input | components § terminal (keys, mouse, selection, scrollback, copy and paste, focus reports, OSC 52), render.md § Input (`term-*`) | type terminal |
 
 01 to 26 keep uitreefs's numbers and topics. Three changed shape:
 13 was editor, markdown and dock, which are uitreefs extras the spec
 doesn't define, so it is now the `layout` profile; 16 is now the whole
-transfer layer; 27 to 31 are new. The extras' own behavior (editor
+transfer layer; 27 to 33 are new. The extras' own behavior (editor
 completions, the dock's JSON layout) isn't specified by 0.2, so this
 suite doesn't test it beyond what 27 checks from their descriptors.
 
@@ -95,7 +99,8 @@ Not covered, because a headless client can't see it: what a window draws
 while a batch is open, hover and focus styles, `drop-over:` styles,
 pixels. Those are renderer tests. Not covered yet: two 9P connections
 (batches are per connection), the shell, session and policy layers, host
-file handles (`file/ID`), and the `web`, `desktop` profiles.
+file handles (`file/ID`), the `web` profile, and the `desktop` profile beyond the `terminal` type
+(31 to 33).
 
 ## Writing a script
 
