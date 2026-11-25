@@ -87,6 +87,7 @@ pub const Kind = enum {
     dropdown_button,
     tag,
     web,
+    terminal,
     other,
 
     pub fn of(t: []const u8) Kind {
@@ -112,7 +113,7 @@ pub const Kind = enum {
             .{ "dock-panel", .dock_panel },     .{ "message-list", .message_list }, .{ "collapsible", .collapsible },
             .{ "accordion", .accordion },       .{ "accordion-item", .accordion_item }, .{ "breadcrumb", .breadcrumb },
             .{ "dropdown-button", .dropdown_button }, .{ "tag", .tag },
-            .{ "web", .web },
+            .{ "web", .web },                   .{ "terminal", .terminal },
         });
         return m.get(t) orelse .other;
     }
@@ -120,7 +121,7 @@ pub const Kind = enum {
     /// Takes keyboard focus (Tab moves between these).
     pub fn focusable(k: Kind) bool {
         return switch (k) {
-            .button, .checkbox, .radio_group, .@"switch", .select, .input, .textarea, .number_input, .slider, .link, .tabs, .toggle, .editor, .table, .list, .tree, .dropdown_button => true,
+            .button, .checkbox, .radio_group, .@"switch", .select, .input, .textarea, .number_input, .slider, .link, .tabs, .toggle, .editor, .table, .list, .tree, .dropdown_button, .terminal => true,
             else => false,
         };
     }
@@ -223,6 +224,9 @@ const NodeState = struct {
     scroll_y: i32 = 0,
     open: bool = false,
     hl: usize = 0,
+    /// A terminal's grid as last sent with uit_term_resize: cols, rows and
+    /// the cell's pixel size.
+    term: [4]u32 = .{ 0, 0, 0, 0 },
 };
 
 const Hit = struct { rect: Rect, box: *Box };
@@ -286,6 +290,11 @@ pub const Ui = struct {
     canvas_pressed: Node = 0,
     /// The row-like part under the pointer, to redraw when it changes.
     mouse_row: ?*Box = null,
+    /// The terminal a button went down on: its drag and release go there.
+    term_pressed: Node = 0,
+    /// One cell's size in device pixels, when the terminal says (vaxis's
+    /// winsize); terminal nodes pass it on with uit_term_resize.
+    cell_px: [2]u32 = .{ 0, 0 },
 
     pub fn init(gpa: std.mem.Allocator, src: Source) Ui {
         const cfg = c.YGConfigNew();
@@ -338,6 +347,7 @@ pub const Ui = struct {
         if (ui.focused == n) ui.focused = 0;
         if (ui.modal_prev == n) ui.modal_prev = 0;
         if (ui.pressed == n) ui.pressed = 0;
+        if (ui.term_pressed == n) ui.term_pressed = 0;
         if (ui.tip.node == n) ui.tip = .{ .gen = ui.tip.gen +% 1 };
         if (ui.popup) |p| if (p.node == n) {
             ui.popup = null;
@@ -635,6 +645,16 @@ pub const Ui = struct {
                 if (L.items == null) L.items = .center;
                 if (L.justify == null) L.justify = .center;
                 st.look.rounded = true;
+            },
+            .terminal => {
+                // The screen fills what it is given; the program learns the
+                // grid from uit_term_resize. Across its parent's axis it
+                // stretches too, even in an `h-flex` that centers.
+                if (L.h == null and L.grow == null) L.grow = 1;
+                L.self = L.self orelse .stretch;
+                if (L.min_w == null) L.min_w = .{ .pt = 10 };
+                if (L.min_h == null) L.min_h = .{ .pt = 3 };
+                if (L.overflow == .visible) L.overflow = .hidden;
             },
             .alert => {
                 L.border = .{ true, true, true, true };
@@ -1743,6 +1763,7 @@ pub const Ui = struct {
             },
             .editor => ui.drawTextarea(g, b),
             .canvas => ui.drawCanvas(g, b),
+            .terminal => ui.drawTerminal(g, b),
             .chart => ui.drawChart(g, b),
             .accordion_item => if (b.part == .trigger) {
                 if (ui.under(b)) pen.attrs.underline = true;
@@ -1904,6 +1925,75 @@ pub const Ui = struct {
             const col = if (o.attr("color", false) orelse o.attr("fill", false)) |v| ui.colorOf(v, 1) orelse fg else fg;
             const w = o.attr("weight", false) orelse "";
             _ = g.print(tx, ty, clip, o.text, .{ .fg = col, .attrs = .{ .bold = eq(w, "bold") or eq(w, "semibold") } });
+        }
+    }
+
+    /// The terminal's grid in cells: what its box holds inside border and
+    /// padding.
+    fn termGrid(b: *const Box) Rect {
+        return innerRect(b);
+    }
+
+    /// A terminal node (components.md § terminal): the core's cells copied
+    /// into the box, colors and attributes from its style table, and its
+    /// cursor. The grid is whatever fits inside the box, which the core
+    /// hears about with uit_term_resize when it changes.
+    fn drawTerminal(ui: *Ui, g: *Grid, b: *Box) void {
+        const n = b.node;
+        const r = termGrid(b);
+        if (r.w <= 0 or r.h <= 0) return;
+        const cols: u32 = @intCast(r.w);
+        const rows: u32 = @intCast(r.h);
+        const st = ui.state(n);
+        const want: [4]u32 = .{ cols, rows, ui.cell_px[0], ui.cell_px[1] };
+        if (!std.mem.eql(u32, &st.term, &want)) {
+            st.term = want;
+            ui.src.termResize(n, cols, rows, want[2], want[3]);
+        }
+
+        const clip = b.clip.intersect(r);
+        const styles = ui.src.termStyles(n);
+        const sel = ui.tok("selection", 0x55a0fc4d);
+        for (ui.src.termRows(n, 0, rows)) |row| {
+            if (row.y >= rows) continue;
+            const y = r.y + @as(i32, @intCast(row.y));
+            const runs: []const core.TermRun = if (row.runs == null or row.n_runs == 0) &.{} else row.runs[0..row.n_runs];
+            for (runs) |run| {
+                if (run.col >= cols) continue;
+                const x = r.x + @as(i32, @intCast(run.col));
+                const span: Rect = .{ .x = x, .y = y, .w = @intCast(run.width), .h = 1 };
+                const ts: core.TermStyle = if (run.style < styles.len) styles[run.style] else std.mem.zeroes(core.TermStyle);
+                const pen = termPen(ts, b.ink.fg, g, x, y);
+                if (pen.bg) |bg| g.fill(span, clip, bg);
+                if (ts.flags & c.UIT_TERM_INVISIBLE == 0) {
+                    var p = pen;
+                    p.bg = null;
+                    _ = g.print(x, y, clip, core.slice(run.text), p);
+                }
+                if (run.selected != 0) g.fill(span, clip, sel);
+            }
+        }
+
+        const cur = ui.src.termCursor(n) orelse return;
+        if (cur.visible == 0 or cur.x >= cols or cur.y >= rows) return;
+        const cx = r.x + @as(i32, @intCast(cur.x));
+        const cy = r.y + @as(i32, @intCast(cur.y));
+        if (!clip.contains(cx, cy)) return;
+        if (ui.focused == n) {
+            g.cursor = .{
+                .x = @intCast(cx),
+                .y = @intCast(cy),
+                .shape = switch (cur.shape) {
+                    c.UIT_TERM_CURSOR_BAR => .bar,
+                    c.UIT_TERM_CURSOR_UNDERLINE => .underline,
+                    else => .block,
+                },
+                .blink = cur.blink != 0,
+            };
+        } else if (g.at(cx, cy)) |cell| {
+            // Without focus the terminal has no hardware cursor: show
+            // where it is as a reversed cell, as a hollow block would.
+            cell.attrs.reverse = !cell.attrs.reverse;
         }
     }
 
@@ -2329,12 +2419,16 @@ pub const Ui = struct {
         x: i32,
         y: i32,
         kind: enum { press, release, motion, drag, wheel_up, wheel_down },
+        /// 2 or 3 for a double or triple press (a terminal selects a word
+        /// or a line).
+        clicks: u8 = 1,
     };
 
     /// Returns true if the frame should be redrawn.
     pub fn onMouse(ui: *Ui, m: Mouse) bool {
         ui.mouse = .{ .x = m.x, .y = m.y };
         var redraw = ui.setHover(m.x, m.y);
+        if (ui.termMouseEvent(m)) |r| return r or redraw;
         switch (m.kind) {
             .motion, .drag => {
                 if (ui.canvas_pressed != 0) {
@@ -2423,6 +2517,51 @@ pub const Ui = struct {
             },
         }
         return redraw;
+    }
+
+    /// The mouse over a terminal node, or dragging from one, goes to the
+    /// core (uit_term_mouse, uit_term_scroll): it reports it to the program
+    /// under a mouse mode, and selects or scrolls history otherwise.
+    /// Null when no terminal is involved, else whether to redraw.
+    fn termMouseEvent(ui: *Ui, m: Mouse) ?bool {
+        if (ui.term_pressed != 0) {
+            const tb = ui.boxOf(ui.term_pressed) orelse {
+                ui.term_pressed = 0;
+                return null;
+            };
+            switch (m.kind) {
+                .drag, .motion => ui.termMouse(tb, c.UIT_TERM_MOVE, c.UIT_TERM_BUTTON_LEFT, m.x, m.y, m.clicks),
+                .release => {
+                    ui.termMouse(tb, c.UIT_TERM_RELEASE, c.UIT_TERM_BUTTON_LEFT, m.x, m.y, m.clicks);
+                    ui.term_pressed = 0;
+                },
+                else => return null,
+            }
+            return false;
+        }
+        if (ui.popup != null) return null;
+        const hit = ui.hitAt(m.x, m.y) orelse return null;
+        if (hit.kind != .terminal or hit.part != .none) return null;
+        if (!termGrid(hit).contains(m.x, m.y) and m.kind != .wheel_up and m.kind != .wheel_down) return null;
+        switch (m.kind) {
+            .press => {
+                if (ui.tip.node != 0) {
+                    ui.tip.shown = false;
+                    ui.tip.suppressed = true;
+                }
+                ui.focus(hit.node);
+                ui.term_pressed = hit.node;
+                ui.termMouse(hit, c.UIT_TERM_PRESS, c.UIT_TERM_BUTTON_LEFT, m.x, m.y, m.clicks);
+            },
+            .motion => {
+                ui.termMouse(hit, c.UIT_TERM_MOVE, c.UIT_TERM_BUTTON_NONE, m.x, m.y, 1);
+                return false;
+            },
+            .wheel_up => ui.src.termScroll(hit.node, -3),
+            .wheel_down => ui.src.termScroll(hit.node, 3),
+            .release, .drag => return null,
+        }
+        return true;
     }
 
     fn boxOf(ui: *Ui, n: Node) ?*Box {
@@ -2798,7 +2937,14 @@ pub const Ui = struct {
 
     pub fn onKey(ui: *Ui, k: Key) KeyResult {
         const plain = !k.ctrl and !k.alt and !k.super;
-        if ((k.ctrl and (std.mem.eql(u8, k.name, "c") or std.mem.eql(u8, k.name, "q")))) return .quit;
+        // A focused terminal's program gets Ctrl-C (and Tab and Escape);
+        // Ctrl-Q still closes the window.
+        const term = ui.focused != 0 and Kind.of(ui.src.typeOf(ui.focused)) == .terminal;
+        if (k.ctrl and (eq(k.name, "q") or (eq(k.name, "c") and !term))) return .quit;
+        if (term and ui.popup == null) {
+            ui.termKey(ui.focused, k);
+            return .handled;
+        }
 
         // An open select takes the arrows, Enter and Escape.
         if (ui.popup) |p| {
@@ -2846,6 +2992,38 @@ pub const Ui = struct {
         var buf: [64]u8 = undefined;
         if (ui.src.key(ui.win, keystroke(k, &buf), n)) return .handled;
         return .unhandled;
+    }
+
+    /// A key for a focused terminal: through uit_key, which tries the
+    /// app's bindings and then encodes it for the program. Text of more
+    /// than one character (an IME commit) is sent as text.
+    fn termKey(ui: *Ui, n: Node, k: Key) void {
+        if (k.text.len > 0 and !k.ctrl and !k.alt and !k.super) {
+            const one = std.unicode.utf8ByteSequenceLength(k.text[0]) catch 0;
+            if (one != k.text.len) {
+                ui.src.termText(n, k.text);
+                return;
+            }
+        }
+        var buf: [64]u8 = undefined;
+        const ks = keystroke(k, &buf);
+        if (ks.len == 0) return;
+        _ = ui.src.key(ui.win, ks, n);
+    }
+
+    /// The terminal cell under (x, y), clamped to the grid, for a press,
+    /// drag or release.
+    fn termCell(b: *const Box, x: i32, y: i32) [2]u32 {
+        const r = termGrid(b);
+        return .{
+            @intCast(std.math.clamp(x - r.x, 0, @max(0, r.w - 1))),
+            @intCast(std.math.clamp(y - r.y, 0, @max(0, r.h - 1))),
+        };
+    }
+
+    fn termMouse(ui: *Ui, b: *const Box, action: u32, button: u32, x: i32, y: i32, clicks: u8) void {
+        const cell = termCell(b, x, y);
+        _ = ui.src.termMouse(b.node, .{ .action = action, .button = button, .col = cell[0], .row = cell[1], .mods = 0, .clicks = clicks });
     }
 
     fn focusedKey(ui: *Ui, n: Node, kind: Kind, k: Key) bool {
@@ -3002,6 +3180,41 @@ var dummy_edit: Edit = .{};
 
 fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+/// How a terminal cell in style ts draws. Colors are 0xRRGGBBAA; 0 is
+/// the default (`fg`, the ink's color; no fill; the glyph's color for the
+/// underline). Inverse swaps the colors here, as the core leaves it to
+/// the renderer; with no fill, the cell's current background is what
+/// swaps in.
+fn termPen(ts: core.TermStyle, fg: u32, g: *Grid, x: i32, y: i32) Pen {
+    var f = if (ts.fg != 0) ts.fg else fg;
+    var bg: ?u32 = if (ts.bg != 0) ts.bg else null;
+    if (ts.flags & c.UIT_TERM_INVERSE != 0) {
+        const under: u32 = bg orelse if (g.at(x, y)) |cell| (cell.bg << 8) | 0xff else 0xffffffff;
+        bg = gridmod.blend(f, under >> 8) << 8 | 0xff;
+        f = under;
+    }
+    return .{
+        .fg = f,
+        .bg = bg,
+        .ul_color = if (ts.underline_color != 0) ts.underline_color else null,
+        .attrs = .{
+            .bold = ts.flags & c.UIT_TERM_BOLD != 0,
+            .dim = ts.flags & c.UIT_TERM_FAINT != 0,
+            .italic = ts.flags & c.UIT_TERM_ITALIC != 0,
+            .strike = ts.flags & c.UIT_TERM_STRIKE != 0,
+            .blink = ts.flags & c.UIT_TERM_BLINK != 0,
+            .underline = ts.underline != c.UIT_TERM_UNDERLINE_NONE,
+            .ul_style = switch (ts.underline) {
+                c.UIT_TERM_UNDERLINE_DOUBLE => .double,
+                c.UIT_TERM_UNDERLINE_CURLY => .curly,
+                c.UIT_TERM_UNDERLINE_DOTTED => .dotted,
+                c.UIT_TERM_UNDERLINE_DASHED => .dashed,
+                else => .single,
+            },
+        },
+    };
 }
 
 fn innerRect(b: *const Box) Rect {
@@ -3830,3 +4043,173 @@ test {
 }
 
 
+
+// ---------------------------------------------------------------------
+// Terminal nodes
+
+/// A sidebar 10 columns wide and a terminal filling the rest: in a 40×8
+/// grid (the title bar on row 0), the terminal's grid is 30×7 at (10, 1).
+fn termSplit(a: std.mem.Allocator) !*source.Fake {
+    const f = try source.Fake.init(a);
+    try f.set(".", "style", "h-flex size-full");
+    _ = try f.new("div", "side", &.{}, "w=80 v-flex self-start");
+    _ = try f.new("text", "side/t", &.{.{ "text", "files" }}, "");
+    _ = try f.new("terminal", "sh", &.{}, "flex-1");
+    return f;
+}
+
+fn termText(g: *const Grid, x: usize, y: usize, w: usize) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    for (g.cells[y * g.w + x .. y * g.w + x + w]) |cell| try out.appendSlice(testing.allocator, cell.ch);
+    return out.toOwnedSlice(testing.allocator);
+}
+
+test "a terminal in a split layout draws its cells and cursor, and sends its grid" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try termSplit(arena.allocator());
+    // A fixed screen as the plain engine hands it over: one default style,
+    // trailing blanks left out, the cursor after the prompt.
+    try f.term("sh", "$ echo hi\nhi\n$ ", &.{}, 2, 2, 80, 24);
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    var g: Grid = undefined;
+    try render(f, 40, 8, &ui, &g);
+    defer g.deinit(testing.allocator);
+
+    try testing.expectEqualStrings("term-resize sh 30 7 0 0\n", f.log.items);
+    const want = [_][]const u8{
+        "$ echo hi                     ",
+        "hi                            ",
+        "$                             ",
+        "                              ",
+    };
+    for (want, 0..) |w, i| {
+        const got = try termText(&g, 10, 1 + i, 30);
+        defer testing.allocator.free(got);
+        try testing.expectEqualStrings(w, got);
+    }
+    const side = try termText(&g, 0, 1, 10);
+    defer testing.allocator.free(side);
+    try testing.expectEqualStrings("files     ", side);
+    // Default cells take the theme's foreground on the node's background.
+    try testing.expectEqual(@as(u32, 0x0a0a0a), g.at(10, 1).?.fg);
+    try testing.expectEqual(@as(u32, 0xffffff), g.at(10, 1).?.bg);
+    // Not focused: no hardware cursor, the cursor's cell reversed.
+    try testing.expectEqual(@as(@TypeOf(g.cursor), null), g.cursor);
+    try testing.expect(g.at(12, 3).?.attrs.reverse);
+
+    // The same size again sends nothing; a wider window sends the new grid.
+    try ui.frame(&g);
+    try testing.expectEqualStrings("term-resize sh 30 7 0 0\n", f.log.items);
+    g.deinit(testing.allocator);
+    ui.cell_px = .{ 9, 18 };
+    try render(f, 50, 10, &ui, &g);
+    try testing.expectEqualStrings("term-resize sh 30 7 0 0\nterm-resize sh 40 9 9 18\n", f.log.items);
+}
+
+test "a terminal's styles: colors, attributes, inverse, selection, wide text" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try termSplit(arena.allocator());
+    try f.term("sh", "", &.{
+        .{ .fg = 0xcd3131ff, .bg = 0, .underline_color = 0, .flags = c.UIT_TERM_BOLD | c.UIT_TERM_ITALIC, .underline = 0 },
+        .{ .fg = 0, .bg = 0x1e1e1eff, .underline_color = 0xffcc00ff, .flags = 0, .underline = c.UIT_TERM_UNDERLINE_CURLY },
+        .{ .fg = 0x00ff00ff, .bg = 0, .underline_color = 0, .flags = c.UIT_TERM_INVERSE, .underline = 0 },
+        .{ .fg = 0, .bg = 0x0000ffff, .underline_color = 0, .flags = c.UIT_TERM_INVISIBLE, .underline = 0 },
+    }, 0, 0, 30, 7);
+    try f.termRow("sh", 0, &.{
+        .{ .col = 0, .width = 3, .style = 1, .selected = 0, .text = core.str("red") },
+        .{ .col = 4, .width = 4, .style = 2, .selected = 0, .text = core.str("dark") },
+        .{ .col = 9, .width = 3, .style = 3, .selected = 0, .text = core.str("inv") },
+        .{ .col = 13, .width = 3, .style = 4, .selected = 0, .text = core.str("pwd") },
+        .{ .col = 17, .width = 4, .style = 0, .selected = 1, .text = core.str("日本") },
+    });
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    var g: Grid = undefined;
+    try render(f, 40, 8, &ui, &g);
+    defer g.deinit(testing.allocator);
+
+    const row = try termText(&g, 10, 1, 22);
+    defer testing.allocator.free(row);
+    // Invisible text draws its background only; a wide character takes
+    // two cells (the right half is "").
+    try testing.expectEqualStrings("red dark inv     日本 ", row);
+    const red = g.at(10, 1).?;
+    try testing.expectEqual(@as(u32, 0xcd3131), red.fg);
+    try testing.expect(red.attrs.bold and red.attrs.italic and !red.attrs.underline);
+    const dark = g.at(14, 1).?;
+    try testing.expectEqual(@as(u32, 0x1e1e1e), dark.bg);
+    try testing.expectEqual(@as(u32, 0x0a0a0a), dark.fg);
+    try testing.expect(dark.attrs.underline and dark.attrs.ul_style == .curly);
+    try testing.expectEqual(@as(?u32, 0xffcc00), dark.ul_color);
+    // Inverse with no fill: the fg becomes the fill, the node's
+    // background becomes the glyph.
+    const inv = g.at(19, 1).?;
+    try testing.expectEqual(@as(u32, 0x00ff00), inv.bg);
+    try testing.expectEqual(@as(u32, 0xffffff), inv.fg);
+    try testing.expectEqual(@as(u32, 0x0000ff), g.at(23, 1).?.bg);
+    // The selection tints the cells it covers.
+    try testing.expect(g.at(27, 1).?.bg != 0xffffff);
+    try testing.expectEqual(@as(u32, 0xffffff), g.at(31, 1).?.bg);
+}
+
+test "a focused terminal gets keys through uit_key, the mouse and the wheel" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const f = try termSplit(arena.allocator());
+    try f.term("sh", "$ ", &.{}, 2, 0, 30, 7);
+    try f.termCursorAt("sh", .{ .x = 2, .y = 0, .shape = c.UIT_TERM_CURSOR_BAR, .visible = 1, .blink = 1, .cols = 30, .rows = 7 });
+    var ui = Ui.init(testing.allocator, f.source());
+    defer ui.deinit();
+    var g: Grid = undefined;
+    try render(f, 40, 8, &ui, &g);
+    defer g.deinit(testing.allocator);
+    f.log.clearRetainingCapacity();
+
+    // A press focuses it and goes to the core as a cell of its grid.
+    try testing.expect(ui.onMouse(.{ .x = 15, .y = 3, .kind = .press }));
+    _ = ui.onMouse(.{ .x = 18, .y = 3, .kind = .drag });
+    _ = ui.onMouse(.{ .x = 50, .y = 3, .kind = .release });
+    try testing.expectEqual(ui.lookup("sh").?, ui.focused);
+    try ui.frame(&g);
+    try testing.expectEqual(@as(u16, 12), g.cursor.?.x);
+    try testing.expectEqual(@as(u16, 1), g.cursor.?.y);
+    try testing.expectEqual(gridmod.CursorShape.bar, g.cursor.?.shape);
+
+    _ = ui.onMouse(.{ .x = 15, .y = 3, .kind = .wheel_up });
+    _ = ui.onMouse(.{ .x = 15, .y = 3, .kind = .wheel_down });
+
+    // Every key goes to the program, Tab, Escape and Ctrl-C included;
+    // Ctrl-Q still closes the window.
+    try testing.expectEqual(Ui.KeyResult.handled, ui.onKey(.{ .name = "a", .text = "a" }));
+    try testing.expectEqual(Ui.KeyResult.handled, ui.onKey(.{ .name = "tab" }));
+    try testing.expectEqual(Ui.KeyResult.handled, ui.onKey(.{ .name = "escape" }));
+    try testing.expectEqual(Ui.KeyResult.handled, ui.onKey(.{ .name = "c", .ctrl = true }));
+    try testing.expectEqual(Ui.KeyResult.handled, ui.onKey(.{ .name = "up", .shift = true }));
+    try testing.expectEqual(Ui.KeyResult.handled, ui.onKey(.{ .name = "日本", .text = "日本" }));
+    try testing.expectEqual(ui.lookup("sh").?, ui.focused);
+    try testing.expectEqual(Ui.KeyResult.quit, ui.onKey(.{ .name = "q", .ctrl = true }));
+
+    try testing.expectEqualStrings(
+        \\term-mouse sh press 1 5,2 clicks=1
+        \\term-mouse sh move 1 8,2 clicks=1
+        \\term-mouse sh release 1 29,2 clicks=1
+        \\term-scroll sh -3
+        \\term-scroll sh 3
+        \\key a
+        \\key tab
+        \\key escape
+        \\key ctrl-c
+        \\key shift-up
+        \\term-text sh 日本
+        \\
+    , f.log.items);
+
+    // A click outside takes focus away; Ctrl-C quits again.
+    _ = ui.onMouse(.{ .x = 2, .y = 1, .kind = .press });
+    _ = ui.onMouse(.{ .x = 2, .y = 1, .kind = .release });
+    try testing.expect(ui.focused != ui.lookup("sh").?);
+    try testing.expectEqual(Ui.KeyResult.quit, ui.onKey(.{ .name = "c", .ctrl = true }));
+}

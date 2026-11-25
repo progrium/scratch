@@ -12,6 +12,12 @@ pub const StyleWord = c.UitStyleWord;
 pub const StyleArg = c.UitStyleArg;
 pub const Changes = c.UitChanges;
 pub const HostCmd = c.UitHostCmd;
+pub const TermChange = c.UitTermChange;
+pub const TermRow = c.UitTermRow;
+pub const TermRun = c.UitTermRun;
+pub const TermStyle = c.UitTermStyle;
+pub const TermCursor = c.UitTermCursor;
+pub const TermMouse = c.UitTermMouse;
 
 pub const Error = error{
     Invalid,
@@ -310,6 +316,49 @@ pub const Core = struct {
 
     pub fn request(k: Core, n: Node, name: []const u8, default_answer: []const u8) u64 {
         return c.uit_request(k.p, n, str(name), null, 0, str(default_answer));
+    }
+
+    // -- terminal nodes (ABI 9) -------------------------------------------
+    //
+    // Reads are empty (or null) while the core can't answer: a core
+    // without terminals yet answers UIT_ENOTSUP, and the node is drawn
+    // blank.
+
+    pub fn termRows(k: Core, n: Node, first: u32, count: u32) []const TermRow {
+        var out: [*c]const TermRow = null;
+        var len: usize = 0;
+        if (c.uit_term_rows(k.p, n, first, count, &out, &len) < 0) return &.{};
+        return many(TermRow, out, len);
+    }
+
+    pub fn termStyles(k: Core, n: Node) []const TermStyle {
+        var out: [*c]const TermStyle = null;
+        var len: usize = 0;
+        if (c.uit_term_styles(k.p, n, &out, &len) < 0) return &.{};
+        return many(TermStyle, out, len);
+    }
+
+    pub fn termCursor(k: Core, n: Node) ?TermCursor {
+        var cur: TermCursor = std.mem.zeroes(TermCursor);
+        if (c.uit_term_cursor(k.p, n, &cur) < 0) return null;
+        return cur;
+    }
+
+    pub fn termResize(k: Core, n: Node, cols: u32, rows: u32, cell_w: u32, cell_h: u32) Error!void {
+        try check(c.uit_term_resize(k.p, n, cols, rows, cell_w, cell_h));
+    }
+
+    /// True when the program took it (a mouse mode is on).
+    pub fn termMouse(k: Core, n: Node, m: TermMouse) bool {
+        return c.uit_term_mouse(k.p, n, &m) == 1;
+    }
+
+    pub fn termScroll(k: Core, n: Node, by: i32) Error!void {
+        try check(c.uit_term_scroll(k.p, n, by));
+    }
+
+    pub fn termText(k: Core, n: Node, text: []const u8) Error!void {
+        try check(c.uit_term_text(k.p, n, str(text)));
     }
 };
 

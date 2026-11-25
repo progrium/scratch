@@ -22,7 +22,8 @@ cd ../../third_party/hyper9 && scripts/fetch.sh isoamd64 &&
   zig build isoroot -- .local/9front/9front-11952.amd64.iso .local/9front/rootamd64
 ```
 
-Ctrl-C or Ctrl-Q closes the window. The app's output and the host's log
+Ctrl-C or Ctrl-Q closes the window (only Ctrl-Q while a `terminal` node
+has focus: its program gets Ctrl-C). The app's output and the host's log
 go to `--log FILE` (default `/tmp/uitree-tui.log`), since the terminal
 belongs to the UI. `--dark` starts in the dark theme. `--colors
 truecolor|256|16` overrides the color depth `COLORTERM` suggests.
@@ -111,6 +112,7 @@ families and text sizes are accepted and not drawn.
 | `scroll` | clips and scrolls with the wheel |
 | `empty`, `alert`, `badge`, `kbd`, `separator`, `spinner`, `icon` | glyphs: `▭ Nothing to do`, a bordered box, ` 3 `, ` ⌘K `, `───`, `⠋`, `×` |
 | `img`, `svg` | `[image name]`, dim |
+| `terminal` | the core's cells (`uit_term_rows`, `uit_term_styles`, `uit_term_cursor`) copied into its box: colors at the terminal's depth, bold, faint, italic, the five underline styles and their color, strike, blink, inverse (swapped here), invisible, the selection tinted with `selection`, and its cursor as the real one (shape and blink) while focused, a reversed cell otherwise. Grows and stretches by default; the grid inside border and padding goes to the core with `uit_term_resize` whenever it changes, with the cell's pixel size when the terminal reports one. While focused every key but Ctrl-Q goes through `uit_key` (IME text through `uit_term_text`); a press focuses it, and presses, drags, releases (1 to 3 clicks) and the wheel go to `uit_term_mouse` and `uit_term_scroll`. Linked or `--remote`, the calls are the same |
 | any node's `tooltip` file | one row in popover colors above the node (below it on the top row), 500 ms after the pointer rests on it, hidden when the pointer leaves or presses; nothing is sent to the client. The `tooltip` overlay type isn't registered (no `overlay` profile) |
 | `grid` | rows of `cols` cells sharing the width, `gap` between |
 | `toolbar`, `button-group`, `breadcrumb`, `title-bar`, `status-bar` | a row; a button group's selected buttons in the primary colors, a click sets `value` and sends `change`; crumbs muted with `›`, the last bold, `click id=`; a status bar's `left`, `center` and `right` slots spread on a muted strip |
