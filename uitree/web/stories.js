@@ -139,10 +139,18 @@ text b  selectable  text='Selectable: drag across me to select'` },
     ],
   },
   {
-    id: 'styled-text', group: 'core', title: 'Styled text', desc: 'One text with styled runs: byte ranges and the words for each.',
+    id: 'styled-text', group: 'core', title: 'Styled text', desc: 'One string with styled runs: each line of runs is START LENGTH (bytes into text) and the words for that range. A text node styles all of itself; styled-text styles parts.',
     sections: [
-      { label: 'Runs', ui: `
-styled-text s  text='Error: file not found (exit 2), see the log'`, files: { 's/runs': '0 6 font-bold text-color=danger\n7 14 italic\n16 6 bg=muted\n28 3 underline text-color=primary\n' } },
+      { label: 'Error message', ui: `
+styled-text s  text='Example Error: file not found (exit 2), see the log'`, files: { 's/runs': '0 14 font-bold text-color=danger\n15 14 italic\n30 8 bg=selection\n48 3 underline text-color=info\n' } },
+      { label: 'Search highlight (offsets are bytes: the curly quotes are 3 each)', ui: `
+styled-text s  text='Found “layout” in 3 files: the layout pass runs before paint'`, files: { 's/runs': '6 12 font-semibold\n35 6 bg=warning\n' } },
+      { label: 'Code', ui: `
+styled-text s  text='let count = 42; // the answer'`, files: { 's/runs': '0 3 font-bold text-color=primary\n12 2 text-color=info\n16 13 italic text-color=muted-foreground\n' } },
+      { label: 'Diff stat', ui: `
+styled-text s  text='4 files changed, 120 insertions(+), 37 deletions(-)'`, files: { 's/runs': '17 17 text-color=success\n36 15 text-color=danger\n' } },
+      { label: 'Price', ui: `
+styled-text s  text='Was $49, now $29 for a limited time'`, files: { 's/runs': '4 3 line-through text-color=muted-foreground\n13 3 font-bold text-color=success\n23 12 underline\n' } },
     ],
   },
   {
@@ -741,13 +749,6 @@ editor p  placeholder='Type here…'  : h=60 border-1 border-color=border rounde
   {
     id: 'web', group: 'desktop', title: 'Web', desc: 'A web view among native nodes: inline HTML here; the page can post messages back.',
     sections: [{ label: 'Inline page', full: true, ui: 'div x  : v-flex h=180\n  web w  : flex-1 border-1 border-color=border rounded-md', files: { 'x/w/html': page } }],
-  },
-  {
-    id: 'icon-view', group: 'desktop', title: 'Icon view, console', desc: 'Icons at free positions; a program\'s console. Both are in the spec ahead of the renderers.',
-    sections: [
-      { label: 'Icon view', full: true, ui: 'icon-view v  : h=160 border-1 border-color=border rounded-md', files: { 'v/items': 'a label=Documents icon=folder pos=16,16\nb label=notes.md icon=file-text pos=112,16 selected\nc label=Trash icon=trash pos=208,16\n' } },
-      { label: 'Console', full: true, ui: 'console c  : h=120 border-1 border-color=border rounded-md', ctl: { c: "append '$ echo hello: console output, appended by the app'" } },
-    ],
   },
 
   // theme

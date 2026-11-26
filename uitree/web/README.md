@@ -127,7 +127,10 @@ terminal renderer in the browser link `libuitcore.a`.
   stays on stable.
 - **No system fonts in the browser.** gpui_web resolves `.SystemUIFont` to
   IBM Plex Sans and panics without it, so the host bundles IBM Plex Sans and
-  JetBrains Mono (OFL, from story-web) under `crates/web/fonts`.
+  JetBrains Mono (OFL, from story-web) under `crates/web/fonts`, with the
+  bold, semibold and italic faces that `font-bold`, `font-semibold` and
+  `italic` need (without them the browser draws those as regular). The
+  extra faces cost 0.54 MB gzip, 0.28 MB brotli.
 - **`AllAssets` is a different type on wasm** (it fetches icons on demand):
   the one compile error in the host crate.
 - **getrandom** needs `--cfg getrandom_backend="wasm_js"`.
@@ -181,7 +184,7 @@ an empty box. So `gallery.js` keeps the lists. The terminal renderer's is
 the pickers and calendar, combobox, OTP, rating, pagination, stepper,
 skeleton, shimmer, bubble, avatar group, diff, HTML, the virtual list and
 the popover, hover card, tooltip and context-menu overlays are GPUI's
-only. Neither renderer draws `icon-view` or `console` yet.
+only.
 
 The page also writes what the stories need besides the tree: data files,
 bytes (`img`'s `data`), assets (`$ui/asset/NAME` for `svg src=@NAME`,
@@ -293,17 +296,18 @@ one codegen unit), names stripped. gzip is `gzip -9`, brotli is quality
 
 | File | Raw | gzip | brotli |
 | --- | --- | --- | --- |
-| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host + the core) | 18.2 MB | 6.1 MB | 4.3 MB |
+| `gpui/uitree_web_bg.wasm` (GPUI + gpui-component + host + the core) | 19.4 MB | 6.6 MB | 4.6 MB |
 | `uitcore.wasm` (the core alone, for core-test.html) | 1.6 MB | 0.57 MB | 0.44 MB |
 | `uitree-tui.wasm` (terminal renderer + core + Yoga + libc++) | 2.3 MB | 0.73 MB | 0.54 MB |
 | `h9/h9.wasm` (h9, DWARF stripped) | 4.6 MB | 1.2 MB | 0.83 MB |
 | `h9/root.h9a` (root.list: rc, awk, sed and 27 more) | 2.2 MB | 0.98 MB | 0.26 MB |
 
-So a GPUI page is about 8.2 MB gzip or 5.4 MB brotli, and a terminal
+So a GPUI page is about 8.7 MB gzip or 5.7 MB brotli, and a terminal
 page 2.9 MB or 1.6 MB (plus xterm.js from its CDN). Against the build
 before libghostty-vt (17.4/5.8/4.1 MB GPUI, 0.56/0.21/0.16 MB core,
 1.1/0.33/0.24 MB terminal), the engine adds about 0.3 MB gzip to the
-GPUI module and 0.4 MB to each Zig module with the core in it. The
+GPUI module and 0.4 MB to each Zig module with the core in it (figures
+from before the extra font faces). The
 gallery adds two scripts to the page, `stories.js` and `gallery.js`,
 under 20 KB gzip together.
 

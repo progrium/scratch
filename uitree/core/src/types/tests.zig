@@ -250,7 +250,6 @@ test "data props have formats, types have specs" {
     try std.testing.expectEqualStrings("columns", c.lookup("table").?.format("columns").?);
     try std.testing.expectEqualStrings("tree-items", c.lookup("tree").?.format("items").?);
     try std.testing.expectEqualStrings("ops", c.lookup("canvas").?.format("ops").?);
-    try std.testing.expectEqualStrings("icon-items", c.lookup("icon-view").?.format("items").?);
     var buf: [64]u8 = undefined;
     try std.testing.expectEqualStrings("table 1.0\n", c.lookup("table").?.version(&buf));
     try std.testing.expect(c.specText("gizmo") == null);

@@ -233,7 +233,7 @@ pub const profiles = [_]struct { name: []const u8, types: []const []const u8 }{
     .{ .name = "nav", .types = &.{ "tabs", "tab", "sidebar", "sidebar-group", "sidebar-item", "breadcrumb", "toolbar", "link" } },
     .{ .name = "layout", .types = &.{ "grid", "resizable", "panel", "separator", "group-box", "accordion", "accordion-item", "collapsible" } },
     .{ .name = "feedback", .types = &.{ "progress", "spinner", "badge", "alert", "empty", "kbd", "tag" } },
-    .{ .name = "desktop", .types = &.{ "icon-view", "console", "terminal", "file-chooser" } },
+    .{ .name = "desktop", .types = &.{ "terminal", "file-chooser" } },
     .{ .name = "web", .types = &.{"web"} },
 };
 

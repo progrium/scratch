@@ -81,8 +81,11 @@ import { stories, groups } from './stories.js';
 import { storyTypes, catalog, show, react } from './gallery.js';
 import './cache.js';
 
-const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
+// Links from before the gallery (?app=NAME) were to the examples page,
+// which was index.html then.
+if (params.has('app')) { location.replace(`examples.html${location.search}`); throw new Error('moved to examples.html'); }
+const $ = (id) => document.getElementById(id);
 const state = {
   story: stories.find((s) => s.id === params.get('c')) ?? stories[0],
   r: params.get('r') === 'tui' ? 'tui' : 'gpui',

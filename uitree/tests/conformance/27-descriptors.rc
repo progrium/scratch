@@ -67,7 +67,7 @@ overlay dialog alert-dialog sheet popover tooltip context-menu
 nav tabs tab sidebar sidebar-group sidebar-item breadcrumb toolbar link
 layout grid resizable panel separator group-box accordion collapsible
 feedback progress spinner badge alert empty kbd tag
-desktop icon-view console terminal file-chooser
+desktop terminal file-chooser
 web web
 END
 for(p in `{cat /tmp/profiles}) {
